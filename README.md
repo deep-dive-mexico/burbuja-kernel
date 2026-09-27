@@ -12,8 +12,10 @@ make test
 dotnet run --project src/Burbuja.Host -- --role all
 ```
 
-`examples/Example.Workbench` is an independent consuming host/plugin example. Hosting.Tests exercises
-that composition. NuGet restores use nuget.org, not a developer's local package feed.
+`examples/Example.Workbench` is an independent consuming host/plugin example. The
+[developer workbench guide](docs/developer-workbench.md) covers its external-copy, pinned-source,
+install and HTTP procedures. Hosting.Tests exercises that composition. NuGet restores use
+nuget.org, not a developer's local package feed.
 
 ## Test coverage boundary
 
