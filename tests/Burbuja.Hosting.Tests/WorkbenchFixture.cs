@@ -35,7 +35,8 @@ internal sealed class WorkbenchFixture : IAsyncDisposable
     public string PluginDirectory { get; }
     public WebApplication App { get; private set; } = null!;
 
-    public WebApplication Create(string role = "control-plane", bool enabled = true)
+    public WebApplication Create(string role = "control-plane", bool enabled = true,
+        Action<WebApplicationBuilder>? configure = null)
     {
         App = BurbujaApplication.CreateApp(new WebApplicationOptions
         {
@@ -58,15 +59,17 @@ internal sealed class WorkbenchFixture : IAsyncDisposable
                 ["Auth:ApiKeys:3:PrincipalId"] = "nobody",
                 ["Logging:LogLevel:Default"] = "Error",
             });
+            configure?.Invoke(builder);
             builder.WebHost.UseTestServer();
             builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
         }));
         return App;
     }
 
-    public async Task StartAsync(string role = "control-plane", bool enabled = true)
+    public async Task StartAsync(string role = "control-plane", bool enabled = true,
+        Action<WebApplicationBuilder>? configure = null)
     {
-        Create(role, enabled);
+        Create(role, enabled, configure);
         await App.StartAsync(Ct);
     }
 

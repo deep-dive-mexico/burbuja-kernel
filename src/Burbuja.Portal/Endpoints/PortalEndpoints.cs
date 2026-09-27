@@ -97,6 +97,9 @@ public static class PortalEndpoints
             }
         }
 
+        // This transport belongs to the authenticated session, not to the kernel document:
+        // product portals may use the same proxy for their own data-plane routes. The ARM
+        // request carries that session's key, and the kernel still decides access to the path.
         app.MapGet(Download, DownloadAsync).RequireAuthorization();
     }
 

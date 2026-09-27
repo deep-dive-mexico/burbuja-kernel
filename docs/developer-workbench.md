@@ -114,6 +114,15 @@ publish items. Hosting currently brings several built-in static plugin projects,
 filename; without the filter a new consumer's publish fails with `NETSDK1152`. The installed dynamic
 plugin manifest remains under `plugins/Example.Workbench/`. Other duplicate publish files still fail.
 
+An installed manifest claims its plugin ID before the host considers a linked static factory.
+A missing DLL therefore fails with `PluginBootException` (exit 78 via `RunAsync`), naming the
+ID, manifest and missing DLL; it never silently falls back to the built-in. Two installs claiming
+one ID fail with both locations named. The loader compares the disk manifest against the plugin's
+code declaration before registering services, including requested capabilities, trust, roles,
+dependencies, configuration section and assembly identity. Installing code declared `static` with
+a `dynamic` disk manifest is supported: it loads in a plugin ALC with shared contracts and SDK.
+Changing `plugin.json` alone cannot change what its assembly declares.
+
 ## Run and bootstrap over HTTP
 
 ```bash
@@ -229,6 +238,11 @@ the `workbench` portal claim: even its Owner API role cannot open `/portal` thro
 login. The executable references no product-specific portal. Its own Razor pages cause the Web SDK
 to include the ASP.NET web assets; the published Blazor script and portal CSS were fetched successfully.
 
+`/portal/download?path=…` is a shared browser-to-ARM transport for authenticated portals, even
+when their users cannot open the kernel console. It validates that `path` is local and sends the
+read with the live session's API key; the kernel still denies data-plane routes that key may not
+read. Anonymous requests cannot use the proxy. The Hosting HTTP fact covers all three outcomes.
+
 Hosting currently includes the built-in agents/compute/deployments/integrations/MCP composition.
 This sample proves consumer independence from AKOS and from the shipped `Burbuja.Host` executable;
 it does not claim that Hosting is a bare-Core-only dependency.
@@ -236,7 +250,7 @@ it does not claim that Hosting is a bare-Core-only dependency.
 ## Bounded tests and evidence
 
 Run from the pinned kernel source checkout. The official `make test` already builds the solution
-and runs this project alongside the other selected generic unit projects; to run only its 12 tests:
+and runs this project alongside the other selected generic unit projects; to run only the Hosting tests:
 
 ```bash
 dotnet test tests/Burbuja.Hosting.Tests/Burbuja.Hosting.Tests.csproj \

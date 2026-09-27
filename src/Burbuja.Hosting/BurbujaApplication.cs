@@ -211,10 +211,8 @@ public static class BurbujaApplication
         IConfiguration configuration,
         IEnumerable<StaticPluginRegistration>? additionalPlugins = null)
     {
-        // A plugin that also exists in Kernel:PluginsDirectory must not be registered statically:
-        // discovery would then see two manifests with the same id and the boot fails (duplicate
-        // plugin id). Before M4 only Policy.Core was guarded, so staging the other built-ins
-        // crashed in TopoSort with a raw "An item with the same key has already been added".
+        // An installed manifest claims the id even if its assembly is missing. Let discovery
+        // report the broken install rather than registering a static fallback with the same id.
         var dir = configuration["Kernel:PluginsDirectory"];
         var list = new List<IBurbujaPlugin>();
         Add(list, dir, "Burbuja.Agents", "Burbuja.Agents.dll", () => new AgentsPlugin());
@@ -240,7 +238,7 @@ public static class BurbujaApplication
     {
         if (list.Any(plugin => string.Equals(plugin.Manifest.Id, id, StringComparison.OrdinalIgnoreCase)))
             return;
-        if (!PluginOnDisk(pluginsDirectory, id, assembly))
+        if (!PluginOnDisk(pluginsDirectory, id))
         {
             var plugin = create();
             if (!string.Equals(plugin.Manifest.Id, id, StringComparison.Ordinal)
@@ -250,14 +248,14 @@ public static class BurbujaApplication
         }
     }
 
-    private static bool PluginOnDisk(string? pluginsDirectory, string id, string assembly)
+    private static bool PluginOnDisk(string? pluginsDirectory, string id)
     {
         if (string.IsNullOrWhiteSpace(pluginsDirectory) || !Directory.Exists(pluginsDirectory))
             return false;
         foreach (var dir in Directory.GetDirectories(pluginsDirectory))
         {
             var json = Path.Combine(dir, "plugin.json");
-            if (!File.Exists(json) || !File.Exists(Path.Combine(dir, assembly)))
+            if (!File.Exists(json))
                 continue;
             try
             {

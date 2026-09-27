@@ -7,7 +7,10 @@ using Burbuja.Core.Abstractions.Arm;
 using Burbuja.Core.Abstractions.Plugin;
 using Burbuja.Core.Plugin;
 using Burbuja.Portal;
+using Burbuja.Portal.Services;
 using Example.Workbench.Host;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using static Burbuja.Hosting.Tests.WorkbenchFixture;
@@ -16,6 +19,15 @@ namespace Burbuja.Hosting.Tests;
 
 public sealed class ExternalPluginTests
 {
+    private const string ScriptedManifest = """
+        {"id":"Llm.Scripted","name":"Scripted LLM","version":"1.0.0",
+         "contracts_version":"1.0.0","assembly":"Burbuja.Plugins.Llm.Scripted.dll",
+         "entry_type":"Burbuja.Plugins.Llm.Scripted.ScriptedLlmPlugin","load":"static",
+         "provides":["llm.provider"],"extension_points":["llm.provider"],
+         "requires":["Network"],"roles":["all","worker"],"config_section":null,
+         "trusted":true,"depends_on":[],"load_order":300}
+        """;
+
     [Fact]
     public async Task Own_host_loads_a_contracts_only_provider_in_a_separate_context_and_serves_its_manifest()
     {
@@ -254,6 +266,96 @@ public sealed class ExternalPluginTests
         var error = Assert.Throws<PluginBootException>(() => host.Create());
         Assert.Contains(Namespace, error.Message);
         Assert.Contains(diagnostic, error.Message);
+    }
+
+    [Fact]
+    public async Task Damaged_staged_builtin_reports_its_missing_assembly_as_a_plugin_boot_failure()
+    {
+        await using var host = new WorkbenchFixture();
+        var directory = Path.Combine(host.Root, "plugins", "Scripted");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "plugin.json"), ScriptedManifest, Ct);
+
+        var error = Assert.Throws<PluginBootException>(() => host.Create());
+        Assert.Contains("Llm.Scripted", error.Message);
+        Assert.Contains("missing assembly", error.Message);
+        Assert.Contains("Burbuja.Plugins.Llm.Scripted.dll", error.Message);
+    }
+
+    [Fact]
+    public async Task Installed_builtin_can_replace_static_factory_with_dynamic_loader()
+    {
+        await using var host = new WorkbenchFixture();
+        var directory = Path.Combine(host.Root, "plugins", "Scripted");
+        Directory.CreateDirectory(directory);
+        var source = typeof(Burbuja.Plugins.Llm.Scripted.ScriptedLlmPlugin).Assembly.Location;
+        File.Copy(source, Path.Combine(directory, Path.GetFileName(source)));
+        var manifest = Path.Combine(directory, "plugin.json");
+        await File.WriteAllTextAsync(manifest,
+            ScriptedManifest.Replace("\"load\":\"static\"", "\"load\":\"dynamic\"", StringComparison.Ordinal), Ct);
+
+        await host.StartAsync();
+        var plugin = Assert.Single(host.App.Services.GetRequiredService<PluginHost>().Loaded,
+            p => p.Manifest.Id == "Llm.Scripted");
+        Assert.Equal(PluginLoadKind.Dynamic, plugin.EffectiveLoad);
+        Assert.Equal(Path.GetFullPath(Path.Combine(directory, Path.GetFileName(source))), plugin.Assembly.Location);
+        Assert.NotSame(AssemblyLoadContext.Default, AssemblyLoadContext.GetLoadContext(plugin.Assembly));
+    }
+
+    [Fact]
+    public async Task Duplicate_staged_identity_reports_both_install_locations()
+    {
+        await using var host = new WorkbenchFixture();
+        var second = Path.Combine(host.Root, "plugins", "SecondWorkbench");
+        WorkbenchFixture.CopyDirectory(host.PluginDirectory, second);
+
+        var error = Assert.Throws<PluginBootException>(() => host.Create());
+        Assert.Contains("Example.Workbench", error.Message);
+        Assert.Contains(host.PluginDirectory, error.Message);
+        Assert.Contains(second, error.Message);
+    }
+
+    [Fact]
+    public async Task Shared_download_proxy_requires_a_live_session_and_uses_its_arm_key_permissions()
+    {
+        await using var host = new WorkbenchFixture();
+        await host.StartAsync(configure: builder =>
+        {
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Auth:Users:1:Username"] = "limited",
+                ["Auth:Users:1:PasswordHash"] = builder.Configuration["Auth:Users:0:PasswordHash"],
+                ["Auth:Users:1:PrincipalId"] = "reader",
+                ["Auth:Users:1:Portals:0"] = "workbench",
+            });
+            builder.Services.AddHttpClient(PortalArm.ClientName)
+                .ConfigurePrimaryHttpMessageHandler(() => host.App.GetTestServer().CreateHandler());
+        });
+        await host.BootstrapAsync();
+        using var editor = host.Client(Editor);
+        using var created = await editor.PutAsJsonAsync(Notes + "/download" + Api,
+            new { properties = new { text = "protected note" } }, Ct);
+        await ExpectAsync(created, HttpStatusCode.Created);
+
+        var item = "/portal/download?path=" + Uri.EscapeDataString(Notes + "/download");
+        var events = "/portal/download?path=" + Uri.EscapeDataString(Notes + "/download/events");
+        using var browser = host.Client(null);
+        using var anonymous = await browser.GetAsync(item, Ct);
+        Assert.Equal(HttpStatusCode.Found, anonymous.StatusCode);
+        using var login = await browser.PostAsync("/workbench/signin", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["username"] = "limited", ["password"] = "owner-dev-password",
+        }), Ct);
+        Assert.Equal(HttpStatusCode.Found, login.StatusCode);
+        browser.DefaultRequestHeaders.Add("Cookie", Assert.Single(login.Headers.GetValues("Set-Cookie")).Split(';')[0]);
+
+        using var readable = await browser.GetAsync(item, Ct);
+        Assert.Equal(HttpStatusCode.OK, readable.StatusCode);
+        Assert.Contains("protected note", await readable.Content.ReadAsStringAsync(Ct));
+        using var denied = await browser.GetAsync(events, Ct);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        using var invalid = await browser.GetAsync("/portal/download?path=" + Uri.EscapeDataString("https://example.invalid/file"), Ct);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
     }
 
     [Fact]

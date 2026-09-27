@@ -46,7 +46,8 @@ public sealed class PluginHost
     public IReadOnlyList<LoadedPlugin> Loaded => _loaded;
 
     public void Boot(IServiceCollection services, IReadOnlyList<IBurbujaPlugin>? staticPlugins = null)
-    {        var errors = new List<string>();
+    {
+        var errors = new List<string>();
 
         // 1. discover
         var discovered = Discover(staticPlugins, errors);
@@ -61,6 +62,24 @@ public sealed class PluginHost
 
         // 3. filter by role + Plugins:<Id>:Enabled
         var filtered = valid.Where(v => IsEnabled(v.Manifest)).ToList();
+
+        var duplicates = filtered.GroupBy(v => v.Manifest.Id, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1).ToArray();
+        foreach (var group in duplicates)
+            errors.Add($"duplicate plugin id '{group.Key}': {string.Join(", ", group.Select(v => v.Directory is null
+                ? $"static {v.Manifest.Assembly}" : Path.Combine(v.Directory, "plugin.json")))}");
+
+        // Validate installed files before sorting. A missing DLL must identify the installed
+        // manifest, even when a static implementation of that id is also linked into the host.
+        foreach (var item in filtered.Where(v => v.Directory is not null))
+        {
+            var dll = Path.Combine(item.Directory!, item.Manifest.Assembly);
+            if (!File.Exists(dll))
+                errors.Add($"plugin {item.Manifest.Id} ({Path.Combine(item.Directory!, "plugin.json")}): missing assembly '{dll}'");
+        }
+
+        if (duplicates.Length > 0)
+            throw new PluginBootException(errors);
 
         // 4. topo-sort
         List<(PluginManifest Manifest, string? Directory, IBurbujaPlugin? Static)> ordered;
@@ -157,16 +176,10 @@ public sealed class PluginHost
                         ?? throw new InvalidOperationException("activator returned null"));
                 }
 
-                if (!string.Equals(plugin.Manifest.Id, item.Manifest.Id, StringComparison.Ordinal)
-                    || !string.Equals(plugin.Manifest.EntryType, item.Manifest.EntryType, StringComparison.Ordinal)
-                    || !plugin.Manifest.Provides.SequenceEqual(item.Manifest.Provides, StringComparer.Ordinal)
-                    || !plugin.Manifest.ExtensionPoints.SequenceEqual(item.Manifest.ExtensionPoints, StringComparer.Ordinal))
-                {
-                    // Keep the instance so later checks (trust, capabilities) also report; nothing runs
-                    // before the boot throws. The diff names every disagreeing field. `Load` is not
-                    // compared: the code manifest is Static, the on-disk manifest is dynamic.
-                    errors.Add($"plugin {item.Manifest.Id}: manifest cross-check failed ({ManifestDiff(item.Manifest, plugin.Manifest)})");
-                }
+                // No ConfigureServices runs before a mismatch fails boot. Static code may be
+                // explicitly staged as dynamic; all other declarations must agree.
+                if (ManifestDiff(item.Manifest, plugin.Manifest) is { Length: > 0 } diff)
+                    errors.Add($"plugin {item.Manifest.Id}: manifest cross-check failed ({diff})");
 
                 instances.Add(new LoadedPlugin(item.Manifest, plugin, item.Assembly, item.Kind));
             }
@@ -410,6 +423,7 @@ public sealed class PluginHost
         List<(PluginManifest Manifest, string? Directory, IBurbujaPlugin? Static)> items,
         List<string> errors)
     {
+        // Duplicate identities were reported with their install locations before this method.
         var byId = items.ToDictionary(i => i.Manifest.Id, StringComparer.OrdinalIgnoreCase);
         var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -465,10 +479,32 @@ public sealed class PluginHost
             diffs.Add($"id disk='{disk.Id}' code='{code.Id}'");
         if (!string.Equals(disk.EntryType, code.EntryType, StringComparison.Ordinal))
             diffs.Add($"entry_type disk='{disk.EntryType}' code='{code.EntryType}'");
+        if (!string.Equals(disk.Name, code.Name, StringComparison.Ordinal))
+            diffs.Add($"name disk='{disk.Name}' code='{code.Name}'");
+        if (!string.Equals(disk.Version, code.Version, StringComparison.Ordinal))
+            diffs.Add($"version disk='{disk.Version}' code='{code.Version}'");
+        if (!string.Equals(disk.ContractsVersion, code.ContractsVersion, StringComparison.Ordinal))
+            diffs.Add($"contracts_version disk='{disk.ContractsVersion}' code='{code.ContractsVersion}'");
+        if (!string.Equals(disk.Assembly, code.Assembly, StringComparison.Ordinal))
+            diffs.Add($"assembly disk='{disk.Assembly}' code='{code.Assembly}'");
+        if (disk.Load != code.Load && !(disk.Load == PluginLoadKind.Dynamic && code.Load == PluginLoadKind.Static))
+            diffs.Add($"load disk='{disk.Load}' code='{code.Load}'");
         if (!disk.Provides.SequenceEqual(code.Provides, StringComparer.Ordinal))
             diffs.Add($"provides disk=[{string.Join(",", disk.Provides)}] code=[{string.Join(",", code.Provides)}]");
         if (!disk.ExtensionPoints.SequenceEqual(code.ExtensionPoints, StringComparer.Ordinal))
             diffs.Add($"extension_points disk=[{string.Join(",", disk.ExtensionPoints)}] code=[{string.Join(",", code.ExtensionPoints)}]");
-        return diffs.Count == 0 ? "no field diff" : string.Join("; ", diffs);
+        if (!disk.Requires.SequenceEqual(code.Requires))
+            diffs.Add($"requires disk=[{string.Join(",", disk.Requires)}] code=[{string.Join(",", code.Requires)}]");
+        if (!disk.Roles.SequenceEqual(code.Roles, StringComparer.Ordinal))
+            diffs.Add($"roles disk=[{string.Join(",", disk.Roles)}] code=[{string.Join(",", code.Roles)}]");
+        if (!string.Equals(disk.ConfigSection, code.ConfigSection, StringComparison.Ordinal))
+            diffs.Add($"config_section disk='{disk.ConfigSection}' code='{code.ConfigSection}'");
+        if (disk.Trusted != code.Trusted)
+            diffs.Add($"trusted disk='{disk.Trusted}' code='{code.Trusted}'");
+        if (!disk.DependsOn.SequenceEqual(code.DependsOn, StringComparer.Ordinal))
+            diffs.Add($"depends_on disk=[{string.Join(",", disk.DependsOn)}] code=[{string.Join(",", code.DependsOn)}]");
+        if (disk.LoadOrder != code.LoadOrder)
+            diffs.Add($"load_order disk='{disk.LoadOrder}' code='{code.LoadOrder}'");
+        return string.Join("; ", diffs);
     }
 }

@@ -89,6 +89,35 @@ public sealed class PluginLoaderTests
         ex.Errors.ShouldContain(e => e.Contains("contracts_version", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData("\"requires\": []", "\"requires\": [\"Network\"]", "requires")]
+    [InlineData("\"trusted\": false", "\"trusted\": true", "trusted")]
+    [InlineData("\"roles\": [\"all\"]", "\"roles\": [\"control-plane\"]", "roles")]
+    public void Disk_and_code_authority_must_agree_before_services_are_registered(string original, string changed, string field)
+    {
+        var json = File.ReadAllText(FindPluginJson("Burbuja.Plugins.Test.Ok"));
+        Assert.Contains(original, json);
+        var staged = Stage(typeof(OkPlugin), json.Replace(original, changed, StringComparison.Ordinal));
+        var error = Should.Throw<PluginBootException>(() => Boot(staged));
+        error.Errors.ShouldContain(e => e.Contains("Test.Ok", StringComparison.Ordinal)
+            && e.Contains(field, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Duplicate_plugin_ids_report_both_manifest_paths_instead_of_throwing_from_sort()
+    {
+        var root = TempRoot();
+        WriteManifest(root, "First");
+        WriteManifest(root, "Second");
+        var second = Path.Combine(root, "Second", "plugin.json");
+        File.WriteAllText(second, File.ReadAllText(second).Replace("\"Second\"", "\"First\"", StringComparison.Ordinal));
+
+        var error = Should.Throw<PluginBootException>(() => Boot(root));
+        error.Errors.ShouldContain(e => e.Contains("First/plugin.json", StringComparison.Ordinal)
+            || e.Contains(Path.Combine("First", "plugin.json"), StringComparison.Ordinal));
+        error.Errors.ShouldContain(e => e.Contains(Path.Combine("Second", "plugin.json"), StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Plugin_referencing_Burbuja_Core_fails()
     {

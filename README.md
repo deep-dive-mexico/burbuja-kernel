@@ -6,6 +6,9 @@ public TestKit, and the standalone Workbench example. After the official reposit
 commit, it is the only source of truth for generic changes and its own committed HEAD supplies
 every normal release. The host accepts consumer contributions and does not reference AKOS.
 
+The [plugin portability review](docs/plugin-review-2026-09-27.md) records the installed-manifest,
+failure-diagnostic and authenticated-transport regressions exercised in the official kernel.
+
 ```sh
 dotnet build Burbuja.slnx -c Release -m:1
 make test
