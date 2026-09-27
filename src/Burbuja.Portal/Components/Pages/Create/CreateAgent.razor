@@ -1,0 +1,243 @@
+@page "/portal/create/agent"
+@namespace Burbuja.Portal.Components.Pages.Create
+@inject PortalData Data
+@inject NavigationManager Nav
+
+@* M12 R4 — create a stateful agent. An agent is the one resource here that is useful EMPTY: a PUT makes it,
+   and an optional first message opens its session through `/send`. The form offers the message because an
+   agent nobody has spoken to is an agent a person cannot tell is working. *@
+
+<PageTitle>Create a stateful agent</PageTitle>
+
+<PageHeader Eyebrow="Create" Title="Stateful agent"
+            Subtitle="A named agent that keeps its session: a tool surface, a model, and an optional first message."
+            Loaded="@(_scope is not null)"/>
+
+@if (_scope is null)
+{
+    <LoadingState Text="resolving the tenancy…" />
+}
+else
+{
+    @if (!_mayWrite)
+    {
+        <div class="alert alert-warn" role="alert">
+            <strong>Your role cannot create resources</strong>
+            <span>@_reason</span>
+        </div>
+    }
+
+    <div class="panels">
+        <Card Title="Agent" Subtitle="a PUT of Burbuja.Agents/agents/{name}">
+            <div class="form-row">
+                <div>
+                    <label for="name">Name</label>
+                    <input id="name" aria-label="agent name" @bind="_name" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. agent-smoke" />
+                </div>
+                <div>
+                    <label for="display">Display name</label>
+                    <input id="display" aria-label="display name" @bind="_displayName" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. Smoke agent" />
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div>
+                    <label for="model">Model id (blank = the host's default)</label>
+                    <input id="model" aria-label="model id" @bind="_modelId" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. deepseek-flash" />
+                </div>
+                <div>
+                    <label for="driver">Driver</label>
+                    <select id="driver" aria-label="driver" @bind="_driver" @bind:after="RebuildPreview">
+                        <option value="external">external</option>
+                        <option value="internal">internal</option>
+                    </select>
+                </div>
+            </div>
+
+            <label for="tools">Tools</label>
+            <select id="tools" aria-label="tool filter" @bind="_toolMode" @bind:after="RebuildPreview">
+                <option value="none">none — the agent may read, and may not call a tool</option>
+                <option value="all">all — every tool the host gates</option>
+                <option value="list">a list — the tools named below</option>
+            </select>
+
+            @if (_toolMode == "list")
+            {
+                <label for="toollist">Tool names, comma separated</label>
+                <input id="toollist" aria-label="tool list" @bind="_toolList" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. read_file, write_file" />
+            }
+
+            <label for="message">First message (optional)</label>
+            <textarea id="message" aria-label="first message" rows="3" @bind="_message" @bind:event="oninput" @bind:after="RebuildPreview"
+                      placeholder="Leave blank to create the agent idle."></textarea>
+
+            @if (_notice is { Length: > 0 })
+            {
+                <div class="alert @(_noticeIsError ? "alert-error" : "alert-ok")" role="alert">@_notice</div>
+            }
+
+            <div class="row">
+                <button class="btn btn-primary" type="button" data-action="create-agent" @onclick="CreateAsync"
+                        title="@_submitWhy" aria-describedby="@(_submitWhy.Length > 0 ? "submit-why" : null)"
+                        disabled="@(_busy || !_mayWrite || string.IsNullOrWhiteSpace(_name))">
+                    @(_busy ? "Working…" : "Create")
+                </button>
+                <a class="btn" href="/portal/sessions">All sessions</a>
+            </div>
+            @* M14 R5d (request row X15) — why the action is disabled, in words: a `title` alone is announced
+               inconsistently and needs a hover, and a disabled button cannot be focused to read it. *@
+            @if (_submitWhy.Length > 0)
+            {
+                <p class="reason" id="submit-why">@_submitWhy</p>
+            }
+        </Card>
+
+        <Card Title="What will be sent" Subtitle="the exact PUT body">
+            <JsonViewer Node="_previewNode" />
+        </Card>
+    </div>
+}
+
+@code {
+    private ArmScope? _scope;
+    private bool _mayWrite;
+
+    /// <summary>The reason the submit is disabled, or empty when it is not (request row X15).</summary>
+    private string _submitWhy => SubmitWhy.Of(
+        _busy,
+        _mayWrite,
+        _reason,
+        null,
+        string.IsNullOrWhiteSpace(_name) ? "Write a name for the agent: the PUT needs one." : null);
+    private string _reason = "";
+    private string _name = "";
+    private string _displayName = "";
+    private string _modelId = "";
+    private string _driver = "external";
+    private string _toolMode = "none";
+    private string _toolList = "";
+    private string _message = "";
+    private bool _busy;
+    private string? _notice;
+    private bool _noticeIsError;
+    private JsonNode? _previewNode;
+
+    /// <summary>A field changed, so the preview is rebuilt — see the note on CreateWorkspace's.</summary>
+    private void RebuildPreview() => Build();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var ct = CancellationToken.None;
+        var (scope, _) = await Data.ResolveScopeAsync(ct);
+        _scope = scope;
+        if (scope is null)
+            return;
+
+        _mayWrite = await Data.MayAsync("Burbuja.Agents/agents/write", ct);
+        if (!_mayWrite)
+            _reason = "Creating an agent needs Burbuja.Agents/agents/write, which your roles do not grant. The kernel would refuse the PUT.";
+        RebuildPreview();
+    }
+
+    private void Build()
+    {
+        var properties = new JsonObject
+        {
+            ["displayName"] = string.IsNullOrWhiteSpace(_displayName) ? _name.Trim() : _displayName.Trim(),
+            ["driver"] = _driver,
+        };
+        if (!string.IsNullOrWhiteSpace(_modelId))
+            properties["modelId"] = _modelId.Trim();
+
+        // `tools: none` is a SENTINEL the host reads, not an empty list: an agent with no tools and an agent
+        // whose tool list is empty are different requests, and only one of them means "may not call anything".
+        properties["tools"] = _toolMode switch
+        {
+            "all" => "all",
+            "list" => new JsonArray(_toolList
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(t => (JsonNode?)JsonValue.Create(t))
+                .ToArray()),
+            _ => "none",
+        };
+
+        _previewNode = new JsonObject { ["properties"] = properties };
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_busy || _scope is not { } scope || string.IsNullOrWhiteSpace(_name))
+            return;
+        _busy = true;
+        _notice = null;
+        _noticeIsError = false;
+        var ct = CancellationToken.None;
+        try
+        {
+            var name = _name.Trim();
+            Build();
+            var result = await RunAsync(scope, name, ct);
+            if (!result.Ok)
+            {
+                _noticeIsError = true;
+                _notice = $"The host refused the agent: {result.ErrorCode} — {result.ErrorMessage}";
+                return;
+            }
+
+            // The first message is a SECOND call and is not part of the PUT: the agent exists either way. A
+            // failure here is reported and the person still lands on the agent, because the thing they asked
+            // to create WAS created.
+            if (!string.IsNullOrWhiteSpace(_message))
+            {
+                var sent = await SendFirstMessageAsync(scope, name, ct);
+                if (!sent.Ok)
+                {
+                    _noticeIsError = true;
+                    _notice = $"The agent was created, but the first message was refused: {sent.ErrorCode} — {sent.ErrorMessage}";
+                    return;
+                }
+            }
+
+            Nav.NavigateTo($"/portal/agents/{Uri.EscapeDataString(name)}");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>The write, with the kernel's refusal rendered instead of thrown — see CreateWorkspace's note.</summary>
+    private async Task<PortalData.PortalActionResult> RunAsync(ArmScope scope, string name, CancellationToken ct)
+    {
+        try
+        {
+            return await Data.RunActionAsync(
+                $"{scope.AgentsRoot}/agents/{Uri.EscapeDataString(name)}", null, _previewNode!.ToJsonString(), null, ct: ct, method: "PUT");
+        }
+        catch (ArmException ex)
+        {
+            return new PortalData.PortalActionResult(0, null, null, null, ex.Error.Code, ex.Error.Message);
+        }
+        catch (Exception ex)
+        {
+            // Not a refusal the portal knows how to phrase. Report it VERBATIM rather than swallow it: G36
+            // found the cost of a catch that did not match — the job was created and the form then hung with
+            // its button disabled and an EMPTY notice, which is the worst of both outcomes.
+            return new PortalData.PortalActionResult(0, null, null, null, ex.GetType().Name, ex.Message);
+        }
+    }
+
+    private async Task<PortalData.PortalActionResult> SendFirstMessageAsync(ArmScope scope, string name, CancellationToken ct)
+    {
+        try
+        {
+            return await Data.RunActionAsync(
+                $"{scope.AgentsRoot}/agents/{Uri.EscapeDataString(name)}/send",
+                null, new JsonObject { ["text"] = _message.Trim() }.ToJsonString(), null, ct: ct);
+        }
+        catch (ArmException ex)
+        {
+            return new PortalData.PortalActionResult(0, null, null, null, ex.Error.Code, ex.Error.Message);
+        }
+    }
+}

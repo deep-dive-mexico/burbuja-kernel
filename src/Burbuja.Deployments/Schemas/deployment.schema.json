@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "template": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "schema": { "type": "string" },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resource" }
+        }
+      }
+    },
+    "parameters": { "type": "object", "additionalProperties": true },
+    "mode": { "type": "string", "enum": ["incremental", "complete"] },
+    "requiresApproval": { "type": "boolean" },
+    "executionState": { "type": "string", "readOnly": true },
+    "steps": { "type": "array", "readOnly": true },
+    "outputs": { "type": "object", "readOnly": true }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,38}$" },
+        "kind": {
+          "type": "string",
+          "enum": ["container", "process", "queue", "bucket", "database", "secret", "function"]
+        },
+        "spec": { "type": "object", "additionalProperties": true },
+        "dependsOn": { "type": "array", "items": { "type": "string" } },
+        "requiresApproval": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "displayName": { "type": "string" },
+    "target": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "type": "string", "enum": ["in-memory", "local-process"] },
+        "workRoot": { "type": "string" },
+        "profile": { "type": "string" }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "maxParallel": { "type": "integer", "minimum": 1 },
+        "stepTimeout": { "type": "string" },
+        "approvalTimeout": { "type": "string" },
+        "requireApprovalForDeletes": { "type": "boolean" }
+      }
+    }
+  }
+}

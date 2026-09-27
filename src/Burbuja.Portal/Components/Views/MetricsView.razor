@@ -1,0 +1,143 @@
+@namespace Burbuja.Portal.Components.Views
+@using Burbuja.Portal.Services
+
+@*
+    M9 U3: the metrics ring. Every figure is folded from the events this page already read — the same source
+    the trajectory is built from — so the numbers and the rows cannot disagree, and nothing here is a second
+    model of what the kernel wrote.
+
+    The per-turn token bars are the sparkline: no JS, and a turn with no usage recorded draws as "not
+    measured" rather than as a zero-height bar, which is the difference between "cheap" and "unknown".
+*@
+<div class="metrics">
+    @if (Stats.Turns == 0 && Stats.Steps == 0)
+    {
+        <EmptyState Text="No model turn or tool call is on this stream yet." />
+    }
+    else
+    {
+        <div class="metric-grid">
+            <div class="metric">
+                <span class="metric-value">@Stats.Turns</span>
+                <span class="metric-label">turns</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">@Stats.Steps</span>
+                <span class="metric-label">tool calls</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">@Stats.LlmTime</span>
+                <span class="metric-label">model time</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">@Stats.ToolTime</span>
+                <span class="metric-label">tool time</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">@Stats.CacheHit</span>
+                <span class="metric-label">cache hit</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">@Stats.Tps</span>
+                <span class="metric-label">tokens / s</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">@Stats.Tokens</span>
+                <span class="metric-label">tokens</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">$@Stats.BookedUsd.ToString("0.0000", CultureInfo.InvariantCulture)</span>
+                <span class="metric-label">booked on this stream</span>
+            </div>
+        </div>
+
+        <h3>Tokens per turn</h3>
+        @if (Turns.Count == 0)
+        {
+            <p class="muted small">No completed turn on this range.</p>
+        }
+        else
+        {
+            <div class="spark" role="img" aria-label="output tokens per turn">
+                @foreach (var turn in Turns)
+                {
+                    <div class="spark-col" title="@turn.Title">
+                        <div class="spark-bar @(turn.Measured ? "" : "spark-unknown")"
+                             style="@($"height: {turn.Height}%")"></div>
+                        <span class="spark-label">@turn.Label</span>
+                    </div>
+                }
+            </div>
+        }
+
+        <p class="muted small">
+            @if (Stats.FullyMeasured)
+            {
+                <span>every turn and tool call on this range carries a measured duration.</span>
+            }
+            else
+            {
+                <span class="warn">
+                    partial: @Stats.TurnsMeasured of @Stats.Turns turns and @Stats.StepsMeasured of @Stats.Steps
+                    tool calls reported a duration. Turns written before M9 T1 carry none, and an unmeasured
+                    turn is drawn as unknown rather than as instant.
+                </span>
+            }
+            <span>, cost on this stream is the booking rows' own value; the run's total is in the header.</span>
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<LedgerEvent> Events { get; set; } = [];
+
+    private TrajectoryStats Stats { get; set; } = TrajectoryStats.Empty;
+
+    private IReadOnlyList<TurnBar> Turns { get; set; } = [];
+
+    protected override void OnParametersSet()
+    {
+        Stats = TrajectoryStatsBuilder.Fold(Events);
+        Turns = Bars();
+    }
+
+    /// <summary>
+    /// One bar per COMPLETED turn, in order, sized against the largest output on the range. A turn with no
+    /// recorded usage is kept in the list — dropping it would silently shorten the sparkline and make a run
+    /// look like it had fewer turns than it did.
+    /// </summary>
+    private IReadOnlyList<TurnBar> Bars()
+    {
+        var completed = Events
+            .Where(e => e.Type.Equals(TrajectoryStatsBuilder.TurnCompleted, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(e => e.Seq)
+            .ToList();
+        if (completed.Count == 0)
+            return [];
+
+        var outputs = completed
+            .Select(e => e.Payload?["usage"]?["output"]?.GetValue<int>())
+            .ToList();
+        var max = outputs.Where(o => o is > 0).DefaultIfEmpty(0).Max() ?? 0;
+
+        var bars = new List<TurnBar>(completed.Count);
+        for (var i = 0; i < completed.Count; i++)
+        {
+            var output = outputs[i];
+            var measured = output is not null;
+            var height = max > 0 && output is > 0
+                ? Math.Max(6, 100.0 * output.Value / max)
+                : measured ? 4 : 0;
+            var label = completed[i].Payload?["turn"]?.GetValue<int>() is { } turn ? turn.ToString(CultureInfo.InvariantCulture) : (i + 1).ToString(CultureInfo.InvariantCulture);
+            bars.Add(new TurnBar(
+                label,
+                height,
+                measured,
+                measured ? $"turn {label}: {output:N0} output tokens" : $"turn {label}: no usage recorded"));
+        }
+
+        return bars;
+    }
+
+    private sealed record TurnBar(string Label, double Height, bool Measured, string Title);
+}

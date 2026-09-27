@@ -1,0 +1,19 @@
+@namespace Burbuja.Portal.Components.Primitives
+@inject Burbuja.Portal.Services.PageLoadState Loads
+
+@*
+    M15 M-R3 (request row X35) — the `Loaded` claim for a page that renders its own <h1> instead of a
+    `PageHeader`. `PageHeader` reports the claim to `PageLoadState` in its own OnParametersSet, which is how the
+    root gets `data-loaded` and how G43 knows when to look; the four pages that draw their heading by hand
+    (WorkspaceDetail, MandateDetail, ResourceBlade) never reported, so the marker never appeared and the fact
+    pinned them. This component is that one line, rendering nothing: a page drops it anywhere with the same
+    expression it would have handed a PageHeader.
+*@
+
+@code {
+    /// <summary>The page's claim that its reads have landed — a failure counts, an absent type counts, a
+    /// rendered record counts; a spinner does not.</summary>
+    [Parameter] public bool Loaded { get; set; }
+
+    protected override void OnParametersSet() => Loads.Report(Loaded);
+}

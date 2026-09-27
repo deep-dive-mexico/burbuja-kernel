@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Agents.Abstractions</RootNamespace>
+    <Description>Contracts for the Burbuja.Agents resource provider (first application).</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>Burbuja.Agents.Abstractions</PackageId>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Burbuja.Agents" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

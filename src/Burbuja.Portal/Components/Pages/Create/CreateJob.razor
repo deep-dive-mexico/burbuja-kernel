@@ -1,0 +1,304 @@
+@page "/portal/create/job"
+@namespace Burbuja.Portal.Components.Pages.Create
+@inject PortalData Data
+@inject NavigationManager Nav
+
+@* M12 R4 — create an agent job. The body is the recipe the D4/D11 lanes established and the one
+   `PortalBrowserHelpers.PutJobAsync` uses: `tags["burbuja.io/scenario"]` at the ROOT (that is where the
+   scripted provider reads the scenario from) beside `properties`, and a `spec` carrying
+   kind/title/slug/brief/language/targetEnv/autoAccept. A "tidier" nested body is rejected with
+   `400 ValidationFailed`, which is a fact failing for a reason unrelated to the page. *@
+
+<PageTitle>Create an agent job</PageTitle>
+
+<PageHeader Eyebrow="Create" Title="Agent job"
+            Subtitle="A job in a workspace: the brief, the budget, and whether a human has to accept the result."
+            Loaded="@(_scope is not null)"/>
+
+@if (_scope is null)
+{
+    <LoadingState Text="resolving the tenancy…" />
+}
+else
+{
+    @if (!_mayWrite)
+    {
+        <div class="alert alert-warn" role="alert">
+            <strong>Your role cannot create resources</strong>
+            <span>@_reason</span>
+        </div>
+    }
+
+    <div class="panels">
+        <Card Title="Job" Subtitle="a PUT of Burbuja.Agents/workspaces/{ws}/jobs/{name}">
+            @if (_workspaces.Count == 0)
+            {
+                <EmptyState Text="A job lives inside a workspace and this resource group has none. Create a workspace first." />
+                @* M16 K-R2 — the form's SUBMIT is this page's one primary capsule; this escape hatch
+                   is an outline, so an empty resource group does not show two loud buttons. *@
+                <a class="btn btn-outline" href="/portal/create/workspace">Create a workspace</a>
+            }
+            else
+            {
+                <div class="form-row">
+                    <div>
+                        <label for="ws">Workspace</label>
+                        <select id="ws" aria-label="workspace" @bind="_workspace" @bind:after="RebuildPreview">
+                            @foreach (var ws in _workspaces)
+                            {
+                                <option value="@ws">@ws</option>
+                            }
+                        </select>
+                    </div>
+                    <div>
+                        <label for="name">Name</label>
+                        <input id="name" aria-label="name" @bind="_name" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. job-smoke" />
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div>
+                        <label for="kind">Kind</label>
+                        <select id="kind" aria-label="kind" @bind="_kind" @bind:after="RebuildPreview">
+                            <option value="implement">implement</option>
+                            <option value="review">review</option>
+                            <option value="explore">explore</option>
+                            <option value="fix">fix</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="lang">Language</label>
+                        <select id="lang" aria-label="language" @bind="_language" @bind:after="RebuildPreview">
+                            <option value="en">en</option>
+                            <option value="es">es</option>
+                        </select>
+                    </div>
+                </div>
+
+                <label for="title">Title</label>
+                <input id="title" aria-label="title" @bind="_title" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. write hello.txt" />
+
+                <label for="brief">Brief</label>
+                <textarea id="brief" aria-label="brief" rows="4" @bind="_brief" @bind:event="oninput" @bind:after="RebuildPreview"
+                          placeholder="What the job should do, in the words a person would use."></textarea>
+
+                <div class="form-row">
+                    <div>
+                        <label for="env">Target environment</label>
+                        <input id="env" aria-label="target env" @bind="_targetEnv" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. dev" />
+                    </div>
+                    <div>
+                        <label for="budget">Max budget USD</label>
+                        <input id="budget" aria-label="max budget usd" type="number" step="0.01" min="0" @bind="_budget" @bind:after="RebuildPreview" />
+                    </div>
+                    <div>
+                        <label for="turns">Max turns</label>
+                        <input id="turns" aria-label="max turns" type="number" min="1" @bind="_maxTurns" @bind:after="RebuildPreview" />
+                    </div>
+                </div>
+
+                <label class="form-label-inline" for="auto">
+                    <input id="auto" aria-label="auto accept" type="checkbox" @bind="_autoAccept" @bind:after="RebuildPreview" />
+                    <span>Accept the result automatically — <strong>off</strong>: the job is created Paused and waits for Accept on its page.</span>
+                </label>
+
+                @if (_scenarioEnabled)
+                {
+                    @* Offered only when the host runs the SCRIPTED provider. On a real model a scenario tag is a
+                       tag nothing reads, and a form that offered it would promise a determinism the host does not
+                       have. *@
+                    <label for="scenario">Scenario (this host runs the scripted provider)</label>
+                    <input id="scenario" aria-label="scenario" @bind="_scenario" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. two-step-success" />
+                }
+
+                @if (_notice is { Length: > 0 })
+                {
+                    <div class="alert @(_noticeIsError ? "alert-error" : "alert-ok")" role="alert">@_notice</div>
+                }
+
+                <div class="row">
+                    <button class="btn btn-primary" type="button" data-action="create-job" @onclick="CreateAsync"
+                            title="@_submitWhy" aria-describedby="@(_submitWhy.Length > 0 ? "submit-why" : null)"
+                            disabled="@(_busy || !_mayWrite || string.IsNullOrWhiteSpace(_name) || string.IsNullOrWhiteSpace(_brief))">
+                        @(_busy ? "Working…" : "Create")
+                    </button>
+                    <a class="btn" href="/portal/sessions">All sessions</a>
+                </div>
+                @if (_submitWhy.Length > 0)
+                {
+                    <p class="reason" id="submit-why">@_submitWhy</p>
+                }
+            }
+        </Card>
+
+        <Card Title="What will be sent" Subtitle="the exact PUT body">
+            <JsonViewer Node="_previewNode" />
+        </Card>
+    </div>
+}
+
+@code {
+    private ArmScope? _scope;
+    private bool _mayWrite;
+
+    /// <summary>The reason the submit is disabled, or empty when it is not (request row X15).</summary>
+    private string _submitWhy => SubmitWhy.Of(
+        _busy,
+        _mayWrite,
+        _reason,
+        null,
+        string.IsNullOrWhiteSpace(_name)
+            ? "Write a job name."
+            : string.IsNullOrWhiteSpace(_brief) ? "Write the brief: the job needs an instruction." : null);
+    private bool _scenarioEnabled;
+    private string _reason = "";
+    private IReadOnlyList<string> _workspaces = [];
+    private string _workspace = "";
+    private string _name = "";
+    private string _kind = "implement";
+    private string _title = "";
+    private string _brief = "";
+    private string _language = "en";
+    private string _targetEnv = "dev";
+    private decimal _budget = 1m;
+    private int _maxTurns = 8;
+    private bool _autoAccept;
+    private string _scenario = "";
+    private bool _busy;
+    private string? _notice;
+    private bool _noticeIsError;
+    private JsonNode? _previewNode;
+
+    /// <summary>A field changed, so the preview is rebuilt — see the note on CreateWorkspace's.</summary>
+    private void RebuildPreview() => Build();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var ct = CancellationToken.None;
+        var (scope, _) = await Data.ResolveScopeAsync(ct);
+        _scope = scope;
+        if (scope is null)
+            return;
+
+        _mayWrite = await Data.MayAsync("Burbuja.Agents/workspaces/jobs/write", ct);
+        if (!_mayWrite)
+            _reason = "Creating a job needs Burbuja.Agents/workspaces/jobs/write, which your roles do not grant. The kernel would refuse the PUT.";
+
+        try
+        {
+            _workspaces = (await Data.WorkspacesAsync(scope, ct))
+                .Select(w => w.Name)
+                .Where(n => n is { Length: > 0 })
+                .Select(n => n!)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToList();
+            _workspace = _workspaces.FirstOrDefault() ?? "";
+        }
+        catch (Exception)
+        {
+            _workspaces = [];
+        }
+
+        // The scripted provider's presence decides whether a scenario tag means anything. Read from the host's
+        // own plugin document rather than assumed.
+        try
+        {
+            _scenarioEnabled = (await Data.PluginHealthAsync(ct))?.Plugins
+                .Any(p => p.Id.Contains("Llm.Scripted", StringComparison.OrdinalIgnoreCase)) == true;
+        }
+        catch (Exception)
+        {
+            _scenarioEnabled = false;
+        }
+
+        RebuildPreview();
+    }
+
+    private void Build()
+    {
+        var spec = new JsonObject
+        {
+            ["kind"] = _kind,
+            ["title"] = string.IsNullOrWhiteSpace(_title) ? _name.Trim() : _title.Trim(),
+            ["slug"] = "job",
+            ["brief"] = _brief.Trim(),
+            ["language"] = _language,
+            ["targetEnv"] = _targetEnv,
+            ["autoAccept"] = _autoAccept,
+        };
+
+        var root = new JsonObject { ["properties"] = new JsonObject { ["spec"] = spec } };
+        if (_scenarioEnabled && !string.IsNullOrWhiteSpace(_scenario))
+            root["tags"] = new JsonObject { ["burbuja.io/scenario"] = _scenario.Trim() };
+
+        _previewNode = root;
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_busy || _scope is not { } scope || string.IsNullOrWhiteSpace(_name) || string.IsNullOrWhiteSpace(_workspace))
+            return;
+        _busy = true;
+        _notice = null;
+        _noticeIsError = false;
+        var ct = CancellationToken.None;
+        try
+        {
+            var name = _name.Trim();
+            Build();
+            var result = await RunAsync(scope, name, ct);
+            if (!result.Ok)
+            {
+                _noticeIsError = true;
+                _notice = $"The host refused the job: {result.ErrorCode} — {result.ErrorMessage}";
+                return;
+            }
+
+            // M13 R0 — 202 lands here as well as 200/201, and it is not a reason to stay. The job exists; its
+            // page is where a Paused one can be Accepted and where the live stream shows a running one.
+            Nav.NavigateTo($"/portal/jobs/{Uri.EscapeDataString(_workspace)}/{Uri.EscapeDataString(name)}");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// The write, with EVERY failure turned into a sentence the person can read.
+    ///
+    /// <para><b>M13 R0 — the 202 is the END of this call, not the start of a wait.</b> The kernel accepts a
+    /// job PUT with <c>202</c> and makes the OPERATION the whole run; a job created with auto-accept OFF is
+    /// stored <c>Paused</c> and never enqueued, so that operation never reaches a terminal state. Following it
+    /// (the default) meant <c>RunActionAsync</c> polled for its full 60 s, <c>_busy</c> stayed true, the
+    /// <c>finally</c> never ran and this form never navigated — the M12 report's "the job redirect needs a
+    /// debugger", which was never a Blazor bug. With <c>followOperation: false</c> the 202 returns at once,
+    /// the caller navigates, and the job page's own live stream shows the run (or the Paused state a human has
+    /// to Accept).</para>
+    ///
+    /// <para>`RunActionAsync` throws rather than returning a failure result when the kernel answers an error
+    /// status. The first version of this helper caught only <c>ArmException</c>, and G36 found the consequence:
+    /// the job WAS created, the form then hung with its Create button disabled and an EMPTY notice, because an
+    /// exception the catch did not match escaped the handler and the <c>finally</c> never ran. A create form
+    /// that neither navigates nor reports is the worst of both — so the catch here is total on purpose, and it
+    /// names the exception type when it is not one the page knows how to explain.</para>
+    /// </summary>
+    private async Task<PortalData.PortalActionResult> RunAsync(ArmScope scope, string name, CancellationToken ct)
+    {
+        try
+        {
+            return await Data.RunActionAsync(
+                $"{scope.AgentsRoot}/workspaces/{Uri.EscapeDataString(_workspace)}/jobs/{Uri.EscapeDataString(name)}",
+                null, _previewNode!.ToJsonString(), null, ct: ct, method: "PUT", followOperation: false);
+        }
+        catch (ArmException ex)
+        {
+            return new PortalData.PortalActionResult(0, null, null, null, ex.Error.Code, ex.Error.Message);
+        }
+        catch (Exception ex)
+        {
+            // Not a refusal the portal knows how to phrase: report it verbatim rather than swallow it.
+            return new PortalData.PortalActionResult(0, null, null, null, ex.GetType().Name, ex.Message);
+        }
+    }
+}

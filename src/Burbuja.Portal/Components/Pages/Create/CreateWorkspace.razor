@@ -1,0 +1,253 @@
+@page "/portal/create/workspace"
+@namespace Burbuja.Portal.Components.Pages.Create
+@inject PortalData Data
+@inject NavigationManager Nav
+
+@* M12 R4 — create a workspace. The form moved here from `/portal/workspaces`, which keeps a "+ New" link:
+   F1's finding was that the console had no way to make anything, and the fix is a Create menu where the eye
+   already is, landing on ONE form per kind. The write is the proven one — a PUT of
+   `Burbuja.Agents/workspaces` with, optionally, the compute provisioning the kernel follows to a terminal
+   state. *@
+
+<PageTitle>Create a workspace</PageTitle>
+
+<PageHeader Eyebrow="Create" Title="Workspace"
+            Subtitle="A compute root: the repo binding and branch rules the jobs and agents inside it run under."
+            Loaded="@(_scope is not null)"/>
+
+@if (_scope is null)
+{
+    <LoadingState Text="resolving the tenancy…" />
+}
+else
+{
+    @if (!_mayWrite)
+    {
+        <div class="alert alert-warn" role="alert">
+            <strong>Your role cannot create resources</strong>
+            <span>@_reason</span>
+        </div>
+    }
+
+    <div class="panels">
+        <Card Title="Workspace" Subtitle="a PUT of Burbuja.Agents/workspaces">
+            <div class="form-row">
+                <div>
+                    <label for="name">Name</label>
+                    <input id="name" aria-label="name" @bind="_name" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. ws-demo" />
+                </div>
+                <div>
+                    <label for="display">Display name</label>
+                    <input id="display" aria-label="display name" @bind="_displayName" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. Demo workspace" />
+                </div>
+            </div>
+
+            <label for="repo">Repo id (optional)</label>
+            <input id="repo" aria-label="repo id" @bind="_repoId" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. owner/repo" />
+
+            <div class="form-row">
+                <div>
+                    <label for="branch">Base branch</label>
+                    <input id="branch" aria-label="base branch" @bind="_branch" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="main" />
+                </div>
+                <div>
+                    <label for="profile">Profile</label>
+                    <select id="profile" aria-label="profile" @bind="_profile" @bind:after="RebuildPreview">
+                        <option value="DevFullAuto">DevFullAuto</option>
+                        <option value="DevGated">DevGated</option>
+                        <option value="ReadOnly">ReadOnly</option>
+                    </select>
+                </div>
+            </div>
+
+            <label for="budget">Default max USD per job</label>
+            <input id="budget" aria-label="default max usd" type="number" step="0.01" min="0" @bind="_budget" @bind:after="RebuildPreview" />
+
+            <label class="form-label-inline" for="init">
+                <input id="init" aria-label="initialize compute" type="checkbox" @bind="_initialize" @bind:after="RebuildPreview" />
+                <span>Initialize compute — the kernel provisions the workspace and answers 202</span>
+            </label>
+
+            @if (_initialize)
+            {
+                <div class="form-row">
+                    <div>
+                        <label for="backend">Compute backend</label>
+                        <select id="backend" aria-label="backend" @bind="_backend" @bind:after="RebuildPreview">
+                            <option value="local-directory">local-directory</option>
+                            <option value="git-worktree">git-worktree</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="size">Size</label>
+                        <input id="size" aria-label="size" @bind="_size" @bind:event="oninput" @bind:after="RebuildPreview" placeholder="e.g. small" />
+                    </div>
+                </div>
+            }
+
+            @if (_notice is { Length: > 0 })
+            {
+                <div class="alert @(_noticeIsError ? "alert-error" : "alert-ok")" role="alert">@_notice</div>
+            }
+
+            <div class="row">
+                <button class="btn btn-primary" type="button" data-action="create-workspace" @onclick="CreateAsync"
+                        title="@_submitWhy" aria-describedby="@(_submitWhy.Length > 0 ? "submit-why" : null)"
+                        disabled="@(_busy || !_mayWrite || string.IsNullOrWhiteSpace(_name))">
+                    @(_busy ? "Working…" : "Create")
+                </button>
+                <a class="btn" href="/portal/workspaces">All workspaces</a>
+            </div>
+            @* M14 R5d (request row X15) — why the action is disabled, in words a screen reader and a keyboard
+               user both get: a `title` alone is announced inconsistently and needs a hover. *@
+            @if (_submitWhy.Length > 0)
+            {
+                <p class="reason" id="submit-why">@_submitWhy</p>
+            }
+        </Card>
+
+        <Card Title="What will be sent" Subtitle="the exact PUT body">
+            <JsonViewer Node="_previewNode" />
+        </Card>
+    </div>
+}
+
+@code {
+    private ArmScope? _scope;
+    private bool _mayWrite;
+
+    /// <summary>The reason the submit is disabled, or empty when it is not (request row X15).</summary>
+    private string _submitWhy => SubmitWhy.Of(
+        _busy,
+        _mayWrite,
+        _reason,
+        null,
+        string.IsNullOrWhiteSpace(_name) ? "Write a name for the workspace: the PUT needs one." : null);
+    private string _reason = "";
+    private string _name = "";
+    private string _displayName = "";
+    private string _repoId = "";
+    private string _branch = "main";
+    private string _profile = "DevFullAuto";
+    private decimal _budget = 1m;
+    private bool _initialize = true;
+    private string _backend = "local-directory";
+    private string _size = "small";
+    private bool _busy;
+    private string? _notice;
+    private bool _noticeIsError;
+    private JsonNode? _previewNode;
+
+    /// <summary>
+    /// A field changed, so the preview is rebuilt.
+    ///
+    /// <para>`@bind:after` calls this on every one of them, and that is not a convenience: without it the
+    /// preview is a snapshot of the FIRST render. G36's screenshot caught exactly that on the job form — the
+    /// preview read `"title": ""` and `"brief": ""` beside two filled boxes — and a preview of a body the form
+    /// will not send is worse than no preview, because the person trusts it.</para>
+    /// </summary>
+    private void RebuildPreview() => Build();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var ct = CancellationToken.None;
+        var (scope, _) = await Data.ResolveScopeAsync(ct);
+        _scope = scope;
+        if (scope is null)
+            return;
+
+        // Whether the caller's roles allow the write at all. Disabled WITH A REASON rather than hidden: a
+        // Reader who follows a Create link should be told why the button does not work, not shown a form that
+        // silently refuses.
+        _mayWrite = await Data.MayAsync("Burbuja.Agents/workspaces/write", ct);
+        if (!_mayWrite)
+            _reason = "Creating a workspace needs Burbuja.Agents/workspaces/write, which your roles do not grant. The kernel would refuse the PUT.";
+
+        RebuildPreview();
+    }
+
+    /// <summary>One builder for the preview AND the write, so the two cannot disagree.</summary>
+    private void Build()
+    {
+        var properties = new JsonObject
+        {
+            ["displayName"] = string.IsNullOrWhiteSpace(_displayName) ? _name.Trim() : _displayName.Trim(),
+            ["baseBranch"] = string.IsNullOrWhiteSpace(_branch) ? "main" : _branch.Trim(),
+            ["profile"] = _profile,
+            ["defaultMaxUsd"] = _budget,
+            ["revision"] = 1,
+        };
+        if (!string.IsNullOrWhiteSpace(_repoId))
+            properties["repoId"] = _repoId.Trim();
+        if (_initialize)
+        {
+            properties["initialize"] = true;
+            properties["compute"] = new JsonObject { ["backend"] = _backend, ["size"] = _size };
+        }
+
+        _previewNode = new JsonObject { ["properties"] = properties };
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_busy || _scope is not { } scope || string.IsNullOrWhiteSpace(_name))
+            return;
+        _busy = true;
+        _notice = null;
+        _noticeIsError = false;
+        var ct = CancellationToken.None;
+        try
+        {
+            var name = _name.Trim();
+            // Provisioning takes as long as it takes: the kernel answers 202 and `RunActionAsync` follows
+            // Azure-AsyncOperation, so this is the poll budget, not a page timeout.
+            var result = await RunAsync(scope, name, ct);
+
+            if (!result.Ok)
+            {
+                _noticeIsError = true;
+                _notice = $"The host refused the workspace: {result.ErrorCode} — {result.ErrorMessage}";
+                return;
+            }
+
+            // Land on the thing that was made. A form that stays put after a success makes the person guess
+            // whether it worked, and F1 is about a console that never showed them where anything was.
+            Nav.NavigateTo($"/portal/workspaces/{Uri.EscapeDataString(name)}");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// The write, with the kernel's refusals turned into a sentence instead of an exception.
+    ///
+    /// <para>`RunActionAsync` THROWS an <c>ArmException</c> when the kernel answers an error status; it returns
+    /// a non-<c>Ok</c> result only for a body it could not parse or an action the provider does not declare. A
+    /// page that handles only <c>!result.Ok</c> therefore HANGS when the host refuses the write — which is what
+    /// G36 found: the Create button stayed disabled with an empty notice, because the exception escaped
+    /// <c>CreateAsync</c> and the <c>finally</c> that clears <c>_busy</c> never ran. The portal's rule is that
+    /// the kernel's own words are the answer, so the refusal is rendered.</para>
+    /// </summary>
+    private async Task<PortalData.PortalActionResult> RunAsync(ArmScope scope, string name, CancellationToken ct)
+    {
+        try
+        {
+            return await Data.RunActionAsync(
+                $"{scope.AgentsRoot}/workspaces/{name}", null, _previewNode!.ToJsonString(), null,
+                TimeSpan.FromMinutes(2), ct, method: "PUT");
+        }
+        catch (ArmException ex)
+        {
+            return new PortalData.PortalActionResult(0, null, null, null, ex.Error.Code, ex.Error.Message);
+        }
+        catch (Exception ex)
+        {
+            // Not a refusal the portal knows how to phrase. Report it VERBATIM rather than swallow it: G36
+            // found the cost of a catch that did not match — the job was created and the form then hung with
+            // its button disabled and an EMPTY notice, which is the worst of both outcomes.
+            return new PortalData.PortalActionResult(0, null, null, null, ex.GetType().Name, ex.Message);
+        }
+    }
+}

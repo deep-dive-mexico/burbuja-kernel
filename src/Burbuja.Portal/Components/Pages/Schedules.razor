@@ -1,0 +1,207 @@
+@page "/portal/schedules"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject PortalPermissions Permissions
+@inject IPortalArm Arm
+
+<PageTitle>Schedules</PageTitle>
+
+<PageHeader Eyebrow="Operate" Title="Schedules" Loaded="@(_rows.Count > 0 || _failure is not null)">
+    <SubtitleContent>
+            The cron schedules the kernel's sweeper fires. <code>run</code> fires the current window now, through the
+            same source the sweeper uses — so the job it creates is named for that window, and a sweep that fires the
+            same one addresses the same job rather than a second one.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+@if (_notice is { Length: > 0 })
+{
+    <div class="alert alert-info" role="status">@_notice</div>
+}
+
+@if (_failure is null && _rows.Count == 0)
+{
+    <Card Title="Schedules" Subtitle="@_scope">
+        <EmptyState Text="No schedules in this resource group. A schedule is a PUT of Burbuja.Pomnibot/schedules carrying a five-field cron and a template job." />
+    </Card>
+}
+
+@if (_failure is null && _rows.Count > 0)
+{
+    <Card Title="Schedules" Subtitle="@($"{_rows.Count} in {_scope}")">
+        <div class="grid-scroll"><QuickGrid Items="_rows.AsQueryable()" Class="grid">
+            <PropertyColumn Property="r => r.State" Title="state" Sortable="true" />
+            <PropertyColumn Property="r => r.Name" Title="name" Sortable="true" />
+            <PropertyColumn Property="r => r.Cron" Title="cron" />
+            <PropertyColumn Property="r => r.Zone" Title="zone" />
+            <PropertyColumn Property="r => r.LastFired" Title="last fired" Sortable="true" />
+            <PropertyColumn Property="r => r.NextRun" Title="next" Sortable="true" />
+            <TemplateColumn Title="last job">
+                <ChildContent Context="row">
+                    @if (row.LastJobName is { Length: > 0 } job)
+                    {
+                        <a href="@JobHref(job)">@job</a>
+                    }
+                    else
+                    {
+                        <span class="muted">never</span>
+                    }
+                </ChildContent>
+            </TemplateColumn>
+            <TemplateColumn Title="" Align="Align.Right">
+                <ChildContent Context="row">
+                    @if (CanAct)
+                    {
+                        @* M16 K-R2 — the row's ONE bordered act is the one that does the work (a schedule's job is to
+                       run); pause/resume is the ghost beside it. Two identical ghosts left the row with no
+                       visible verb at all. *@
+                        <button class="btn btn-outline btn-small" disabled="@_busy" @onclick="() => RunAsync(row)">run</button>
+                        <button class="btn btn-ghost btn-small" disabled="@_busy" @onclick="() => TogglePausedAsync(row)">
+                            @(row.Paused ? "resume" : "pause")
+                        </button>
+                    }
+                </ChildContent>
+            </TemplateColumn>
+        </QuickGrid></div>
+    </Card>
+}
+
+@code {
+    private PortalFailure? _failure;
+    private string _notice = "";
+    private string _scope = "";
+    private ArmScope? _scopeRef;
+    private List<ScheduleRow> _rows = [];
+    private IReadOnlyList<string> _roles = [];
+    private bool _busy;
+
+    /// <summary>
+    /// UX only — the kernel re-evaluates on the wire, so a hidden button is never a protection. It is the
+    /// same action the CLI's <c>pomni schedules run</c> posts.
+    /// </summary>
+    private bool CanAct => Permissions.Can(_roles, "Burbuja.Pomnibot/schedules/run/action");
+
+    protected override async Task OnInitializedAsync()
+    {
+        var session = await Arm.SessionAsync();
+        _roles = session?.Roles ?? [];
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _failure = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scopeRef = scope;
+            _scope = scope.Display;
+
+            _rows = [.. (await Data.SchedulesAsync(scope, ct)).Select(s => new ScheduleRow(
+                s.Name ?? "?",
+                s.Properties?.Paused == true ? "paused" : "active",
+                s.Properties?.Paused == true,
+                s.Properties?.Cron ?? "—",
+                s.Properties?.TimeZone ?? "UTC",
+                s.Properties?.LastFiredAt is { } fired ? fired.ToString("u") : "—",
+                s.Properties?.NextRunAt is { } next ? next.ToString("u") : "—",
+                s.Properties?.LastJobName,
+                s.ETag))];
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    /// <summary>
+    /// Fire the current window. The action answers 202 — the job is created by the same source the sweeper
+    /// calls — so the page reloads rather than claiming the run finished.
+    /// </summary>
+    private async Task RunAsync(ScheduleRow row) => await ActAsync(
+        $"{_scopeRef!.PomnibotRoot}/schedules/{row.Name}/run",
+        row,
+        new JsonObject(),
+        verb: "POST",
+        done: $"run {row.Name} — the window's job is on its way; reload in a moment to see it as last job");
+
+    /// <summary>
+    /// Pause or resume by PATCH, which is what the CLI does: <c>paused</c> is one bit and the sweeper reads
+    /// it, so it needs no action of its own and a second writer would be a second source of truth.
+    /// </summary>
+    private async Task TogglePausedAsync(ScheduleRow row) => await ActAsync(
+        $"{_scopeRef!.PomnibotRoot}/schedules/{row.Name}",
+        row,
+        new JsonObject { ["properties"] = new JsonObject { ["paused"] = !row.Paused } },
+        verb: "PATCH",
+        done: $"{(row.Paused ? "resumed" : "paused")} {row.Name}");
+
+    private async Task ActAsync(string path, ScheduleRow row, JsonObject body, string verb, string done)
+    {
+        if (_busy)
+            return;
+        _busy = true;
+        _notice = "";
+        _failure = null;
+        PortalFailure? failure = null;
+        string notice = "";
+        var ct = CancellationToken.None;
+        try
+        {
+            var client = await Data.ClientAsync(ct);
+            var response = verb == "POST"
+                ? await client.PostActionAsync(path, body, row.ETag, ct)
+                : await client.SendAsync(new ArmClientRequest("PATCH", path, Body: body), ct);
+
+            if (response.StatusCode == 412)
+            {
+                // Surfaced, never retried: this page's copy moved and a human has to look at what changed.
+                notice = $"'{row.Name}' changed since this page rendered it. Reload and act again.";
+            }
+            else if (response.StatusCode is < 200 or > 299)
+            {
+                failure = PortalFailure.Local(
+                    $"HTTP {response.StatusCode}",
+                    response.Error?.Message ?? $"The kernel refused to {verb.ToLowerInvariant()} '{row.Name}'.");
+            }
+            else
+            {
+                notice = done;
+            }
+        }
+        catch (ArmException ex)
+        {
+            failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+            // Reload FIRST and set the outcome after, because the reload clears the failure — the first
+            // version set it inside the try and the refresh in this finally wiped it, so a refusal the
+            // kernel had explained was never rendered. The fact that caught it asserts the kernel's own
+            // words reach the page.
+            await ReloadAsync();
+            _failure = failure;
+            _notice = notice;
+        }
+    }
+    private string JobHref(string job) =>
+        $"/portal/explore/resource?id={Uri.EscapeDataString($"{_scopeRef?.PomnibotRoot}/jobs/{job}")}";
+
+    private sealed record ScheduleRow(
+        string Name,
+        string State,
+        bool Paused,
+        string Cron,
+        string Zone,
+        string LastFired,
+        string NextRun,
+        string? LastJobName,
+        string? ETag);
+}

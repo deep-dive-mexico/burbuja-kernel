@@ -1,0 +1,68 @@
+@namespace Burbuja.Portal.Components
+@inject PortalRegistry Portals
+@{
+    var scope = Portals.Of(HttpContext?.Request.Path.Value);
+    // Anonymous doors are static forms; the authenticated hub cannot boot their circuit.
+    var interactive = HttpContext?.User.Identity?.IsAuthenticated != false;
+    IComponentRenderMode? mode = interactive ? InteractiveServer : null;
+}
+<!DOCTYPE html>
+<html lang="@scope.Lang" data-portal="@scope.Id" data-theme-key="@scope.ThemeKey"
+      data-theme-default="@scope.DefaultTheme" data-density-key="@scope.DensityKey">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    @* One root base, cookie and hub across every registered document. *@
+    <base href="/" />
+    <title>@scope.Title</title>
+    <link rel="icon" href="@Asset(scope.Favicon)" />
+    <link rel="stylesheet" href="@Asset("_content/Burbuja.Portal/burbuja-tokens.css")" />
+    <link rel="stylesheet" href="@Asset("_content/Burbuja.Portal/portal.css")" />
+    @foreach (var stylesheet in scope.Stylesheets)
+    {
+        <link rel="stylesheet" href="@Asset(stylesheet)" />
+    }
+    <HeadOutlet @rendermode="mode" />
+</head>
+<body>
+    @* Preferences are applied before content paints. The registered document supplies the keys/default. *@
+    <script>
+        (function () {
+            var html = document.documentElement;
+            var stored = null;
+            try { stored = localStorage.getItem(html.getAttribute('data-theme-key')); } catch (e) { }
+            var fallback = html.getAttribute('data-theme-default');
+            var dark = stored ? stored === 'dark' : fallback === 'dark' || (fallback === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+            if (dark) document.body.setAttribute('data-theme', 'dark');
+            try { stored = localStorage.getItem('burbuja.rail'); } catch (e) { stored = null; }
+            html.setAttribute('data-rail', stored === 'collapsed' ? 'collapsed' : 'expanded');
+            var density = html.getAttribute('data-density-key');
+            if (density) {
+                try { if (localStorage.getItem(density) === 'compact') html.setAttribute('data-density', 'compact'); } catch (e) { }
+            }
+        })();
+    </script>
+    <Routes @rendermode="mode" Portal="@scope.Id" />
+    <div id="components-reconnect-modal" class="reconnect" role="status" aria-live="polite">
+        <div class="reconnect-card">
+            <p class="reconnect-title">@scope.ReconnectTitle</p>
+            <p class="reconnect-sub">@scope.ReconnectMessage</p>
+            <button type="button" class="btn btn-small" onclick="location.reload()">@scope.ReloadLabel</button>
+        </div>
+    </div>
+    @if (interactive)
+    {
+        <script src="@Asset("_framework/blazor.web.js")"></script>
+    }
+    <script src="@Asset("_content/Burbuja.Portal/portal.js")"></script>
+    @foreach (var script in scope.Scripts)
+    {
+        <script src="@Asset(script)"></script>
+    }
+</body>
+</html>
+
+@code {
+    [CascadingParameter] public HttpContext? HttpContext { get; set; }
+    private string Asset(string path) => "/" + Assets[path.TrimStart('/')].TrimStart('/');
+}

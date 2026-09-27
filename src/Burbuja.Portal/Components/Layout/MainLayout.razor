@@ -1,0 +1,311 @@
+@namespace Burbuja.Portal.Components.Layout
+@inherits LayoutComponentBase
+@inject IPortalArm Arm
+@inject NavigationManager Nav
+@inject PortalData Data
+@inject Burbuja.Portal.Services.PageLoadState Loads
+
+@* M12 R1 — the shell. The top bar and the rail are the Azure-portal shape the M12 plan asked for,
+   honest to what this kernel actually has: everything in the Create menu is a resource the ARM API
+   really takes, and nothing in the rail points at a page that does not exist. *@
+<div class="shell">
+    <header class="topbar">
+        @* The drawer button exists only under 900px, where the rail is an overlay. It is a plain
+           button and portal.js owns the state — see the note in that file for why the rail's width is
+           an attribute on <html> rather than a Blazor field. *@
+        <button class="btn btn-ghost rail-drawer-button" type="button" data-rail-drawer
+                aria-label="Show the navigation" title="Sections">
+            <Icon Name="menu" />
+        </button>
+        <a class="brand" href="/portal" title="Burbuja">
+            <span class="brand-mark"><Icon Name="logo" Size="22" /></span>
+            <span class="brand-name">Burbuja</span>
+        </a>
+        @if (_session is not null)
+        {
+            @* Navigation only exists for a signed-in caller: links that bounce back to sign-in are
+               noise, and the anonymous shell must not describe the application. *@
+            <nav class="crumbs" aria-label="Breadcrumb">
+                @for (var i = 0; i < _crumbs.Count; i++)
+                {
+                    var crumb = _crumbs[i];
+                    if (i > 0)
+                    {
+                        <span class="crumb-sep">/</span>
+                    }
+                    @if (crumb.Href is { Length: > 0 } && i < _crumbs.Count - 1)
+                    {
+                        <a class="crumb" href="@crumb.Href">@crumb.Label</a>
+                    }
+                    else
+                    {
+                        <span class="crumb crumb-current" aria-current="page">@crumb.Label</span>
+                    }
+                }
+            </nav>
+        }
+        <div class="topbar-right">
+            @if (_session is not null)
+            {
+                @* U3: the box U1 left out, with somewhere to go. A GET form, so the query is in the URL
+                   and a result can be linked to — a search that only lived in component state could not be. *@
+                <form class="search" method="get" action="/portal/search">
+                    <input class="input" type="search" name="q" placeholder="Search" aria-label="Search names, paths, principals" />
+                </form>
+
+                @* M12 R4 — the global Create menu. It is here, in the top bar, because the finding this
+                   round answers (F1) is that a person who sat down to use the console could not find how
+                   to make anything: the only create control in the whole application was a collapsed
+                   disclosure on one page. A primary verb belongs where the eye already is. *@
+                <div class="menu">
+                    @* The label is a `span.btn-label` so the narrow top bar can drop the WORD without dropping
+                       the accessible name: `aria-label` carries "Create" at every width, and the button's own
+                       text is what a desktop reader sees. *@
+                    @* M13 R0 — F22: a caller whose roles grant no `*/write` gets the button DISABLED WITH THE
+                       REASON rather than a menu of five doors that each end in a 403. One `MayAsync` per
+                       circuit, cached in `_mayWrite`; `null` (not yet answered) keeps the button live, because
+                       a shell that guessed "no" would flash a refusal at an owner on every navigation. *@
+                    @if (_mayWrite is false)
+                    {
+                        <button class="btn btn-primary btn-disabled" type="button" data-create-menu
+                                aria-disabled="true" aria-label="Create"
+                                title="@NoCreateWhy">
+                            <Icon Name="plus" /><span class="btn-label">Create</span>
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary" type="button" data-create-menu
+                                @onclick="() => _createOpen = !_createOpen"
+                                aria-haspopup="menu" aria-expanded="@(_createOpen ? "true" : "false")" aria-label="Create">
+                            <Icon Name="plus" /><span class="btn-label">Create</span>
+                        </button>
+                    }
+                    @if (_createOpen)
+                    {
+                        <ul class="menu-panel" role="menu">
+                            @foreach (var item in Creates)
+                            {
+                                <li role="none">
+                                    <a class="menu-item" role="menuitem" href="@item.Href" @onclick="() => _createOpen = false">
+                                        <span class="menu-item-label">@item.Label</span>
+                                        <span class="menu-item-hint">@item.Hint</span>
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+
+                @* The approvals bell. A count of what is parked, from the ONE read the shell can afford
+                   per page (PortalData.PendingApprovalCountAsync). No count means the question could not
+                   be asked, and then there is NO badge: a zero would be a claim that nothing needs a
+                   decision, and the truth is that nobody knows. *@
+                <a class="btn btn-ghost bell" href="/portal/approvals"
+                   title="@(_pending is null ? "Approvals" : $"{Text.Plural(_pending.Value, "approval", "approvals")} pending")"
+                   aria-label="@(_pending is null ? "Approvals" : $"Approvals: {_pending} pending")">
+                    <Icon Name="bell" />
+                    @if (_pending is > 0)
+                    {
+                        <span class="bell-count">@_pending</span>
+                    }
+                </a>
+            }
+
+            @* M9 U1: the theme toggle. Outside the session branch on purpose — the sign-in page is themed
+               too, and a reader who cannot see the form should still be able to stop it being dark. The
+               glyph is chosen by CSS from our own attribute, so it always matches the page. *@
+            <button class="btn btn-ghost theme-toggle" type="button" data-theme-toggle
+                    aria-label="Switch between the light and dark theme" title="Theme">
+                <span class="theme-glyph theme-glyph-light"><Icon Name="theme-light" /></span>
+                <span class="theme-glyph theme-glyph-dark"><Icon Name="theme-dark" /></span>
+            </button>
+            @* The rail's collapse control: desktop only, and hidden by CSS under 900px where the rail is
+               a drawer instead. It is a top-bar button rather than a rail footer because a control that
+               moves when the thing it controls moves is a control nobody finds twice. *@
+            @if (_session is not null)
+            {
+                <button class="btn btn-ghost rail-toggle" type="button" data-rail-toggle
+                        aria-label="Collapse or expand the navigation" title="Collapse navigation">
+                    <Icon Name="chevron-left" />
+                </button>
+            }
+
+            @if (_session is not null)
+            {
+                <span class="session-chip" title="@ChipTitle">
+                    <strong>@_session.Username</strong>
+                    @* M16 — the chip's `dot dot-live` is GONE. It was a green dot beside the username, and it
+                       claimed the host was live while saying nothing about the session: the host's liveness is
+                       the sign-in pill's fact, and a list of names is not where a reader looks for it.
+                       M15 M-UI (item 17) — the chip said "· no roles" for an empty role set, which reads as a
+                       claim about the PERSON. The true statement is narrower and is about the KEY: the caller
+                       authenticated, and the key granted no roles — which is what the AKOS user key looks like
+                       when its roles have not come back from the kernel's ARM roleDefinitions. The chip names
+                       the key and says what was not granted. It does NOT claim the session's roles are unknown;
+                       an unanswered read is a different state and this is the one place a reader sees it. *@
+                    <span class="muted">· @(_session.Roles.Count > 0 ? string.Join(", ", _session.Roles) : NoRolesWhy)</span>
+                </span>
+                <form method="post" action="/portal/signout" data-enhance="false">
+                    <button class="btn btn-outline" type="submit" aria-label="Sign out" title="@SignOutTitle">
+                        <Icon Name="external" /><span class="btn-label">Sign out</span>
+                    </button>
+                </form>
+            }
+            else
+            {
+                <a class="btn btn-outline" href="/portal/signin">Sign in</a>
+            }
+        </div>
+    </header>
+    <div class="shell-body">
+        @if (_session is not null)
+        {
+            <NavMenu />
+        }
+        @* M14 R9 — the content region is its own component because it is the page ROOT: `PageRoot` writes the
+           page's `data-loaded` marker there. It used to be a plain `<main>` here and the marker sat on each
+           page's header, which is what lane S's G43 refuses (see the note in `PageRoot.razor`). *@
+        <PageRoot>
+            @Body
+        </PageRoot>
+    </div>
+    <footer class="footer muted">
+        Burbuja Server · the portal talks ARM to its own host; every write is re-authorised by the kernel.
+    </footer>
+</div>
+
+@code {
+    private PortalSession? _session;
+    private IReadOnlyList<Crumb> _crumbs = [];
+    private bool _createOpen;
+    private int? _pending;
+
+    /// <summary>
+    /// M13 R0 — F22. Whether this caller may create anything, asked ONCE per circuit. `null` means "not
+    /// answered yet" and is deliberately not `false`: the shell renders on every navigation and a guess
+    /// would show a refusal to somebody who is allowed. Same mirror-of-RBAC caveat as Home's: the kernel
+    /// re-evaluates every write, and this only decides whether a door is offered.
+    /// </summary>
+    private bool? _mayWrite;
+
+    private const string NoCreateWhy =
+        "Your role cannot create resources: creating anything here needs write on the namespace's resource "
+        + "(Burbuja.Agents/workspaces/write for a workspace, a job or an agent). The kernel would refuse the PUT.";
+
+    /// <summary>
+    /// M15 M-UI (item 17) — what the session chip says when the caller's role set is empty. It is a sentence
+    /// about the KEY rather than the two words "no roles", because "no roles" reads as a claim about the
+    /// person: the caller authenticated, and the key they joined granted nothing. The AKOS user key is the
+    /// case that surfaced it — its roles are ARM <c>roleDefinitions</c> the kernel is asked for, so a session
+    /// that came up before that answer is the one a reader sees here.
+    /// </summary>
+    private const string NoRolesWhy = "no roles granted to this account's key";
+
+    /// <summary>
+    /// The Create menu's THREE kinds — the kernel's own resources, in the order a person is likely to want
+    /// them. Every one of these is a real ARM resource this kernel takes, and the hints say what the thing
+    /// IS rather than assuming the reader knows.
+    ///
+    /// <para><b>M16 removed the other two.</b> "Consulta" and "Mandate" are AKOS resources, their forms are
+    /// Spanish, they live under `/akos`, and they are reached from the AKOS portal's own rail and pages.
+    /// A kernel menu that offered them was offering a door into the other console from inside this one —
+    /// and for a kernel-only account it was a door that ends in `?error=noaccess`. What a menu offers is a
+    /// claim about where the reader is.</para>
+    /// </summary>
+    private static readonly (string Label, string Hint, string Href)[] Creates =
+    [
+        ("Agent job", "A scripted or model-backed job in a workspace", "/portal/create/job"),
+        ("Stateful agent", "A named agent that keeps its session", "/portal/create/agent"),
+        ("Workspace", "The compute root a job or agent runs in", "/portal/create/workspace"),
+    ];
+
+    /// <summary>
+    /// The sign-out button's tooltip, which is also where the username lives at phone width — the chip that
+    /// normally shows it is hidden under 620px, and a person should still be able to see who they are
+    /// signed in as without opening a page.
+    /// </summary>
+    private string SignOutTitle => $"Sign out — signed in as {_session?.Username}";
+
+    private string ChipTitle =>
+        $"Signed in as {_session?.Username} (principal {_session?.PrincipalId}). "
+        + "The cookie carries a session id; the key stays in the Host.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _session = await Arm.SessionAsync();
+        Rebuild();
+        Nav.LocationChanged += (_, _) => InvokeAsync(() =>
+        {
+            // M14 R9 — the marker is about the page ON SCREEN: a navigation starts from "nothing known yet" and
+            // the page that arrives reports for itself when its own read returns. Without this, the previous
+            // page's claim would stand over a page whose reads are still in flight — the same lie the header
+            // placement told, one navigation later.
+            Loads.Reset();
+            Rebuild();
+            StateHasChanged();
+        });
+
+        if (_session is not null)
+        {
+            try
+            {
+                _pending = await Data.PendingApprovalCountAsync(CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // The bell is decoration on a page that has real work to do: a host that cannot answer
+                // must not be able to fail the shell. Null renders no badge, which is the honest answer.
+                _pending = null;
+            }
+
+            // M13 R0 (F22): the same rule for the Create button. The read rides the one the shell already
+            // makes and is cached for the circuit's life — `PortalData.MayAsync` asks the kernel's own role
+            // definitions, so a second ask would be a second round trip for a constant.
+            try
+            {
+                _mayWrite = await Data.MayAsync("Burbuja.Agents/workspaces/write", CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                _mayWrite = null;
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// The breadcrumb, derived from the URL a person is on rather than declared by each page: a page that
+    /// spelled its own trail would need every page to remember to, and the one that forgot would be the one
+    /// that looks broken. The shape it assumes is the routes' own — <c>/portal/{section}/{leaf}</c>.
+    /// </summary>
+    private void Rebuild()
+    {
+        var path = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var crumbs = new List<Crumb> { new("portal", "/portal") };
+
+        // `/portal` IS the home page. Anything deeper has a section, and everything after the section is
+        // the leaf — joined rather than truncated to one segment, because `/portal/pomnibot/jobs/x` has a
+        // leaf of "jobs/x" and showing only "jobs" would name the wrong thing.
+        if (parts.Length <= 1)
+        {
+            crumbs.Add(new Crumb("home", null));
+        }
+        else
+        {
+            crumbs.Add(new Crumb(parts[1], $"/portal/{parts[1]}"));
+            if (parts.Length > 2)
+            {
+                // Decoded for READING: a resource id is escaped in the URL and a person should see the id,
+                // not the escaping.
+                crumbs.Add(new Crumb(string.Join('/', parts.Skip(2).Select(Uri.UnescapeDataString)), null));
+            }
+        }
+
+        _crumbs = crumbs;
+    }
+
+    private sealed record Crumb(string Label, string? Href);
+}

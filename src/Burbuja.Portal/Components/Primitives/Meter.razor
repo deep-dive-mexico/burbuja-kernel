@@ -1,0 +1,61 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@* M12 R1 — the meter. One magnitude against one limit, drawn on a ramp of a SINGLE hue rather than with
+ * a series colour, because "how much of the budget is gone" is a quantity and not a category; giving it
+ * one of the eight categorical slots is how a chart ends up implying a comparison that does not exist.
+ *
+ * The fill changes only when the caller says the state changed — good/warning/serious/critical are the
+ * corpus's own four words and they are always accompanied by <see cref="Note"/> or the label, never
+ * carried by the colour alone. A meter a reader has to interpret by hue is a meter half the readers
+ * cannot use.
+ *@
+<div class="meter">
+    <div class="meter-head">
+        <span>@Label</span>
+        @if (Value is { Length: > 0 })
+        {
+            <span class="tabular">@Value</span>
+        }
+    </div>
+    <div class="meter-track" role="img" aria-label="@(AriaLabel ?? $"{Label}: {Value}")">
+        <div class="meter-fill @FillClass" style="width: @Width%"></div>
+    </div>
+    @if (Note is { Length: > 0 })
+    {
+        <div class="meter-note">@Note</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = "";
+
+    /// <summary>The filled fraction, 0–1. Clamped: a meter that overflows its track lies about the limit.</summary>
+    [Parameter]
+    public double Fraction { get; set; }
+
+    /// <summary>The same number as words, e.g. "$3.20 of $4.00".</summary>
+    [Parameter]
+    public string? Value { get; set; }
+
+    /// <summary>A band word for the fill: null, "good", "warning", "serious" or "critical".</summary>
+    [Parameter]
+    public string? Status { get; set; }
+
+    [Parameter]
+    public string? Note { get; set; }
+
+    [Parameter]
+    public string? AriaLabel { get; set; }
+
+    private int Width => (int)Math.Round(Math.Clamp(Fraction, 0, 1) * 100);
+
+    private string FillClass => Status switch
+    {
+        "good" => "meter-fill-good",
+        "warning" => "meter-fill-warning",
+        "serious" => "meter-fill-serious",
+        "critical" => "meter-fill-critical",
+        _ => "",
+    };
+}

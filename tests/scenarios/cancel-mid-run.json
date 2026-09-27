@@ -1,0 +1,28 @@
+{
+  "id": "cancel-mid-run",
+  "defaultUsage": { "inputTokens": 20, "outputTokens": 10, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "fault": { "hang": 30000 },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "should not finish" }]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "fallback" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

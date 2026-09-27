@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Mcp.Abstractions</RootNamespace>
+    <Description>MCP contracts shared by the kernel server and its consumers (no MCP SDK types in any signature).</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>Burbuja.Mcp.Abstractions</PackageId>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

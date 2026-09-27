@@ -1,0 +1,9 @@
++-o AppleSmartBattery  <class AppleSmartBattery, id 0x1000009b7, registered, matched, active>
+    {
+      "CurrentCapacity" = 63
+      "TimeRemaining" = 65535
+      "ExternalConnected" = Yes
+      "AvgTimeToEmpty" = 65535
+      "AvgTimeToFull" = 3240
+      "IsCharging" = Yes
+    }

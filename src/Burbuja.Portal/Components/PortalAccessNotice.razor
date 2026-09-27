@@ -1,0 +1,10 @@
+@namespace Burbuja.Portal.Components
+@using Microsoft.AspNetCore.WebUtilities
+@inject NavigationManager Nav
+@if (QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query).GetValueOrDefault("error") == "noaccess")
+{
+    <div class="alert alert-warn" role="alert" data-error="noaccess">
+        <strong>@(Scope.Lang == "es" ? "Esta cuenta no tiene acceso a esa página." : "This account cannot open the requested page.")</strong>
+    </div>
+}
+@code { [Parameter, EditorRequired] public PortalScope Scope { get; set; } = null!; }

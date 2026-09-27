@@ -1,0 +1,2 @@
+Filesystem                             1024-blocks          Used     Available Capacity  iused      ifree %iused  Mounted on
+//fixture@files.example/Time Machine     2000000000     500000000    1234567890      38%  100000  900000000      0%   /Volumes/Time Machine

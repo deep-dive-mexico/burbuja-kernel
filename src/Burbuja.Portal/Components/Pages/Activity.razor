@@ -1,0 +1,166 @@
+@page "/portal/activity"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+@implements IDisposable
+
+<PageTitle>Activity</PageTitle>
+
+<PageHeader Eyebrow="Monitor" Title="Activity" Loaded="@(_failure is not null || _rows.Count > 0)">
+    <SubtitleContent>
+            The last requests this host served, as the kernel's own ring records them: who, what, how long, and how it
+            ended. <b>This is telemetry, not the audit</b> — the audit of a decision is the resource's own event
+            stream, which the <a href="/portal/explore">explorer</a> renders. A request refused before any handler ran
+            appears here and nowhere else, which is the gap this surface fills.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+<Card Title="Ring" Subtitle="@_ring.Describe()">
+    <div class="row">
+        <input class="input" placeholder="principal (exact, server-side)" @bind="_principal" @bind:event="oninput" />
+        <select class="input" @bind="_window">
+            <option value="15">last 15 minutes</option>
+            <option value="60">last hour</option>
+            <option value="1440">last day</option>
+            <option value="0">everything the ring holds</option>
+        </select>
+        <label class="check"><input type="checkbox" @bind="_dataPlane" /> <span>include data-plane requests</span></label>
+        <label class="check"><input type="checkbox" @bind="_live" /> <span>refresh every 3 s</span></label>
+        @* M16 K-R2 — the card's one act, bordered so it reads as a control. *@
+        <button class="btn btn-outline btn-small" disabled="@_busy" @onclick="ReloadAsync">refresh now</button>
+    </div>
+    <p class="muted small">
+        The ring lives in memory and exposes no stream, so this page POLLS — a live tail would be a stream the
+        kernel does not have, and a page that pretended otherwise would be inventing one. Rows are dropped
+        oldest-first when the ring is full, so a quiet host and a full ring look different only because the
+        counts above say which one this is.
+    </p>
+</Card>
+
+@if (_rows.Count == 0 && _failure is null)
+{
+    <Card Title="Requests" Subtitle="@_scope">
+        <EmptyState Text="Nothing matches. A host that has just booted has served only the requests this page itself made — which appear here a refresh later." />
+    </Card>
+}
+
+@if (_rows.Count > 0)
+{
+    <Card Title="Requests" Subtitle="@($"{Text.Plural(_rows.Count, "row", "rows")} in {_scope}")">
+        <div class="grid-scroll"><QuickGrid Items="_rows.AsQueryable()" Class="grid">
+            <PropertyColumn Property="r => r.At" Title="at" Sortable="true" />
+            <PropertyColumn Property="r => r.Ms" Title="ms" Sortable="true" />
+            <PropertyColumn Property="r => r.Method" Title="method" />
+            <PropertyColumn Property="r => r.Path" Title="path" />
+            <TemplateColumn Title="status">
+                <ChildContent Context="row">
+                    @if (row.Ok)
+                    {
+                        <span class="chip chip-good">@row.Status</span>
+                    }
+                    else
+                    {
+                        <span class="chip chip-bad">@row.Status @row.ErrorCode</span>
+                    }
+                </ChildContent>
+            </TemplateColumn>
+            <PropertyColumn Property="r => r.Principal" Title="principal" Sortable="true" />
+            <PropertyColumn Property="r => r.RequestId" Title="request" />
+            <PropertyColumn Property="r => r.CorrelationId" Title="correlation" />
+            <TemplateColumn Title="plane">
+                <ChildContent Context="row">
+                    <span class="muted small">@(row.DataPlane ? "data" : "control")</span>
+                </ChildContent>
+            </TemplateColumn>
+        </QuickGrid></div>
+    </Card>
+}
+
+@code {
+    private PortalFailure? _failure;
+    private string _scope = "";
+    private ArmScope? _scopeRef;
+    private PortalActivityRing _ring = new();
+    private List<ActivityRow> _rows = [];
+    private string _principal = "";
+    private string _window = "60";
+    private bool _dataPlane = true;
+    private bool _live = true;
+    private bool _busy;
+    private System.Threading.Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _ = await Arm.SessionAsync();
+        await ReloadAsync();
+        // A timer rather than a stream: the ring is a snapshot in memory, and the honest way to show a
+        // snapshot is to ask for it again.
+        _timer = new System.Threading.Timer(_ => _ = InvokeAsync(async () =>
+        {
+            if (_live && !_busy)
+                await ReloadAsync();
+        }), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    private async Task ReloadAsync()
+    {
+        _busy = true;
+        _failure = null;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(CancellationToken.None);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scopeRef = scope;
+            _scope = scope.Display;
+
+            var since = int.TryParse(_window, out var minutes) && minutes > 0
+                ? TimeSpan.FromMinutes(minutes)
+                : (TimeSpan?)null;
+            var (rows, ring) = await Data.ActivityAsync(scope, 200, _principal, since, CancellationToken.None);
+            _ring = ring;
+
+            _rows = [.. rows
+                .Where(r => _dataPlane || r.Properties?.IsDataPlane != true)
+                .Select(r => new ActivityRow(
+                    r.Properties?.At.ToString("HH:mm:ss.fff") ?? "—",
+                    r.Properties?.DurationMs.ToString("0.#") ?? "—",
+                    r.Properties?.Method ?? "—",
+                    r.Properties?.Path ?? "—",
+                    r.Properties?.Status ?? 0,
+                    r.Properties?.ErrorCode,
+                    r.Properties?.PrincipalId ?? "—",
+                    r.Properties?.RequestId ?? "—",
+                    r.Properties?.CorrelationId ?? "—",
+                    r.Properties?.IsDataPlane ?? false))];
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private sealed record ActivityRow(
+        string At,
+        string Ms,
+        string Method,
+        string Path,
+        int Status,
+        string? ErrorCode,
+        string Principal,
+        string RequestId,
+        string CorrelationId,
+        bool DataPlane)
+    {
+        public bool Ok => Status is >= 200 and < 400;
+    }
+}

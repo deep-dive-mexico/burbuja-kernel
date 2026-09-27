@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Plugins.Test.ThirdParty</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <NativeLibFileName>libpomnibot_test.dylib</NativeLibFileName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+    <ProjectReference Include="../Burbuja.Plugins.Test.FakeDep/Burbuja.Plugins.Test.FakeDep.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <Target Name="BuildTestNativeLibrary" BeforeTargets="CopyFilesToOutputDirectory" Condition="'$(OS)' == 'Unix' and Exists('/usr/bin/clang')">
+    <Exec Command="clang -shared -o &quot;$(TargetDir)$(NativeLibFileName)&quot; &quot;$(MSBuildProjectDirectory)/native/pomnibot_test.c&quot;" />
+    <Exec Command="mkdir -p &quot;$(TargetDir)runtimes/$(NETCoreSdkRuntimeIdentifier)/native&quot; &amp;&amp; cp &quot;$(TargetDir)$(NativeLibFileName)&quot; &quot;$(TargetDir)runtimes/$(NETCoreSdkRuntimeIdentifier)/native/$(NativeLibFileName)&quot;" />
+  </Target>
+</Project>

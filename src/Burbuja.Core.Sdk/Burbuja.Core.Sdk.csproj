@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Core.Sdk</RootNamespace>
+    <Description>Types applications and plugins may share with the kernel that are not contracts.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>Burbuja.Core.Sdk</PackageId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

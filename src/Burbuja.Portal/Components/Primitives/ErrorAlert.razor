@@ -1,0 +1,27 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@if (Failure is not null)
+{
+    <div class="alert alert-error" role="alert">
+        <strong>@Failure.Code</strong>
+        <span>@Failure.Message</span>
+        @if (Failure.Target is { Length: > 0 })
+        {
+            <code class="muted">@Failure.Target</code>
+        }
+        @if (Failure.Status is { } status)
+        {
+            <span class="muted small">HTTP @status</span>
+        }
+    </div>
+}
+else if (Message is not null)
+{
+    <div class="alert alert-error" role="alert">@Message</div>
+}
+
+@code {
+    [Parameter] public PortalFailure? Failure { get; set; }
+
+    [Parameter] public string? Message { get; set; }
+}

@@ -1,0 +1,41 @@
+@namespace Burbuja.Portal.Components.Layout
+
+@*
+    M14 R5p — one rail group per file, so four lanes never edit one `NavMenu.razor`.
+*@
+    <div class="rail-group">
+        <span class="rail-title">Operate</span>
+        @* M10 U8: the deployment's own page. It was the one surface with no rail row at all — its parts were
+           reachable only from the dashboard tile and a job link, which is not a place to arrive at. *@
+        @*
+            M11 S2 — the rail hides what the caller's roles cannot open. An AKOS-user key holds `*/read` minus
+            Burbuja.Pomnibot and Burbuja.Compute, so a Pomnibot row is a row that lands on a refusal wall; the
+            answer comes from the KERNEL's role definitions for this session (the release's roles are ARM
+            resources, so a mirror of the built-ins alone cannot answer), and the entry is simply absent rather
+            than disabled — a greyed row still promises a page.
+        *@
+        @if (Pomnibot)
+        {
+            <NavLink class="nav-link" href="/portal/pomnibot" Match="NavLinkMatch.All" title="Pomnibot">
+                <span class="rail-icon"><Icon Name="jobs" /></span><span class="rail-label">Pomnibot</span>
+            </NavLink>
+        }
+        <NavLink class="nav-link" href="/portal/approvals" title="Approvals">
+            <span class="rail-icon"><Icon Name="approvals" /></span><span class="rail-label">Approvals</span>
+        </NavLink>
+        @if (Pomnibot)
+        {
+            <NavLink class="nav-link" href="/portal/schedules" title="Schedules">
+                <span class="rail-icon"><Icon Name="schedules" /></span><span class="rail-label">Schedules</span>
+            </NavLink>
+        }
+    </div>
+
+@code {
+    /// <summary>
+    /// Whether this caller may read `Burbuja.Pomnibot`. Passed in rather than resolved here because the rail
+    /// asks the question ONCE for the whole nav (`NavMenu`), and a group that made its own read would be a
+    /// second round trip per render for a constant — and the two answers could disagree mid-session.
+    /// </summary>
+    [Parameter] public bool Pomnibot { get; set; } = true;
+}

@@ -1,0 +1,223 @@
+@namespace Burbuja.Portal.Components.Views
+@inject Burbuja.Portal.Services.PageLoadState Loads
+
+@*
+    The shared detail shell for a job and an agent: the view ring, the live signal, and the three
+    rings that exist. The page owns loading; this component owns presentation and the ring state.
+*@
+<section>
+    @* M16 M-R3 (request row X47, the lane-M half) — the wrapping `<section>` used to carry a `detail` class
+       that no stylesheet named. Its children (`.detail-head`, `.detail-facts`, `.detail-actions`,
+       `.detail-extra`) own their own rules and the shell needs nothing on the wrapper, so the class is
+       deleted here rather than given a no-op rule; `ThemeTests.Every_class_a_component_renders_is_styled_somewhere`
+       is the fact that found it. *@
+    @* M14 R5e (request X7), moved in M14 R9 — the detail pages' half of the `Loaded` contract: the page
+       declares, the marker is written on the page ROOT by `PageRoot`, never on a header (see the note in
+       `PageHeader.razor`). The turn and job pages render THIS header rather than a PageHeader, and G43 walks
+       both. *@
+    <header class="detail-head">
+        <div>
+            <h1>@Title</h1>
+            <p class="muted small">@Subtitle</p>
+        </div>
+        <div class="detail-facts">
+            @* X51 (M16 M-R3) — the AKOS turn page's status is the CLIENT portal's vocabulary, so its tone
+               must come from `AkosStatus.Tone` rather than `StatusPill.Tone`: the same WORD (`PROPOSED`) is a
+               run there and neutral here, and the page owns which one its console means. A caller that passes
+               no tone keeps the shared pill. *@
+            @if (StatusTone is { Length: > 0 })
+            {
+                <span class="pill @StatusTone">@StatusWord</span>
+            }
+            else
+            {
+                <StatusPill Status="@StatusWord" />
+            }
+            @if (ApprovalId is { Length: > 0 })
+            {
+                <a class="btn btn-small btn-warn" href="/portal/approvals">approval pending: @ApprovalId</a>
+            }
+            @if (CostUsd is { } cost)
+            {
+                <span class="fact"><span class="muted">cost</span> $@cost.ToString("0.0000", CultureInfo.InvariantCulture)</span>
+            }
+            <span class="fact"><span class="muted">records</span> @Events.Count</span>
+            @if (Truncated)
+            {
+                <span class="warn small">range truncated at @Events.Count records</span>
+            }
+            @* M13 R0 — F17: the page's own acts. A detail page whose resource declares actions and renders none
+               leaves the reader to find the generic Explorer blade; a job created Paused was stuck there. *@
+            @if (Actions is not null)
+            {
+                <div class="detail-actions">@Actions</div>
+            }
+        </div>
+    </header>
+
+    @if (Extra is not null)
+    {
+        <div class="detail-extra">@Extra</div>
+    }
+
+    <EventStreamView Stream="@Stream" StreamRefused="@StreamRefused" OnSignal="@OnSignal" Chrome="@StreamChrome" ShowPill="@StreamPill" />
+
+    <ErrorAlert Failure="@Failure" />
+
+    @if (Loading)
+    {
+        <p class="muted">loading…</p>
+    }
+
+    @* The view ring is the job/agent shape (chat · trajectory · metrics · artifacts). A page whose own
+       sections ARE the record — an AKOS turn's inter}pretation, routing, personas, judgment and ladder — passes
+       ExtraSections and gets the live bar and the shell WITHOUT a ring, rather than a second, worse copy of its
+       content in four views. *@
+    @if (ExtraSections is null)
+    {
+        <ViewRing Selected="@_tab" SelectedChanged="@SelectTab" />
+    }
+
+    <div class="ring-body">
+        @if (ExtraSections is not null)
+        {
+            @ExtraSections
+        }
+        else
+        {
+        @switch (_tab)
+        {
+            case "chat":
+                <ChatView Events="@Events" Prompt="@Prompt" CostUsd="@CostUsd" />
+                break;
+            case "trajectory":
+                <TrajectoryView Events="@Events"
+                                Prompt="@Prompt"
+                                Selected="@_selected"
+                                SelectedChanged="@SelectRow"
+                                Query="@Query"
+                                SearchScanned="@SearchScanned"
+                                SearchComplete="@SearchComplete"
+                                SearchCapped="@SearchCapped"
+                                OnSearch="@OnSearch" />
+                <RecordInspector Row="_selected" />
+                break;
+            case "metrics":
+                <MetricsView Events="@Events" />
+                break;
+            case "artifacts":
+                <ArtifactView Artifacts="@Artifacts" Note="@ArtifactNote" />
+                break;
+        }
+        }
+    </div>
+</section>
+
+@code {
+    private string _tab = "chat";
+    private TrajectoryRow? _selected;
+
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+
+    [Parameter] public string Subtitle { get; set; } = "";
+
+    [Parameter] public string StatusWord { get; set; } = "";
+
+    /// <summary>
+    /// X51 (M16 M-R3) — the tone for <see cref="StatusWord"/> when the caller's vocabulary is not
+    /// <c>StatusPill.Tone</c>'s. The AKOS turn page passes <c>AkosStatus.Tone</c>, where <c>PROPOSED</c> is a
+    /// run rather than neutral; empty keeps the shared pill so every kernel caller is unchanged.
+    /// </summary>
+    [Parameter] public string? StatusTone { get; set; }
+
+    [Parameter] public IReadOnlyList<LedgerEvent> Events { get; set; } = [];
+
+    [Parameter] public string? Prompt { get; set; }
+
+    [Parameter] public IReadOnlyList<PortalArtifact> Artifacts { get; set; } = [];
+
+    [Parameter] public string? ArtifactNote { get; set; }
+
+    [Parameter] public PortalStream? Stream { get; set; }
+
+    [Parameter] public string? StreamRefused { get; set; }
+
+    /// <summary>M15 M-R1 (item 6) — whether the live bar's controls are shown. The turn page passes false at
+    /// Normal (the stream itself stays attached, so the trace still fills in) and true at Técnico, where the
+    /// chip, `applied / reconnects` and Pause belong. Default true: the job and agent pages are unchanged.</summary>
+    [Parameter] public bool StreamChrome { get; set; } = true;
+
+    /// <summary>
+    /// X51 (M16 M-R3) — whether the live bar renders its OWN pill. The AKOS turn page sets false because its
+    /// header already carries the ONE live signal (§5.3, the `en vivo` pill in <c>Actions</c>) while the bar
+    /// keeps the machinery a reader needs (`applied / reconnects`, the refusal sentence, Pause). Default true:
+    /// the job and agent pages have no other live claim and are unchanged.
+    /// </summary>
+    [Parameter] public bool StreamPill { get; set; } = true;
+
+    [Parameter] public PortalFailure? Failure { get; set; }
+
+    [Parameter] public bool Loading { get; set; }
+
+    [Parameter] public bool Truncated { get; set; }
+
+    [Parameter] public decimal? CostUsd { get; set; }
+
+    [Parameter] public string? ApprovalId { get; set; }
+
+    [Parameter] public RenderFragment? Extra { get; set; }
+
+    /// <summary>Whether the page's own reads have landed — the detail pages' half of request X7. The page
+    /// reports it here; the marker itself lands on the page root (<c>PageRoot</c>).</summary>
+    [Parameter] public bool? Loaded { get; set; }
+
+    /// <summary>The report, on every render — the same rule as <c>PageHeader</c>'s.</summary>
+    protected override void OnParametersSet() => Loads.Report(Loaded == true);
+
+    /// <summary>
+    /// M13 R0 — the resource's declared ACTIONS, in the header beside the status pill.
+    ///
+    /// <para>F17: `ExecutionDetail` rendered a status and no controls, so a job's four declared actions
+    /// (`accept`, `steer`, `cancel`, `extendBudget`) were reachable only through the generic Explorer blade.
+    /// A job created with auto-accept off is stored `Paused` and never enqueued — with no Accept anywhere on
+    /// its own page it was simply stuck. The page supplies the markup so this shell stays presentational and
+    /// does not need to know what a job is.</para>
+    /// </summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>
+    /// M10 A7 — a page whose own sections ARE the trace passes them here instead of the four rings.
+    ///
+    /// <para>The turn page renders interpretation, routing, personas, judgment, the action ladder and the
+    /// transitions: those are not four views of the record, they are the record. Putting them through
+    /// `chat`/`trajectory`/`metrics` would either mean a second model of the same sections or a ring whose tabs
+    /// all show the same page. So a caller that passes this gets one ring, named for what it holds, and keeps
+    /// the stream bar and the shell — which is the part that is genuinely shared.</para>
+    /// </summary>
+    [Parameter] public RenderFragment? ExtraSections { get; set; }
+
+
+    /// <summary>Raised when the live signal says there is more to read.</summary>
+    [Parameter] public EventCallback<long> OnSignal { get; set; }
+
+    /// <summary>T4: the words the trajectory is filtered by, and what the search that produced it did.</summary>
+    [Parameter] public string? Query { get; set; }
+
+    [Parameter] public long SearchScanned { get; set; }
+
+    [Parameter] public bool SearchComplete { get; set; }
+
+    [Parameter] public bool SearchCapped { get; set; }
+
+    /// <summary>Raised with the words to search the stream for; an empty string clears the search.</summary>
+    [Parameter] public EventCallback<string> OnSearch { get; set; }
+
+    private void SelectTab(string tab)
+    {
+        _tab = tab;
+        if (tab == "trajectory" && _selected is null)
+            _selected = TrajectoryBuilder.Build(Events, Prompt).FirstOrDefault();
+    }
+
+    private void SelectRow(TrajectoryRow row) => _selected = row;
+}

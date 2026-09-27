@@ -1,0 +1,39 @@
+@namespace Burbuja.Portal.Components.Layout
+@inject Burbuja.Portal.Services.PageLoadState Loads
+@implements IDisposable
+
+@* M14 R9 — the page root, and the one home of the `data-loaded` marker.
+ *
+ * It used to be written by `PageHeader` on the page's own header. Lane S's G43 names why that is wrong: the
+ * header renders during prerender, before any read has landed, so a marker standing there claims "loaded"
+ * about a page that has read nothing — and G43 refuses the route by name ("a data-loaded marker sits on the
+ * page header, which renders before any read"). The plan asks for the same thing in two places ("data-loaded
+ * on the page root", "on the root, set by the page, never the header"), and this element IS the page's root:
+ * every page in the console renders inside it, and nothing else in the shell does.
+ *
+ * The value comes from `PageLoadState`, which `PageHeader`/`ExecutionDetail` report into from their `Loaded`
+ * parameter — so the claim is still the page's own, made once per page, and the attribute is written where a
+ * reader (and a fact) can trust it. `main.content` and not a wrapper of our own: it is the element G43 already
+ * scopes every measurement to, so the marker and the things it is a marker FOR live in the same region.
+ *@
+<main class="content" data-loaded="@(Loads.Loaded ? "true" : null)">
+    @ChildContent
+</main>
+
+@code {
+    /// <summary>The page. A fragment, so the shell keeps deciding where a page's markup goes and this
+    /// component owns only the root element and its marker.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    protected override void OnInitialized() => Loads.Changed += OnChanged;
+
+    /// <summary>
+    /// The page reports from its own render, which happens AFTER the layout's — so the first render of this
+    /// element cannot see the claim, and this is what brings it in. `InvokeAsync` because the report comes from
+    /// the renderer's own dispatcher and a bare `StateHasChanged` from another thread would throw.
+    /// </summary>
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Loads.Changed -= OnChanged;
+}

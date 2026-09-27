@@ -1,0 +1,75 @@
+@namespace Burbuja.Portal.Components.Layout
+@inject PortalData Data
+@implements IDisposable
+
+@* M12 R1 — the rail. Grouped the way an operator looks for things — what is happening, what needs a
+   decision, what this host serves — rather than alphabetically, because the question somebody arrives
+   with is one of those three and never "what starts with M".
+ *
+ * Every row carries an inline-SVG icon and a label. The icon is not decoration: it is what survives the
+ * collapse to a 56px strip, and it is what makes a row findable at a glance once a reader has used the
+ * console twice. The label stays in the DOM when collapsed (hidden by CSS) so the link keeps its
+ * accessible name — a collapsed rail of unlabelled links is a rail a screen reader cannot navigate.
+ *
+ * M14 R5p — THE GROUPS ARE FILES. Each one is a `Rail*.razor` component, so four lanes never edit this
+ * file: a lane with a new row edits `RailAkos.razor` (or appends its own group component here, one line).
+ * The `@if (_pomnibot)` guard below stays here because it is about the CALLER's roles, not about a group.
+ *@
+<nav class="nav rail-nav" aria-label="Sections">
+    <a class="kernel-lockup" href="/portal" aria-label="Burbuja, home">
+        <span class="kernel-lockup-mark"><Icon Name="logo" Size="40" /></span>
+        <span class="kernel-lockup-text">
+            <span class="kernel-lockup-name">Burbuja</span>
+            <span class="kernel-lockup-sub">Kernel operations</span>
+        </span>
+    </a>
+    @* M16 — the AKOS group is GONE from this rail. M15 M-UI (item 2) had put it first, because the question
+       this console existed to answer was "what is AKOS doing"; M16 answered that by giving AKOS its own
+       portal at `/akos`, with its own shell, its own door and its own rail (`AkosNavMenu`, which renders
+       `<RailAkos />`). This is the operator's console: Home / Monitor / Operate / Catalogue are its
+       sections, and its rows are English. The component itself is unchanged and shared — a lane's new AKOS
+       row still lands in both rails or in neither. *@
+
+    @* lanes: append below — a lane's own group component goes on this line, before RailCatalogue. It sat
+       immediately after the AKOS group before M15 item 2 lifted AKOS to the top, and it stays there: a lane's
+       group is a workload group, so it lands with AKOS rather than among the host's Home/Monitor/Operate. *@
+
+    <RailHome />
+    <RailMonitor />
+    @* M11 S2 — the rail hides what the caller's roles cannot open. An AKOS-user key holds `*/read` minus
+       Burbuja.Pomnibot and Burbuja.Compute, so a Pomnibot row is a row that lands on a refusal wall; the
+       answer comes from the KERNEL's role definitions for this session (the release's roles are ARM
+       resources, so a mirror of the built-ins alone cannot answer), and the entry is simply absent rather
+       than disabled — a greyed row still promises a page. *@
+    <RailOperate Pomnibot="@_pomnibot" />
+    <RailCatalogue />
+</nav>
+
+@code {
+    private bool _pomnibot = true;
+    private bool _loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded)
+            return;
+        _loaded = true;
+        try
+        {
+            _pomnibot = await Data.MayAsync("Burbuja.Pomnibot/jobs/read", CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            // The rail is navigation: a host that cannot answer shows everything rather than nothing, and the
+            // page behind the row is where a refusal belongs.
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        // Nothing to release: the rail holds no subscription. Present so a fact can dispose a render tree
+        // that includes it without the container complaining.
+    }
+}

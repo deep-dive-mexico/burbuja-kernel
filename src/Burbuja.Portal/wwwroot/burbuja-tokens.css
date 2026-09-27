@@ -1,0 +1,426 @@
+/* Burbuja portal — the design tokens. OUR FILE; dsh's VALUES.
+ *
+ * M16 K-R1 (2026-09-17) made the portal wear DeepSeek Harness's design language again, and this time
+ * with the provenance written down. The owner's decision is in the M16 plan: DeepSeek for both portals,
+ * the AKOS portal keeping only its name, its geometric mark and Spanish copy as identity. The palette
+ * comes from `@deepseek-ai/dsh-client-ui-theme@0.1.5-rc.1` — its static `--dsw-static-*` scales and the
+ * `--dsw-alias-*` roles they feed — read out of the installed package and HAND-COPIED here, one step at
+ * a time, with the dsh source named on every line.
+ *
+ * Hand-copied, not vendored, and that is a structural fact rather than a preference: dsh's own sheet
+ * declares on `:root` with `rgb()` and switches on `body[data-ds-dark-theme]`, and four facts in
+ * ThemeTests exist to keep this portal's literals in ONE file, on `body`, as `--bb-*` steps. A verbatim
+ * dsh-tokens.css is impossible here without gutting the property M12 R1 bought. What M12 got wrong was
+ * the VALUES (it took the client console's warm charcoal and gold, not dsh's neutral bluish grey); what
+ * it got right is the two-layer arrangement, which is unchanged:
+ *
+ *   LAYER 1 — raw steps (`--bb-*`), bound once per theme: light on bare `body`, dark under
+ *             `body[data-theme="dark"]`. Both blocks bind THE SAME SET, and
+ *             `ThemeTests.The_dark_block_binds_every_raw_step_the_light_block_binds` asserts the two
+ *             sets are EQUAL — a step bound in one theme only resolves to nothing in the other and
+ *             takes every alias of it with it.
+ *   LAYER 2 — semantic aliases (`--bg`, `--text`, `--accent`, …), bound ONCE, theme-agnostically, as
+ *             `var(--bb-…)`. There is no dark alias block, so an alias cannot be forgotten in one.
+ *             The alias block also carries the things that are not colours and therefore not steps: the
+ *             type scale, the motion durations, the radii, `--tag-*`'s color-mix tints and the twelve
+ *             persona hues.
+ *
+ * THE ONE RULE, unchanged since M12: a literal colour may appear in this file and NOWHERE ELSE in the
+ * portal. Every `--bb-*` step below is a private raw material; nothing outside this file may name one.
+ *
+ * Everything is declared on `body`, never `:root`. Not a style choice: a `var()` is substituted at the
+ * element that DECLARES it, so an alias declared on `html` would substitute steps declared on `body` —
+ * which does not exist yet there — compute to the guaranteed-invalid value, and drop every declaration
+ * that used it. Measured once (G21, first run) as a page with no background at all while every file
+ * still looked correct.
+ *
+ * THE FOUR LIGHT-THEME DEVIATIONS. dsh's light aliases are drafted for its own surfaces and two of its
+ * roles fail WCAG AA as TEXT on this portal's; where a dsh value is not shipped, the deviation is named
+ * here the way M12 recorded `#836326`:
+ *   1. `--bb-ink-muted` is `#61666b` (bluish-700), not dsh light's `label-tertiary` `#81858c`, which
+ *      measures 3.71:1 on `--bb-surface` — under the 4.5:1 floor, and this token colours body prose.
+ *   2. `--bb-accent-text` is `#4868b2` (deepseek-600), not dsh light's link `deepseek-500` `#4176e6`,
+ *      which measures 4.23:1 on white. The 600 is 6.29:1. (`--bb-accent-mark` keeps the 500: a mark is
+ *      a non-text use and 4.23:1 clears the 3:1 floor for one.)
+ *   3. `--bb-ok`, `--bb-warn` and `--bb-bad` are the 700/700/700 of green/amber/red in the light theme
+ *      — `#15803d` / `#b45309` / `#b91c1c` — not dsh light's `success-primary` green-500 `#22c55e`
+ *      (2.28:1), `warn-primary` amber-600 (2.79:1) or `error-primary` red-600 (4.16:1 on sunken). A
+ *      status word is TEXT beside its dot, and it has to be readable.
+ *   4. `--bb-primary-fill` is `#0f1115` (bluish-1000) in the light theme, not dsh's own light
+ *      brand-primary; a near-black capsule with `--bb-on-primary` white is the light theme's one loud
+ *      element, and white-on-near-black is 18.9:1.
+ * The three dark-theme values are dsh's own, unaltered: with one exception above (the 450 vs 500 for
+ * the mark) every dark step is the dsh static scale or the dsh alias it feeds.
+ *
+ * The palette was validated with `scripts/validate-palette.mjs` against the surfaces this file actually
+ * paints (dark `#151517` / `#232324` / `#1b1b1c`, light `#ffffff` / `#ffffff` / `#f5f6f7`); the script
+ * READS THE `--bb-*` STEPS OUT OF THIS FILE, so re-run it after any change here and it can never drift
+ * from what is shipped.
+ */
+
+/* ---------------------------------------------------------------- dark (dsh's own default surface)
+ *
+ * dsh's dark tokens live on `body[data-ds-dark-theme]`; ours are `body[data-theme="dark"]` (the M12
+ * rename, kept). The ABSENCE of the attribute is light, so `hasAttribute` semantics survive.
+ */
+body[data-theme="dark"] {
+    /* surfaces, page → raised → sunken. "Sunken" stays BELOW raised in both themes: it is a card
+       header, a JSON block, a recessed row. The first version of portal.css used a layer-2 step here,
+       which is one step UP, and every recessed surface in the light theme became invisible. */
+    --bb-surface: #151517;                    /* dsw-static-neutral-bluish-950 · alias bg-base */
+    --bb-panel: #232324;                      /* dsw-static-neutral-bluish-875 · alias bg-layer-1 */
+    --bb-sunken: #1b1b1c;                     /* dsw-static-neutral-bluish-900 · alias markdown-code-block */
+    --bb-layer-2: #2c2c2e;                    /* dsw-static-neutral-bluish-850 · pill fill, tooltip */
+    --bb-layer-3: #353638;                    /* dsw-static-neutral-bluish-800 · menus, popovers (specific-menu) */
+    --bb-sidebar: #1b1b1c;                    /* dsw-static-neutral-bluish-900 · alias sidebar-fill */
+
+    /* hairlines. dsh draws borders as alpha over whatever is beneath, which is why these are 8-digit
+       hex rather than greys: a line token that was a colour would be wrong on the raised surface. */
+    --bb-line-1: #ffffff0f;                   /* dsw-alias-border-l1 (white .06) */
+    --bb-line: #ffffff1f;                     /* dsw-alias-border-l2 (white .12) */
+    --bb-line-soft: #ffffff0f;                /* = l1, kept for its consumers */
+    --bb-line-3: #ffffff29;                   /* dsw-alias-border-l3 (white .16) */
+    --bb-line-4: #ffffff33;                   /* dsw-alias-border-l4 (white .20) */
+
+    /* ink */
+    --bb-ink: #f9fafb;                        /* dsw-static-neutral-bluish-50 · alias label-primary */
+    --bb-ink-secondary: #cfd3d6;              /* dsw-static-neutral-bluish-300 · alias label-secondary */
+    --bb-ink-muted: #adb2b8;                  /* dsw-static-neutral-bluish-400 · alias label-tertiary */
+    --bb-ink-faint: #81858c;                  /* dsw-static-neutral-bluish-600 · alias label-caption */
+
+    /* deepseek blue: the accent, split into a word, a mark and the text that sits on a fill */
+    --bb-accent-text: #679efe;                /* dsw-static-deepseek-400 · alias link */
+    --bb-accent-mark: #5686fe;                /* dsw-static-deepseek-450 · StateDot ongoing */
+    --bb-primary-fill: #f9fafb;               /* dsw-static-neutral-bluish-50 · alias brand-primary */
+    --bb-primary-hover: #ebeef2;              /* dsw-static-neutral-bluish-100 */
+    --bb-on-primary: #0f1115;                 /* dsw-alias label-primary-foreground */
+    --bb-on-accent: #0f1115;                  /* text on an accent-blue fill */
+
+    /* state. Marks and text both; each carries a word beside it, never colour alone. */
+    --bb-ok: #22c55e;                         /* dsw-static-green-500 · alias success-primary */
+    --bb-warn: #f59e0b;                       /* dsw-static-amber-500 · alias warn-primary */
+    --bb-bad: #f25a5a;                        /* dsw-static-red-400 · alias error-primary */
+    --bb-run: #5686fe;                        /* dsw-static-deepseek-450 · "ongoing" */
+    --bb-idle: #adb2b8;                       /* alias label-tertiary · StateDot idle (a mark, never text) */
+
+    /* interactive fills */
+    --bb-hover: #ffffff14;                    /* dsw-alias interactive-bg-hover (white .08) */
+    --bb-active: #ffffff24;                   /* dsw-alias interactive-bg-active (white .14) */
+    --bb-nav-hover: #2c2c2e;                  /* dsw-static-neutral-bluish-850 · alias sidebar-nav-item-hover */
+    --bb-nav-active: #43454a;                 /* dsw-static-neutral-bluish-750 · alias sidebar-nav-item-active */
+    --bb-hover-accent: #43454a;               /* = nav-active, kept for its consumers */
+    --bb-input: #232324;                      /* alias bg-layer-1 — Input.module.css uses layer-1 */
+
+    /* elevation. dsh's card is a hairline and NO shadow; the lift is for menus and the drawer only. */
+    --bb-shadow-panel: none;
+    --bb-shadow-lift: 0 0 1px 0 #00000033, 0 0 4px 0 #00000005, 0 12px 32px 0 #00000014; /* alias shadow-lv3 */
+
+    /* chart marks — validated on all three dark surfaces, all eight above the 3:1 non-text floor */
+    --bb-series-1: #679efe;                   /* dsw-static-deepseek-400 */
+    --bb-series-2: #f0883e;                   /* dsw-static-orange-400 */
+    --bb-series-3: #3fb950;                   /* dsw-static-green-400 */
+    --bb-series-4: #e3b341;                   /* dsw-static-amber-400 */
+    --bb-series-5: #f778ba;                   /* dsw-static-pink-400 */
+    --bb-series-6: #56d4dd;                   /* dsw-static-cyan-400 */
+    --bb-series-7: #a371f7;                   /* dsw-static-purple-400 */
+    --bb-series-8: #f25a5a;                   /* dsw-static-red-400 */
+
+    /* sequential ramp, one hue, sunken → loud. For meters and heat: a magnitude, not a category. */
+    --bb-seq-100: #1b1b1c;                    /* dsw-static-neutral-bluish-900 */
+    --bb-seq-200: #2c2c2e;                    /* dsw-static-neutral-bluish-850 */
+    --bb-seq-300: #34415b;
+    --bb-seq-400: #2f4c8f;
+    --bb-seq-500: #4868b2;                    /* dsw-static-deepseek-600 */
+    --bb-seq-600: #4176e6;                    /* dsw-static-deepseek-500 — the meter fill */
+    --bb-seq-700: #679efe;                    /* dsw-static-deepseek-400 */
+
+    /* status — solid dots and meter fills only, never text. These are the four words the corpus uses. */
+    --bb-status-good: #22c55e;                /* dsw-static-green-500 */
+    --bb-status-warning: #f59e0b;             /* dsw-static-amber-500 */
+    --bb-status-serious: #f0883e;             /* dsw-static-orange-400 */
+    --bb-status-critical: #f25a5a;            /* dsw-static-red-400 */
+}
+
+/* ---------------------------------------------------------------- light (dsh's own light aliases)
+ *
+ * dsh binds its light aliases on bare `body`, and so do we. The four deviations from dsh's own light
+ * values are named in the file header; the step comments say which one applies where.
+ */
+body {
+    --bb-surface: #ffffff;                    /* dsw-static-neutral-bluish-00 · alias bg-base */
+    --bb-panel: #ffffff;                      /* dsw-alias bg-layer-1 */
+    --bb-sunken: #f5f6f7;                     /* dsw-static-neutral-bluish-60 · alias bg-module-platform */
+    --bb-layer-2: #ffffff;                    /* pill fill, tooltip */
+    --bb-layer-3: #ffffff;                    /* menus, popovers (specific-menu) */
+    --bb-sidebar: #f9fafb;                    /* dsw-static-neutral-bluish-50 · alias sidebar-fill */
+
+    --bb-line-1: #0000000a;                   /* dsw-alias border-l1 (black .04) */
+    --bb-line: #0000001a;                     /* dsw-alias border-l2 (black .10) */
+    --bb-line-soft: #0000000a;                /* = l1, kept for its consumers */
+    --bb-line-3: #0000001f;                   /* dsw-alias border-l3 (black .12) */
+    --bb-line-4: #00000029;                   /* dsw-alias border-l4 (black .16) */
+
+    --bb-ink: #0f1115;                        /* dsw-static-neutral-bluish-1000 · alias label-primary */
+    --bb-ink-secondary: #61666b;              /* dsw-static-neutral-bluish-700 · alias label-secondary */
+    --bb-ink-muted: #61666b;                  /* DEVIATION 1: bluish-700, not dsh light's tertiary #81858c (3.71:1) */
+    --bb-ink-faint: #adb2b8;                  /* dsw-static-neutral-bluish-400 · alias label-caption */
+
+    --bb-accent-text: #4868b2;                /* DEVIATION 2: dsw-static-deepseek-600, not the light link 500 (4.23:1) */
+    --bb-accent-mark: #4176e6;                /* dsw-static-deepseek-500 — a mark, so the 3:1 floor applies */
+    --bb-primary-fill: #0f1115;               /* DEVIATION 4: bluish-1000, a near-black capsule */
+    --bb-primary-hover: #43454a;              /* dsw-static-neutral-bluish-750 */
+    --bb-on-primary: #ffffff;
+    --bb-on-accent: #ffffff;
+
+    --bb-ok: #15803d;                         /* DEVIATION 3: dsw-static-green-700, not the light success green-500 (2.28:1) */
+    --bb-warn: #b45309;                       /* DEVIATION 3: dsw-static-amber-700 */
+    --bb-bad: #b91c1c;                        /* DEVIATION 3: dsw-static-red-700 */
+    --bb-run: #4868b2;                        /* dsw-static-deepseek-600 — run == the accent hue, as in dsh */
+    --bb-idle: #81858c;                       /* alias label-tertiary · a mark, never text */
+
+    --bb-hover: #2631480f;                    /* dsw-alias interactive-bg-hover (black .06) */
+    --bb-active: #2631481a;                   /* dsw-alias interactive-bg-active (black .10) */
+    --bb-nav-hover: #f1f3f5;                  /* dsw-static-neutral-bluish-75 · alias sidebar-nav-item-hover */
+    --bb-nav-active: #ebeef2;                 /* dsw-static-neutral-bluish-100 · alias sidebar-nav-item-active */
+    --bb-hover-accent: #ebeef2;               /* = nav-active, kept for its consumers */
+    --bb-input: #ffffff;                      /* alias bg-layer-1 */
+
+    --bb-shadow-panel: none;
+    --bb-shadow-lift: 0 0 1px 0 #00000033, 0 0 4px 0 #00000005, 0 12px 32px 0 #00000014; /* alias shadow-lv3 */
+
+    --bb-series-1: #4176e6;                   /* dsw-static-deepseek-500 */
+    --bb-series-2: #d95926;                   /* dsw-static-orange-600 */
+    --bb-series-3: #1f8a4c;                   /* dsw-static-green-600 */
+    --bb-series-4: #b7791f;                   /* dsw-static-amber-600 */
+    --bb-series-5: #c2417e;                   /* dsw-static-pink-600 */
+    --bb-series-6: #0f8b8d;                   /* dsw-static-cyan-600 */
+    --bb-series-7: #6f42c1;                   /* dsw-static-purple-600 */
+    --bb-series-8: #c92a2a;                   /* dsw-static-red-600 */
+
+    --bb-seq-100: #f5f6f7;                    /* dsw-static-neutral-bluish-60 */
+    --bb-seq-200: #e1e5ee;
+    --bb-seq-300: #b7c8fe;
+    --bb-seq-400: #679efe;                    /* dsw-static-deepseek-400 */
+    --bb-seq-500: #4176e6;                    /* dsw-static-deepseek-500 */
+    --bb-seq-600: #4868b2;                    /* dsw-static-deepseek-600 — the meter fill */
+    --bb-seq-700: #2f4c8f;
+
+    --bb-status-good: #16a34a;                /* dsw-static-green-600 */
+    --bb-status-warning: #d97706;             /* dsw-static-amber-600 */
+    --bb-status-serious: #ea580c;             /* dsw-static-orange-600 */
+    --bb-status-critical: #dc2626;            /* dsw-static-red-600 */
+}
+
+/* ---------------------------------------------------------------- the semantic aliases
+ *
+ * Declared AFTER both raw blocks on purpose, and in a `body` rule of its own: a custom property is
+ * substituted where it is declared, so these have to come after the steps they read in source order.
+ *
+ * The names the M12 stylesheet and the pages already used are unchanged, so ~300 consumer lines did not
+ * have to move when the palette's origin did. Additions are marked NEW. The non-colour aliases (type
+ * scale, motion, radii) live here too: `color-mix()` and a duration have no literal colour in them, so
+ * the token fact's "a literal must be a --bb- step" rule has nothing to object to.
+ */
+body {
+    --bg: var(--bb-surface);
+    --bg-raised: var(--bb-panel);
+    --bg-sunken: var(--bb-sunken);
+    --bg-layer-2: var(--bb-layer-2);                    /* NEW */
+    --bg-layer-3: var(--bb-layer-3);                    /* NEW */
+    --bg-sidebar: var(--bb-sidebar);                    /* NEW */
+    --line: var(--bb-line);
+    --line-soft: var(--bb-line-soft);
+    --line-1: var(--bb-line-1);                         /* NEW */
+    --line-3: var(--bb-line-3);                         /* NEW */
+    --line-4: var(--bb-line-4);                         /* NEW */
+    --text: var(--bb-ink);
+    --text-secondary: var(--bb-ink-secondary);          /* NEW */
+    --text-muted: var(--bb-ink-muted);
+    --text-faint: var(--bb-ink-faint);                  /* NEW */
+    --accent: var(--bb-accent-text);
+    --ok: var(--bb-ok);
+    --warn: var(--bb-warn);
+    --bad: var(--bb-bad);
+    --run: var(--bb-run);
+    --idle: var(--bb-idle);
+
+    /* marks and fills */
+    --accent-mark: var(--bb-accent-mark);
+    --hover: var(--bb-hover);
+    --active: var(--bb-active);                         /* NEW */
+    --nav-hover: var(--bb-nav-hover);                   /* NEW */
+    --nav-active: var(--bb-nav-active);                 /* NEW */
+    --hover-accent: var(--bb-hover-accent);
+    --btn-fill: var(--bb-panel);
+    --btn-primary-fill: var(--bb-primary-fill);         /* NEW */
+    --btn-primary-hover: var(--bb-primary-hover);       /* NEW */
+    --on-primary: var(--bb-on-primary);                 /* NEW */
+    --on-accent: var(--bb-on-accent);
+    --input-bg: var(--bb-input);
+    --shadow-panel: var(--bb-shadow-panel);
+    --shadow-lift: var(--bb-shadow-lift);
+
+    /* state tints for a tag. A tag names a KIND and a pill names a STATE: the pill's colour is on its
+       dot alone (portal.css), and a tag is the one place a tinted capsule is right. `color-mix` has no
+       literal in it, which is why this is an alias and not a step; the percentages are Tag.module.css's
+       (10 %, warn 12 %). */
+    --tag-ok: color-mix(in srgb, var(--ok) 10%, transparent);       /* NEW */
+    --tag-run: color-mix(in srgb, var(--run) 10%, transparent);     /* NEW */
+    --tag-wait: color-mix(in srgb, var(--warn) 12%, transparent);   /* NEW */
+    --tag-bad: color-mix(in srgb, var(--bad) 10%, transparent);     /* NEW */
+
+    /* chart roles */
+    --series-1: var(--bb-series-1);
+    --series-2: var(--bb-series-2);
+    --series-3: var(--bb-series-3);
+    --series-4: var(--bb-series-4);
+    --series-5: var(--bb-series-5);
+    --series-6: var(--bb-series-6);
+    --series-7: var(--bb-series-7);
+    --series-8: var(--bb-series-8);
+    --seq-100: var(--bb-seq-100);
+    --seq-200: var(--bb-seq-200);
+    --seq-300: var(--bb-seq-300);
+    --seq-400: var(--bb-seq-400);
+    --seq-500: var(--bb-seq-500);
+    --seq-600: var(--bb-seq-600);
+    --seq-700: var(--bb-seq-700);
+    --status-good: var(--bb-status-good);
+    --status-warning: var(--bb-status-warning);
+    --status-serious: var(--bb-status-serious);
+    --status-critical: var(--bb-status-critical);
+
+    /* type and shape. No downloaded font: dsh's own stack is the platform's, so nothing is vendored
+       and nothing needs a licensing paragraph.
+     *
+     * M16 K-R1: `--display` is kept as a NAME (h1, .hero-statement, .brand-name, .persona-name,
+     * .ladder-number, .rail-motto, .orb-ring and .motto all consume it) and REBOUND to the sans stack.
+     * dsh has one family; the serif was the client console's, and it is the tell the owner named. */
+    --display: var(--sans);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+
+    /* the dsh type scale (Design platform: body 14/22, secondary 13/20, caption 12/18, tag 11/17) */
+    --fs-body: 14px;                                    /* NEW */
+    --lh-body: 22px;                                    /* NEW */
+    --fs-secondary: 13px;                               /* NEW */
+    --lh-secondary: 20px;                               /* NEW */
+    --fs-caption: 12px;                                 /* NEW */
+    --lh-caption: 18px;                                 /* NEW */
+    --fs-tag: 11px;                                     /* NEW */
+    --lh-tag: 17px;                                     /* NEW */
+    --fs-h1: 20px;                                      /* NEW */
+    --lh-h1: 28px;                                      /* NEW */
+    --fs-h2: 16px;                                      /* NEW */
+    --lh-h2: 24px;                                      /* NEW */
+
+    --radius: 8px;
+    --radius-control: 8px;
+    --radius-capsule: 999px;                            /* NEW */
+
+    /* the eyebrow tokens the ten label consumers read. M16 K-R1 sets them to dsh's secondary text
+       metrics — 13px, no tracking — and portal.css drops `text-transform: uppercase` at every one of
+       them, so the all-caps tracked eyebrow the owner named is gone in one edit and stays gone. */
+    --eyebrow-size: 13px;
+    --eyebrow-spacing: 0;
+
+    /* motion (base.css): only on a user action, and off entirely under prefers-reduced-motion. */
+    --ease: cubic-bezier(.4, 0, .2, 1);                 /* NEW */
+    --dur: .2s;                                         /* NEW */
+    --dur-fast: .1s;                                    /* NEW */
+    --dur-slow: .3s;                                    /* NEW */
+}
+
+/* Kernel console — paper/ink planes with Azure-blue interaction.
+   This document-scoped pair overrides only the steps
+   the kernel needs; all other status and chart hues continue to use the shared ramp.
+   #0078d4 is a mark/fill; text on paper uses the darker #005a9e for contrast. */
+html[data-portal="kernel"] body {
+    --bb-surface: #f2f0e9;
+    --bb-panel: #f8f7f2;
+    --bb-sunken: #e9e6dc;
+    --bb-layer-2: #e9e6dc;
+    --bb-layer-3: #f8f7f2;
+    --bb-sidebar: #f2f0e9;
+    --bb-line-1: #11131014;
+    --bb-line: #11131026;
+    --bb-line-soft: #11131014;
+    --bb-line-3: #11131047;
+    --bb-line-4: #11131073;
+    --bb-ink: #111310;
+    --bb-ink-secondary: #45473f;
+    --bb-ink-muted: #55574f;
+    --bb-ink-faint: #63655d;
+    --bb-accent-text: #005a9e;
+    --bb-accent-mark: #0078d4;
+    --bb-primary-fill: #0067b8;
+    --bb-primary-hover: #005a9e;
+    --bb-on-primary: #ffffff;
+    --bb-on-accent: #ffffff;
+    --bb-run: #005a9e;
+    --bb-hover: #1113100d;
+    --bb-active: #1113101a;
+    --bb-nav-hover: #e9e6dc;
+    --bb-nav-active: #e2dfd3;
+    --bb-hover-accent: #e2dfd3;
+    --bb-input: #f8f7f2;
+    --bb-shadow-lift: 0 0 0 1px #11131026;
+    --bb-series-1: #0078d4;
+    --bb-seq-100: #ebe8df;
+    --bb-seq-200: #dedad0;
+    --bb-seq-300: #b4cbe0;
+    --bb-seq-400: #66a9dd;
+    --bb-seq-500: #0078d4;
+    --bb-seq-600: #0067b8;
+    --bb-seq-700: #005a9e;
+    --sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "Geist Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --fs-h1: 30px;
+    --lh-h1: 34px;
+    --fs-h2: 17px;
+    --radius: 0;
+    --radius-control: 0;
+    --radius-capsule: 0;
+    --eyebrow-size: 11px;
+    --eyebrow-spacing: .16em;
+}
+
+html[data-portal="kernel"] body[data-theme="dark"] {
+    --bb-surface: #0b0b0c;
+    --bb-panel: #121213;
+    --bb-sunken: #080809;
+    --bb-layer-2: #19191b;
+    --bb-layer-3: #121213;
+    --bb-sidebar: #0b0b0c;
+    --bb-line-1: #ffffff12;
+    --bb-line: #ffffff1c;
+    --bb-line-soft: #ffffff12;
+    --bb-line-3: #ffffff30;
+    --bb-line-4: #ffffff52;
+    --bb-ink: #ecebe6;
+    --bb-ink-secondary: #c4c2bb;
+    --bb-ink-muted: #9d9b95;
+    --bb-ink-faint: #8a8882;
+    --bb-accent-text: #71baff;
+    --bb-accent-mark: #49a5ee;
+    --bb-primary-fill: #0078d4;
+    --bb-primary-hover: #0067b8;
+    --bb-on-primary: #ffffff;
+    --bb-on-accent: #ffffff;
+    --bb-run: #71baff;
+    --bb-hover: #ffffff0b;
+    --bb-active: #ffffff16;
+    --bb-nav-hover: #141415;
+    --bb-nav-active: #19191b;
+    --bb-hover-accent: #19191b;
+    --bb-input: #0e0e0f;
+    --bb-shadow-lift: 0 0 0 1px #ffffff1c;
+    --bb-series-1: #71baff;
+    --bb-seq-100: #121213;
+    --bb-seq-200: #1c1c1e;
+    --bb-seq-300: #1d3042;
+    --bb-seq-400: #255476;
+    --bb-seq-500: #0078d4;
+    --bb-seq-600: #49a5ee;
+    --bb-seq-700: #71baff;
+}

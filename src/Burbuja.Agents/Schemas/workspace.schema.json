@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "displayName": { "type": "string" },
+    "repoId": { "type": "string" },
+    "profile": { "type": "string" },
+    "defaultStrategy": { "type": "string" }
+  }
+}

@@ -1,0 +1,233 @@
+@page "/portal/explore"
+@page "/portal/explore/{Namespace}"
+@page "/portal/explore/{Namespace}/{Type}"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject ResourceViewRegistry Views
+
+<PageTitle>Explore</PageTitle>
+
+<PageHeader Eyebrow="Catalogue" Title="Explore" Loaded="@(_failure is not null || _rows.Count >= 0)">
+    <SubtitleContent>
+            Every resource type this host serves, read from <code>/providers</code>. The explorer knows nothing
+            about them: a provider registered in DI appears here without anybody editing this page.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+@if (Type is { Length: > 0 })
+{
+    <p><a href="/portal/explore">← all namespaces</a></p>
+}
+else if (Namespace is { Length: > 0 })
+{
+    <p><a href="/portal/explore">← all namespaces</a></p>
+}
+
+@if (_failure is null && Type is null && Namespace is null)
+{
+    <Card Title="Namespaces" Subtitle="@($"{Text.Plural(_namespaces.Count, "provider", "providers")} registered")">
+        @if (_namespaces.Count == 0)
+        {
+            <EmptyState Text="No provider namespaces are registered." />
+        }
+        else
+        {
+            <div class="grid-scroll"><QuickGrid Items="_namespaces.AsQueryable()" Class="grid">
+                <PropertyColumn Property="p => p.Namespace" Title="namespace" Sortable="true" />
+                <PropertyColumn Property="p => p.Types" Title="types" Sortable="true" />
+                <TemplateColumn Title="" Align="Align.Right">
+                    <ChildContent Context="row">
+                        <a class="btn btn-small" href="@($"/portal/explore/{row.Namespace}")">open</a>
+                    </ChildContent>
+                </TemplateColumn>
+            </QuickGrid></div>
+        }
+    </Card>
+}
+
+@if (_failure is null && Namespace is { Length: > 0 } && Type is null)
+{
+    <Card Title="@Namespace" Subtitle="@($"{Text.Plural(_types.Count, "resource type", "resource types")}")">
+        @if (_types.Count == 0)
+        {
+            <EmptyState Text="This namespace declares no resource types." />
+        }
+        else
+        {
+            <QuickGrid Items="_types.AsQueryable()" Class="grid">
+                <PropertyColumn Property="t => t.Type" Title="type" Sortable="true" />
+                <PropertyColumn Property="t => t.ViewTitle" Title="view" />
+                <PropertyColumn Property="t => t.Tabs" Title="tabs" />
+                <PropertyColumn Property="t => t.Actions" Title="actions" />
+                <PropertyColumn Property="t => t.Tracked" Title="tracked" />
+                <TemplateColumn Title="" Align="Align.Right">
+                    <ChildContent Context="row">
+                        <a class="btn btn-small" href="@($"/portal/explore/{Namespace}/{row.Type}")">browse</a>
+                    </ChildContent>
+                </TemplateColumn>
+            </QuickGrid>
+        }
+    </Card>
+}
+
+@if (_failure is null && Namespace is { Length: > 0 } && Type is { Length: > 0 })
+{
+    @*
+        The list is a bounded page rather than the whole collection: a portal that pages everything through
+        one grid is a portal that hangs on the first namespace with a thousand rows.
+    *@
+    <Card Title="@($"{Namespace}/{Type}")" Subtitle="@($"{Text.Plural(_rows.Count, "resource", "resources")} in {_scope}")">
+        @if (_notListable)
+        {
+            <EmptyState Text="@_notListableWhy" />
+        }
+        else if (_rows.Count == 0)
+        {
+            <EmptyState Text="No resources of this type in the current scope." />
+        }
+        else
+        {
+            <QuickGrid Items="_rows.AsQueryable()" Class="grid">
+                <PropertyColumn Property="r => r.Name" Title="name" Sortable="true" />
+                <PropertyColumn Property="r => r.ProvisioningState" Title="state" />
+                <PropertyColumn Property="r => r.Keys" Title="property keys" />
+                <PropertyColumn Property="r => r.Age" Title="modified" Sortable="true" />
+                <TemplateColumn Title="" Align="Align.Right">
+                    <ChildContent Context="row">
+                        <a class="btn btn-small" href="@row.Href">open</a>
+                    </ChildContent>
+                </TemplateColumn>
+            </QuickGrid>
+        }
+    </Card>
+}
+
+@code {
+    [Parameter] public string? Namespace { get; set; }
+
+    [Parameter] public string? Type { get; set; }
+
+    private PortalFailure? _failure;
+    private string _scope = "";
+    private bool _notListable;
+    private string _notListableWhy = "";
+    private List<NamespaceRow> _namespaces = [];
+    private List<TypeRow> _types = [];
+    private List<ResourceRow> _rows = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _failure = null;
+        _notListable = false;
+        _namespaces = [];
+        _types = [];
+        _rows = [];
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scope = scope.Display;
+
+            var providers = await Data.ProvidersAsync(ct);
+            if (Namespace is not { Length: > 0 })
+            {
+                _namespaces = [.. providers.Select(p => new NamespaceRow(p.DisplayNamespace, p.ResourceTypes.Count))];
+                return;
+            }
+
+            var provider = providers.FirstOrDefault(p =>
+                p.DisplayNamespace.Equals(Namespace, StringComparison.OrdinalIgnoreCase));
+            if (provider is null)
+            {
+                _failure = PortalFailure.Local("NamespaceNotFound", $"'{Namespace}' is not registered on this host.");
+                return;
+            }
+
+            if (Type is not { Length: > 0 })
+            {
+                _types = [.. provider.ResourceTypes.Select(t =>
+                {
+                    var view = Views.Find($"{provider.DisplayNamespace}/{t.ResourceType}");
+                    return new TypeRow(
+                        t.ResourceType,
+                        view.Title,
+                        string.Join(", ", view.EffectiveTabs),
+                        t.Actions.Count == 0 ? "—" : string.Join(", ", t.Actions.Select(a => a.Name)),
+                        t.IsTracked ? "yes" : "no");
+                })];
+                return;
+            }
+
+            var declared = provider.ResourceTypes.FirstOrDefault(t =>
+                t.ResourceType.Equals(Type, StringComparison.OrdinalIgnoreCase));
+            if (declared is null)
+            {
+                _failure = PortalFailure.Local("TypeNotFound", $"'{provider.DisplayNamespace}/{Type}' is not a declared type.");
+                return;
+            }
+
+            var client = await Data.ClientAsync(ct);
+            if (declared.ListRoot(scope) is not { } baseRoot)
+            {
+                // Two different reasons, and they used to be one message. A child type IS listable, under
+                // each parent instance — asking for its collection at the resource-group root is what
+                // collected a `ResourceNotFound` for `Burbuja.Agents/workspaces/jobs`. A type with neither
+                // capability is readable by name only. Saying which is which is the difference between a
+                // reader opening a parent and a reader believing the type does not exist.
+                _notListable = true;
+                _notListableWhy = declared.IsChildType
+                    ? $"'{provider.DisplayNamespace}/{declared.ResourceType}' is a CHILD type: it is listed under each "
+                      + $"'{declared.ParentType}' instance, not under the resource group. Open a parent, or search — "
+                      + "the search walks parents for exactly this reason."
+                    : "This type cannot be listed at this scope — its descriptor declares neither ListByResourceGroup "
+                      + "nor ListBySubscription, so it is readable by name only.";
+                return;
+            }
+
+            var root = $"{baseRoot}/providers/{provider.DisplayNamespace}/{declared.ResourceType}";
+            await foreach (var row in client.ListAsync<PortalEnvelope<JsonNode>>(root, ct: ct))
+            {
+                if (_rows.Count >= 200)
+                    break;
+                // The href carries the resource's OWN id, because the id is the only thing that says where a
+                // resource lives. `subscriptions` and `resourceGroups` are addressed at canonical paths of
+                // their own (`/subscriptions/local`, `/subscriptions/local/resourceGroups/dev`) and NOT under
+                // `…/providers/Burbuja.Resources/subscriptions/local`, so a blade that rebuilt the path from
+                // the type got a 404 from the kernel for its own subscription — one step after the list page
+                // got one for listing at the wrong scope. The kernel already told us the id; use it.
+                _rows.Add(new ResourceRow(
+                    row.Name ?? "",
+                    row.ProvisioningState ?? "",
+                    row.Properties is JsonObject properties
+                        ? string.Join(", ", properties.Select(p => p.Key).Take(5))
+                        : "—",
+                    row.SystemData?.LastModifiedAt is { } at ? Age(at) : "—",
+                    $"/portal/explore/resource?id={Uri.EscapeDataString(row.Id ?? "")}"));
+            }
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    private string Age(DateTimeOffset at)
+    {
+        var span = DateTimeOffset.UtcNow - at;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours}h ago";
+        return $"{(int)span.TotalDays}d ago";
+    }
+
+    private sealed record NamespaceRow(string Namespace, int Types);
+
+    private sealed record TypeRow(string Type, string ViewTitle, string Tabs, string Actions, string Tracked);
+
+    private sealed record ResourceRow(string Name, string ProvisioningState, string Keys, string Age, string Href);
+}

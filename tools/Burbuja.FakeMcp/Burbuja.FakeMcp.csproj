@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Burbuja.FakeMcp</RootNamespace>
+    <AssemblyName>Burbuja.FakeMcp</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>A fake MCP server over stdio, used by the kernel's tests to exercise the real transport without a real surface.</Description>
+  </PropertyGroup>
+</Project>

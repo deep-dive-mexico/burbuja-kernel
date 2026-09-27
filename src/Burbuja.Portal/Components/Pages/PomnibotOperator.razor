@@ -1,0 +1,520 @@
+@page "/portal/pomnibot"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+@inject TimeProvider Clock
+@* M12 R1: the clock is injected rather than read off the wall. The page asks for `ledgers/{today}`, and a
+   page that computes "today" from `DateTimeOffset.UtcNow` while everything it reads is driven by the
+   host's `TimeProvider` is a page whose unit facts are pinned to the day the fixture was written — which
+   is exactly how this one failed: the fixture maps `ledgers/2026-09-14`, the page asked the real clock
+   for the day, and the spend tile silently rendered `$0.0000 / —` on any other date. *@
+
+@*
+    M10 U8 — the pomnibot operator surface, on ONE page.
+
+    Before this the surfaces were split: a pomnibot tile on the dashboard, `/portal/pomnibot/jobs/{name}` for a
+    trace, `/portal/schedules` for the schedules — and no page that answered "how is the deployment". The nav
+    had no Pomnibot row at all.
+
+    **Every number here is a read of a resource.** The host card is `hosts/*`, the channels card is
+    `channels/*`, the jobs grid is `jobs` (with each row's own ETag, so a verb carries `If-Match`), spend is the
+    pomnibot day ledger — a DIFFERENT ledger from `Burbuja.Agents`, and the card names which — approvals are the
+    kernel's, and schedules and repos are the resources the operator acts on elsewhere. The page's own
+    contribution is layout and four buttons, and the buttons post the same declared verbs the CLI calls.
+*@
+
+<PageTitle>Pomnibot</PageTitle>
+
+<PageHeader Eyebrow="Operate" Title="Pomnibot" Loaded="@(_failure is not null || _hostName is not null || _absent)">
+    <SubtitleContent>
+            The deployment on this Mac: one bare LaunchAgent, never a container. Jobs run through the real engine.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+@if (_absent)
+{
+    <Card Title="Pomnibot" Subtitle="este host no sirve ese espacio de nombres">
+        <EmptyState Text="@_absentWhy" />
+    </Card>
+}
+else if (_failure is null)
+{
+    @* M14 R6 — the five tiles are the `StatTile` primitive every other page's tiles use (M12 R1), instead of
+       five hand-rolled `.tile` blocks: one shape for a label, a value, the line of context beside it and an
+       optional tone, so this row cannot drift from the dashboard's as either changes. The host tile's VALUE is
+       the status word (`no heartbeat` when nothing published a `hosts/*` row) and its tone is the warning —
+       a pill inside a tile is a second shape for the same claim. *@
+    <div class="tiles">
+        <StatTile Label="host" Value="@(_hostName ?? "no heartbeat")"
+                  Delta="@(_hostName is not null ? $"{_activeJobs}/{_capacity} running, heartbeat {_lastHeartbeat?.ToString("u") ?? "—"}" : "no hosts/* row published yet")"
+                  Title="@(_hostName ?? "no hosts/* row published yet")"
+                  Tone="@(_hostName is null ? "tile-warn" : null)" />
+        <StatTile Label="node version" Value="@(_nodeVersion ?? "—")"
+                  Delta="@(_engineVersion is { Length: > 0 } engine ? $"engine {engine}" : "engine version not reported")" />
+        <StatTile Label="deepseek balance"
+                  Value="@(_balance is { } b ? $"🐋 ${b.ToString("0.00", CultureInfo.InvariantCulture)}" : "—")"
+                  Delta="@(_balance is null ? "the node has not reported a balance" : "read by the heartbeat's own probe")" />
+        <StatTile Label="plugins" Value="@($"{_health?.HealthyPlugins ?? 0}/{_health?.Plugins.Count ?? 0}")"
+                  Delta="@($"healthy, kernel {_health?.Host?.Version ?? "—"}")" />
+        <StatTile Label="spend today (pomnibot ledger)"
+                  Value="@($"${(_ledger?.SpentUsd ?? 0m).ToString("0.0000", CultureInfo.InvariantCulture)}{(_ledger?.HardStopUsd is { } stop ? $" / ${stop.ToString("0.00", CultureInfo.InvariantCulture)}" : "")}")"
+                  Delta="@($"{Text.Plural(_ledger?.JobCount ?? 0, "job", "jobs")}, a SEPARATE ledger from Burbuja.Agents/, whose stop is on the dashboard{(LedgerReached ? ", HARD STOP" : "")}")"
+                  Tone="@(LedgerReached ? "tile-warn" : null)" />
+    </div>
+
+    <Card Title="Channels" Subtitle="Burbuja.Pomnibot/channels — the human surface bound to this host">
+        @if (_channels.TypeAbsent)
+        {
+            <EmptyState Text="No channels resource type on this host — none registered." />
+        }
+        else if (_channels.Channels.Count == 0)
+        {
+            <EmptyState Text="No channel is bound. The plugin seeds one from configuration at boot; a host with no token still gets a row that says so." />
+        }
+        else
+        {
+            <table class="table">
+                <thead><tr><th>provider</th><th>state</th><th>guild</th><th>jobs channel</th><th>monitor channel</th><th>owner</th></tr></thead>
+                <tbody>
+                    @foreach (var channel in _channels.Channels)
+                    {
+                        <tr>
+                            <td>@(channel.Properties?.Provider ?? "—")</td>
+                            <td>
+                                <span class="chip @(channel.Properties?.State is "serving" ? "chip-good" : "chip-warn")">
+                                    @(channel.Properties?.State ?? "unknown")
+                                </span>
+                            </td>
+                            <td class="small"><code>@(channel.Properties?.GuildId ?? "—")</code></td>
+                            <td class="small"><code>@(channel.Properties?.JobsChannelId ?? "—")</code></td>
+                            <td class="small"><code>@(channel.Properties?.MonitorChannelId ?? "not configured")</code></td>
+                            <td class="small">@(channel.Properties?.OwnerId ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (_channels.Failure is { } channelFailure)
+            {
+                <p class="muted small">the channel read reported @channelFailure.Code: @channelFailure.Message</p>
+            }
+        }
+    </Card>
+
+    <Card Title="Jobs" Subtitle="@($"{Text.Plural(_jobs.Count, "job", "jobs")}, steer, cancel, confirm, extend post the declared verbs with If-Match")">
+        @if (_jobs.Count == 0)
+        {
+            <EmptyState Text="No job has run on this host. Open one with pomni run, naming the brief and the repo — the CLI and this page drive the same resource." />
+        }
+        else
+        {
+            <div class="grid-scroll"><QuickGrid Items="_jobs.AsQueryable()" Class="grid">
+                <PropertyColumn Property="j => j.Name" Title="job" Sortable="true" />
+                <TemplateColumn Title="status" Sortable="true">
+                    <ChildContent Context="row"><StatusPill Status="@row.Status" /></ChildContent>
+                </TemplateColumn>
+                <PropertyColumn Property="j => j.Kind" Title="kind" />
+                <PropertyColumn Property="j => j.Repo" Title="repo" />
+                <PropertyColumn Property="j => j.Cost" Title="cost" />
+                <TemplateColumn Title="actions" Align="Align.Right">
+                    <ChildContent Context="row">
+                        @if (_busy == row.Name)
+                        {
+                            <span class="muted small">working…</span>
+                        }
+                        else
+                        {
+                            @if (row.Running)
+                            {
+                                <button class="btn btn-small" type="button" @onclick="() => SteerAsync(row)">steer</button>
+                                <button class="btn btn-small btn-bad" type="button" @onclick="() => CancelAsync(row)">cancel</button>
+                                <button class="btn btn-small" type="button" @onclick="() => ExtendAsync(row)">extend</button>
+                            }
+                            @if (row.Awaiting)
+                            {
+                                <button class="btn btn-small btn-ok" type="button" @onclick="() => ConfirmAsync(row)">confirm</button>
+                            }
+                            <a class="btn btn-small" href="@($"/portal/pomnibot/jobs/{Uri.EscapeDataString(row.Name)}")">trace</a>
+                        }
+                    </ChildContent>
+                </TemplateColumn>
+            </QuickGrid></div>
+        }
+        @if (_steering is { } steering)
+        {
+            <div class="stack">
+                <label class="field">
+                    <span class="muted small">steer @steering.Name — delivered to the running turn</span>
+                    <textarea class="input" rows="3" aria-label="steer text" @bind="_steerText" @bind:event="oninput"></textarea>
+                </label>
+                <div class="row">
+                    <button class="btn btn-primary" type="button" @onclick="SendSteerAsync"
+                            disabled="@(_busy == steering.Name || string.IsNullOrWhiteSpace(_steerText))">Send steer</button>
+                    <button class="btn btn-ghost" type="button" @onclick="CancelSteer">Cancel</button>
+                </div>
+            </div>
+        }
+        @if (_notice is { Length: > 0 })
+        {
+            <div class="alert alert-info" role="status">@_notice</div>
+        }
+    </Card>
+
+    <Card Title="Pending approvals" Subtitle="the kernel's own inbox — a parked gate blocks the job until a human decides">
+        @if (_pendingApprovals.Count == 0)
+        {
+            <EmptyState Text="Nothing is waiting on a human." />
+        }
+        else
+        {
+            <table class="table">
+                <thead><tr><th>approval</th><th>risk</th><th>subject</th><th>preview</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var approval in _pendingApprovals)
+                    {
+                        <tr>
+                            <td class="small"><code>@approval.Id</code></td>
+                            <td><span class="chip chip-warn">@approval.Risk</span></td>
+                            <td class="small">@approval.Subject</td>
+                            <td class="small">@approval.Preview</td>
+                            <td><a class="btn btn-small" href="/portal/approvals">decide</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Card>
+
+    <Card Title="Schedules and repos" Subtitle="what this host will run on its own, and where it can run it">
+        <h3 class="panel-sub">Schedules <span class="muted small">@_schedules.Count</span></h3>
+        @if (_schedules.Count == 0)
+        {
+            <p class="muted small">None. <a href="/portal/schedules">The schedules page</a> creates and drives them.</p>
+        }
+        else
+        {
+            <table class="table">
+                <thead><tr><th>schedule</th><th>cron</th><th>state</th><th>next</th><th>last job</th></tr></thead>
+                <tbody>
+                    @foreach (var schedule in _schedules)
+                    {
+                        <tr>
+                            <td class="small">@schedule.Name</td>
+                            <td><code>@schedule.Cron</code></td>
+                            <td><span class="chip @(schedule.Paused ? "chip-warn" : "chip-good")">@(schedule.Paused ? "paused" : "active")</span></td>
+                            <td class="small">@(schedule.NextRunAt?.ToString("u") ?? "—")</td>
+                            <td class="small">@(schedule.LastJobName ?? "never")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        <h3 class="panel-sub">Repos <span class="muted small">@_repos.Count</span></h3>
+        @if (_repos.Count == 0)
+        {
+            <p class="muted small">
+                None registered. <code>pomni repos</code> lists what this host can run against, seeded from
+                <code>config/repos.yaml</code> — an owner step for the real repositories.
+            </p>
+        }
+        else
+        {
+            <table class="table">
+                <thead><tr><th>repo</th><th>path</th><th>base</th><th>remote</th></tr></thead>
+                <tbody>
+                    @foreach (var repo in _repos)
+                    {
+                        <tr>
+                            <td class="small">@repo.Name</td>
+                            <td class="small"><code>@(repo.HostPath ?? "—")</code></td>
+                            <td class="small">@(repo.BaseBranch ?? "—")</td>
+                            <td class="small">@(repo.Remote is { Length: > 0 } ? repo.Remote : "no remote")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Card>
+}
+
+@code {
+    private const string PomnibotQuery =
+        "/subscriptions/{0}/resourceGroups/{1}/providers/Burbuja.Pomnibot";
+
+    private PortalFailure? _failure;
+
+    /// <summary>The host does not serve `Burbuja.Pomnibot` (M14 R7, UX pass F1).</summary>
+    private bool _absent;
+    private string _absentWhy = "";
+    private PortalPluginHealth? _health;
+    private ArmScope? _scope;
+    private string? _hostName;
+    private string? _nodeVersion;
+    private string? _engineVersion;
+    private decimal? _balance;
+    private int _activeJobs;
+    private int _capacity;
+    private DateTimeOffset? _lastHeartbeat;
+    private PortalChannelRead _channels = new([], false, null);
+    private PortalPomnibotLedgerDay? _ledger;
+    private List<JobRow> _jobs = [];
+    private List<ApprovalRow> _pendingApprovals = [];
+    private List<ScheduleRow> _schedules = [];
+    private List<RepoRow> _repos = [];
+    private string _busy = "";
+    private string _notice = "";
+
+    private bool LedgerReached => _ledger?.HardStopUsd is { } stop && _ledger.SpentUsd >= stop;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _failure = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scope = scope;
+
+            _health = await Data.PluginHealthAsync(ct);
+            await ReadHostAsync(ct);
+            _channels = await Data.PomnibotChannelsAsync(scope, ct);
+
+            // M12 R1: the host's clock, not the wall's — see the note at the top of the file.
+            var day = Clock.GetUtcNow().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            _ledger = await Data.PomnibotLedgerAsync(scope, day, ct);
+
+            _jobs = [];
+            foreach (var job in await Data.PomnibotJobsAsync(scope, ct))
+            {
+                var status = job.Properties?.ExecutionStatus ?? "unknown";
+                _jobs.Add(new JobRow(
+                    job.Name ?? "?",
+                    status,
+                    job.Properties?.Spec.Kind ?? "—",
+                    job.Properties?.Spec.RepoId ?? "—",
+                    (job.Properties?.Cost.TotalUsd ?? 0m).ToString("0.0000", CultureInfo.InvariantCulture),
+                    job.ETag,
+                    // The non-terminal set, ALL of it: `verifying`, `reviewing`, `finalizing` and `paused`
+                    // are phases a job spends time in, and leaving them out made the verbs disappear exactly
+                    // when a running job was worth steering (found by P6, the browser fact).
+                    Running: status is "running" or "starting" or "queued" or "verifying" or "reviewing"
+                             or "finalizing" or "paused",
+                    Awaiting: status is "awaitingConfirm" or "awaitingApproval" or "intake"));
+            }
+
+            _pendingApprovals = [];
+            foreach (var approval in await Data.ApprovalsAsync(scope, pendingOnly: true, ct))
+            {
+                var request = approval.Properties?.Request;
+                _pendingApprovals.Add(new ApprovalRow(
+                    approval.Name ?? "?",
+                    request?.RiskClass ?? "—",
+                    request?.SubjectId is { Length: > 0 } subject ? Shorten(subject) : "—",
+                    request?.Preview is { Length: > 0 } preview ? Shorten(preview) : "—"));
+            }
+
+            _schedules = [];
+            foreach (var schedule in await Data.SchedulesAsync(scope, ct))
+            {
+                // The NAME lives on the envelope, not in the properties — so the row carries the pair rather
+                // than the page reaching for a field the properties do not have.
+                if (schedule.Properties is { } props)
+                {
+                    _schedules.Add(new ScheduleRow(
+                        schedule.Name ?? "?",
+                        props.Cron,
+                        props.Paused,
+                        props.NextRunAt,
+                        props.LastJobName));
+                }
+            }
+
+            _repos = [];
+            foreach (var repo in await Data.PomnibotReposAsync(scope, ct))
+            {
+                _repos.Add(new RepoRow(
+                    repo.Name ?? "?",
+                    repo.Properties?.HostPath,
+                    repo.Properties?.BaseBranch,
+                    repo.Properties?.Remote));
+            }
+        }
+        catch (ArmException ex) when (PortalData.IsTypeAbsent(ex))
+        {
+            // M14 R7 (UX pass F1) — the host does not serve `Burbuja.Pomnibot` (this Mac has no pomnibot RP;
+            // the deployment lives in that repository). That is an ABSENCE the page states in words, exactly
+            // as Sessions does, and not a red kernel envelope a reader has to decode: the first UX pass found
+            // this page rendering `NoRegisteredProviderFound · … HTTP 400` under a subtitle promising a
+            // deployment.
+            _absent = true;
+            _absentWhy = "Este host no sirve Burbuja.Pomnibot: no hay ningún proveedor de ese espacio de nombres registrado. La página queda vacía a propósito — no es un fallo, es un host sin ese despliegue.";
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    /// <summary>
+    /// The node row, read as `hosts/*` and typed only where this page shows a field.
+    ///
+    /// <para>The node's own name is unknown to the portal — it is whatever the host configured — so the LIST is
+    /// read and the first row is the node. A page that guessed `mac-pomnibot` would be a second copy of a
+    /// configuration value.</para>
+    /// </summary>
+    private async ValueTask ReadHostAsync(CancellationToken ct)
+    {
+        _hostName = null;
+        _nodeVersion = null;
+        _engineVersion = null;
+        _balance = null;
+        _activeJobs = 0;
+        _capacity = 0;
+        _lastHeartbeat = null;
+        if (_scope is null)
+            return;
+
+        var client = await Data.ClientAsync(ct);
+        var root = string.Format(CultureInfo.InvariantCulture, PomnibotQuery, _scope.SubscriptionId, _scope.ResourceGroup);
+        await foreach (var host in client.ListAsync<PortalEnvelope<JsonObject>>($"{root}/hosts", ct: ct))
+        {
+            var properties = host.Properties;
+            if (properties is null)
+                continue;
+            _hostName = host.Name ?? properties["nodeId"]?.GetValue<string>();
+            _nodeVersion = properties["version"]?.GetValue<string>();
+            _engineVersion = properties["claudeVersion"]?.GetValue<string>();
+            _balance = properties["deepSeekBalanceUsd"] is JsonValue balance && balance.TryGetValue<decimal>(out var usd) ? usd : null;
+            _activeJobs = properties["activeJobs"] is JsonValue active && active.TryGetValue<int>(out var count) ? count : 0;
+            _capacity = properties["capacity"] is JsonValue capacity && capacity.TryGetValue<int>(out var cap) ? cap : 0;
+            _lastHeartbeat = properties["lastHeartbeat"] is JsonValue beat && beat.TryGetValue<DateTimeOffset>(out var at) ? at : null;
+            break;
+        }
+    }
+
+    /// <summary>
+    /// The four verbs. Every one is the DECLARED action, carrying this row's `If-Match`, so a job that moved
+    /// under the page is a 412 the operator sees rather than a lost write. The kernel re-decides authorization
+    /// on the wire — the buttons are UX and never the boundary.
+    /// </summary>
+    private Task CancelAsync(JobRow job) => ActAsync(job, "cancel");
+
+    private Task ExtendAsync(JobRow job) => ActAsync(job, "extend");
+
+    private Task ConfirmAsync(JobRow job) => ActAsync(job, "confirm");
+
+    /// <summary>
+    /// One action call, whichever verb. The three wrappers above exist because Razor ENDS an attribute value at
+    /// the first inner double quote — `@onclick="() => ActAsync(row, "cancel")"` does not compile — and a
+    /// distinct method per verb is the shape every other page in this console uses for the same reason.
+    /// </summary>
+    private async Task ActAsync(JobRow job, string action)
+    {
+        _busy = job.Name;
+        _notice = "";
+        var ct = CancellationToken.None;
+        try
+        {
+            // A sentence for the record, built here rather than interpolated into the markup: the Razor
+            // attribute parser ends a lambda at the first inner quote, which is how three of these first failed
+            // to compile rather than to run.
+            var note = action switch
+            {
+                "cancel" => "canceled by the operator",
+                "extend" => "extended by the operator",
+                "confirm" => "confirmed by the operator",
+                _ => "acted on by the operator",
+            };
+            var body = new JsonObject { ["note"] = note }.ToJsonString();
+            var result = await Data.RunActionAsync(
+                $"{_scope!.PomnibotRoot}/jobs/{job.Name}", action, body, job.ETag, ct: ct);
+
+            _notice = result.Ok
+                ? $"{job.Name}: {action} accepted."
+                : $"{job.Name}: the host refused {action} — {result.ErrorCode}: {result.ErrorMessage}";
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = "";
+        }
+    }
+
+    /// <summary>
+    /// Steer asks for the words before it posts them: a steer with an empty body is a refusal from the kernel,
+    /// and a button that always fails teaches a user the page is broken.
+    /// </summary>
+    private async Task SteerAsync(JobRow job)
+    {
+        _steering = job;
+        await Task.CompletedTask;
+    }
+
+    private JobRow? _steering;
+    private string _steerText = "";
+
+    private void CancelSteer()
+    {
+        _steering = null;
+        _steerText = "";
+    }
+
+    private async Task SendSteerAsync()
+    {
+        if (_steering is not { } job || string.IsNullOrWhiteSpace(_steerText))
+            return;
+        _busy = job.Name;
+        _notice = "";
+        var ct = CancellationToken.None;
+        try
+        {
+            var body = new JsonObject { ["text"] = _steerText.Trim(), ["mode"] = "steer" }.ToJsonString();
+            var result = await Data.RunActionAsync(
+                $"{_scope!.PomnibotRoot}/jobs/{job.Name}", "steer", body, job.ETag, ct: ct);
+
+            _notice = result.Ok
+                ? $"{job.Name}: steer delivered."
+                : $"{job.Name}: the host refused steer — {result.ErrorCode}: {result.ErrorMessage}";
+            if (result.Ok)
+            {
+                _steering = null;
+                _steerText = "";
+            }
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = "";
+        }
+    }
+
+    private static string Shorten(string value) => value.Length <= 60 ? value : value[..57] + "…";
+
+    private sealed record JobRow(
+        string Name,
+        string Status,
+        string Kind,
+        string Repo,
+        string Cost,
+        string? ETag,
+        bool Running,
+        bool Awaiting);
+
+    private sealed record ApprovalRow(string Id, string Risk, string Subject, string Preview);
+
+    /// <summary>A schedule as the page renders it: the envelope's name beside the properties' window.</summary>
+    private sealed record ScheduleRow(string Name, string Cron, bool Paused, DateTimeOffset? NextRunAt, string? LastJobName);
+
+    private sealed record RepoRow(string Name, string? HostPath, string? BaseBranch, string? Remote);
+}

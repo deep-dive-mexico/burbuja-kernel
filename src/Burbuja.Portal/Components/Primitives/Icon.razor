@@ -1,0 +1,235 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@* M12 R1 — the icon set. Inline SVG, 16px, `currentColor`, no sprite, no font, no download.
+ *
+ * The console used Unicode glyphs before this (◍ ◐ ● ▸) and they were the clearest tell that the portal
+ * was assembled rather than designed: a glyph's size, weight and baseline belong to whatever font the
+ * reader happens to have, so the same "icon" was a different shape on every machine and none of them
+ * lined up with the text beside it. A path is the same path everywhere.
+ *
+ * Deliberately a switch and not a dictionary of markup strings: the paths below are literals in a Razor
+ * file that the compiler checks, and `default` renders NOTHING rather than a placeholder box — an icon
+ * nobody defined is a caller's bug, and the label next to it already says what the row is.
+ *@
+<svg class="icon @CssClass" width="@Size" height="@Size" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+     aria-hidden="true" focusable="false">
+    @switch (Name)
+    {
+        case "home":
+            <path d="M3 10.5 12 3l9 7.5" />
+            <path d="M5.5 9.5V20h13V9.5" />
+            <path d="M10 20v-5h4v5" />
+            break;
+        case "activity":
+            <path d="M3 12h4l2.5-7 4 14 2.5-7H21" />
+            break;
+        case "sessions":
+            <rect x="3" y="4" width="18" height="7" rx="1.5" />
+            <rect x="3" y="13" width="18" height="7" rx="1.5" />
+            <path d="M7 7.5h.01M7 16.5h.01" />
+            break;
+        case "workspace":
+            <path d="M3 7.5 12 3l9 4.5-9 4.5-9-4.5Z" />
+            <path d="M3 12.5 12 17l9-4.5" />
+            <path d="M3 16.5 12 21l9-4.5" />
+            break;
+        case "approvals":
+            <path d="M9 11.5 11.5 14 15.5 9.5" />
+            <path d="M12 3 4.5 6v5.5c0 4.3 3 8.2 7.5 9.5 4.5-1.3 7.5-5.2 7.5-9.5V6L12 3Z" />
+            break;
+        case "plugins":
+            <path d="M9 3v5H4.5v4H9v5h4.5v-5H18V8h-4.5V3H9Z" />
+            <path d="M4.5 16.5 9 21" />
+            break;
+        case "mandates":
+            <path d="M6 3.5h9l4 4V20.5H6V3.5Z" />
+            <path d="M14.5 3.5v4.5H19" />
+            <path d="M9 13h7M9 16.5h5" />
+            break;
+        case "personas":
+            <circle cx="9" cy="8.5" r="3" />
+            <path d="M3.5 20c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" />
+            <path d="M16 6.2a3 3 0 0 1 0 5.6" />
+            <path d="M17.5 14.9c1.8.8 3 2.6 3 5.1" />
+            break;
+        case "review":
+            <path d="M4 5h16v12H8l-4 4V5Z" />
+            <path d="M9 10.5 11 12.5 15.5 8.5" />
+            break;
+        case "metrics":
+            <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+            break;
+        case "integrity":
+            <path d="M12 2.5 5 5.5v6c0 5 3.2 9.4 7 10.5 3.8-1.1 7-5.5 7-10.5v-6l-7-3Z" />
+            <path d="M12 8.5v4M12 15.5h.01" />
+            break;
+        case "admissions":
+            <path d="M4 5.5h11l5 5v9H4v-14Z" />
+            <path d="M14 5.5v5h5" />
+            <path d="M8.5 15.5h7" />
+            break;
+        case "explore":
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4.5 4.5" />
+            break;
+        case "integrations":
+            <path d="M9 7V3M15 7V3" />
+            <rect x="6" y="7" width="12" height="9" rx="2" />
+            <path d="M12 16v5" />
+            break;
+        case "jobs":
+            <rect x="3" y="7" width="18" height="13" rx="2" />
+            <path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" />
+            <path d="M3 12h18" />
+            break;
+        case "agents":
+            <rect x="4.5" y="7.5" width="15" height="11" rx="2.5" />
+            <path d="M12 3v4.5" />
+            <circle cx="9" cy="13" r="1.1" />
+            <circle cx="15" cy="13" r="1.1" />
+            break;
+        case "schedules":
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7v5.2l3.2 2" />
+            break;
+        case "search":
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4.5 4.5" />
+            break;
+        case "bell":
+            <path d="M6.5 10a5.5 5.5 0 0 1 11 0c0 4 1.5 5.5 1.5 5.5H5s1.5-1.5 1.5-5.5Z" />
+            <path d="M10 18.5a2 2 0 0 0 4 0" />
+            break;
+        case "plus":
+            <path d="M12 5v14M5 12h14" />
+            break;
+        case "chevron-left":
+            <path d="M14.5 5.5 8 12l6.5 6.5" />
+            break;
+        case "chevron-down":
+            <path d="M5.5 9.5 12 16l6.5-6.5" />
+            break;
+        case "menu":
+            <path d="M4 7h16M4 12h16M4 17h16" />
+            break;
+        case "theme-light":
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" />
+            break;
+        case "theme-dark":
+            <path d="M20 13.5A8.5 8.5 0 0 1 10.5 4a8.5 8.5 0 1 0 9.5 9.5Z" />
+            break;
+        case "spark":
+            <path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3Z" />
+            break;
+        case "external":
+            <path d="M14 4.5h5.5V10" />
+            <path d="M19.5 4.5 11 13" />
+            <path d="M17 14v5.5H4.5V7H10" />
+            break;
+        case "download":
+            <path d="M12 4v10" />
+            <path d="m8 10.5 4 4 4-4" />
+            <path d="M4.5 19.5h15" />
+            break;
+        case "check":
+            <path d="m5 12.5 4.5 4.5L19 7.5" />
+            break;
+        case "cross":
+            <path d="M6 6l12 12M18 6 6 18" />
+            break;
+        case "logo":
+            @* Burbuja's own mark: two stacked half-circles on a stem — an echo of the AKOS geometry
+               (a horizon and what sits above it), and deliberately NOT the client's mark. *@
+            <path d="M5 10a7 7 0 0 1 14 0" />
+            <path d="M5 15.5a7 7 0 0 0 14 0" />
+            <path d="M12 3v18" />
+            break;
+        @* Console (2026-09-26) — the client's console rail, drawn after his mockup's thin-line glyphs. *@
+        case "target":
+            <circle cx="12" cy="12" r="8" />
+            <circle cx="12" cy="12" r="2.5" />
+            break;
+        case "tasks":
+            <rect x="4" y="4" width="16" height="16" rx="1.5" />
+            <path d="M8 9h8M8 12.5h8M8 16h5" />
+            break;
+        case "memory":
+            <path d="M12 3 19.5 7.5v9L12 21l-7.5-4.5v-9L12 3Z" />
+            <path d="M12 12 19.5 7.5M12 12v9M12 12 4.5 7.5" />
+            break;
+        case "evidence":
+            <rect x="5" y="3.5" width="14" height="17" rx="1.5" />
+            <rect x="8.5" y="8" width="7" height="6" />
+            <path d="M8.5 17h7" />
+            break;
+        case "graph":
+            <circle cx="6" cy="7" r="2" />
+            <circle cx="18" cy="6" r="2" />
+            <circle cx="12" cy="17" r="2.5" />
+            <circle cx="19" cy="15" r="1.5" />
+            <path d="M7.7 8.2 10.6 15M16.4 7.2 13.3 15M8 7l8-1M14.4 16.4l3.2-.9" />
+            break;
+        case "clock":
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7v5l3.5 2" />
+            break;
+        case "capability":
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 8v8M8 12h8" />
+            break;
+        case "system":
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7" />
+            break;
+        case "terminal":
+            <rect x="3" y="4.5" width="18" height="15" rx="1.5" />
+            <path d="m7 10 3 2.5L7 15M12.5 15H17" />
+            break;
+        case "expand":
+            <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" />
+            break;
+        case "arrow-right":
+            <path d="M5 12h14M13 6l6 6-6 6" />
+            break;
+        case "minus":
+            <path d="M5 12h14" />
+            break;
+        case "fit":
+            <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+            break;
+        @* Wave 2 (2026-09-26) — the Grafo's lock (the mockup's padlock), FILTROS' funnel and AJUSTES' sliders. *@
+        case "lock":
+            <rect x="5" y="10.5" width="14" height="10" rx="1.5" />
+            <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+            break;
+        case "unlock":
+            <rect x="5" y="10.5" width="14" height="10" rx="1.5" />
+            <path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7" />
+            break;
+        case "filter":
+            <path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8L3.5 5Z" />
+            break;
+        case "settings":
+            <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+            <circle cx="16" cy="7" r="2" />
+            <circle cx="10" cy="17" r="2" />
+            break;
+        default:
+            break;
+    }
+</svg>
+
+@code {
+    /// <summary>Which path to draw. An unknown name renders nothing — see the note above.</summary>
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = "";
+
+    /// <summary>Pixel box. 16 is the shell's size; 20 is for the empty-state mark.</summary>
+    [Parameter]
+    public int Size { get; set; } = 16;
+
+    [Parameter]
+    public string? CssClass { get; set; }
+}

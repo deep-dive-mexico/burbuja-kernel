@@ -1,0 +1,362 @@
+@page "/portal/sessions"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject TimeProvider Clock
+@inject IEnumerable<IPortalSessionLabel> Labels
+
+@*
+    M14 R6 — Sessions is ONE list.
+
+    **What was wrong.** The page answered "what is running" three times: a pomnibot grid, an Agents grid, an
+    Agents `jobs` grid, and under them a "Rails" card grouping the same resources by workspace. Four
+    presentations of one question, and the reader had to know which KIND they were looking for before they
+    could look — which is the opposite of what an index is for. A person arriving at `/portal/sessions` wants
+    one list of what exists, with the kind on each row, and then to filter by it.
+
+    **What one list costs, and how it is paid.** The three kinds do not share a shape: a job has a workspace and
+    a start time, an agent has a driver and no workspace, a pomnibot job has a repo and costs in a different
+    ledger. So the list has one column per fact a reader compares (`tipo · nombre · dónde · estado · modelo ·
+    coste · desde`) and a kind renders `—` for what it does not have — the same rule every other page keeps, and
+    the alternative (three grids) is what this round removed. Nothing is summed across kinds: the pomnibot
+    ledger is not the Agents ledger, and a total that added them would be a number no host booked.
+
+    **The Rails card is gone.** It grouped the same rows by workspace / repo, which the shell's rail and
+    `/portal/workspaces` already do; a second grouping of one list is how a page becomes four screens again.
+
+    **What the page says when a kind is absent.** `_sources` names what was read and what was NOT, because an
+    empty host and a host whose `Burbuja.Pomnibot` is not registered look identical in a list that simply has
+    fewer rows.
+
+    ----------------------------------------------------------------------------------------------------------
+    M15 item 13 — the list is grouped by workspace, and it still has ONE `<table>` because two facts outside
+    this lane pin exactly one `table.grid` on the page (`PomnibotTests` and `SessionsPageTests`).
+
+    **Grouping without a second table, and without inventing a row.** A group heading drawn as its own `<tr>`
+    would be a row the grid does not have, and `SessionsPageTests` counts `tbody tr`; so the grouping is carried
+    by the WORKSPACE column: every row still names its workspace, and the FIRST row of each group carries the
+    group's label (`grid-group-label`). Rows are ordered by group, so a workspace's rows are adjacent.
+
+    **Product annotations state their provenance.** A registered label contributor may interpret a product's
+    naming convention; the generic list never infers a stored relationship from a runtime name.
+
+    **The warning dot is the record's own pending state.** The host serves `pendingApprovalId` on agents, jobs
+    and pomnibot jobs (and an agent's `inbox`); the dot is drawn from exactly those fields, never from a status
+    this page inferred. The explicit `awaitingApproval` word the kernel writes is honoured as a fallback, and
+    nothing else is.
+*@
+
+<PageTitle>Sessions</PageTitle>
+
+<PageHeader Eyebrow="Monitor" Title="Sessions" Loaded="@(!_loading)"
+            Subtitle="Everything this host is running — jobs, agents and pomnibot jobs — in one list grouped by workspace, with the kind on every row." />
+
+<ErrorAlert Failure="_failure" />
+
+@if (_failure is null)
+{
+    <Card Title="Everything that runs" Subtitle="@_sources">
+        @if (_loading)
+        {
+            <LoadingState Text="reading jobs, agents and pomnibot jobs…" />
+        }
+        else if (_rows.Count == 0)
+        {
+            <EmptyState Text="No job, agent, or pomnibot job in this resource group. This list shows what the host already has; there is nothing else to read." />
+        }
+        else
+        {
+            <div class="row row-wrap" style="margin-bottom: 8px">
+                <input class="input sessions-filter" aria-label="filter sessions" placeholder="filter by name, workspace or context" @bind="Filter" @bind:event="oninput" />
+            </div>
+            @if (Filtered.Count == 0)
+            {
+                <EmptyState Text="Nothing in this list matches the filter. Clear it to see every row the host served." />
+            }
+            else
+            {
+                <div class="grid-scroll"><QuickGrid Items="Filtered.AsQueryable()" Class="grid">
+                    <PropertyColumn Property="r => r.Kind" Title="kind" Sortable="true" />
+                    <PropertyColumn Property="r => r.Name" Title="name" Sortable="true" />
+                    @* The workspace column IS the grouping: the first row of each group carries the label. *@
+                    <TemplateColumn Title="workspace">
+                        <ChildContent Context="row">
+                            @if (row.GroupFirst)
+                            {
+                                <span class="grid-group-label" title="rows are ordered and grouped by workspace; this is the group's first row">@row.Group</span>
+                            }
+                            else
+                            {
+                                <span class="muted">@row.Where</span>
+                            }
+                        </ChildContent>
+                    </TemplateColumn>
+                    <TemplateColumn Title="state" Sortable="true" SortBy="@(GridSort<Row>.ByAscending(r => r.State))">
+                        <ChildContent Context="row">
+                            @if (row.PendingWhy is { Length: > 0 } why)
+                            {
+                                <span class="warn-dot" role="img" aria-label="@why" title="@why">●</span>
+                            }
+                            <span class="pill @StatusPill.Tone(row.State)">@row.State</span>
+                        </ChildContent>
+                    </TemplateColumn>
+                    <TemplateColumn Title="turn">
+                        <ChildContent Context="row">
+                            @if (row.TurnLabel is { Length: > 0 } label)
+                            {
+                                <span class="turn-label" title="Product-provided provenance; the label states its source.">@label</span>
+                            }
+                            else
+                            {
+                                <span class="muted small">—</span>
+                            }
+                        </ChildContent>
+                    </TemplateColumn>
+                    <PropertyColumn Property="r => r.Model" Title="model" />
+                    <PropertyColumn Property="r => r.Cost" Title="cost" />
+                    <PropertyColumn Property="r => r.Since" Title="since" Sortable="true" />
+                    <TemplateColumn Title="" Align="Align.Right">
+                        <ChildContent Context="row">
+                            <a class="btn btn-small" href="@row.Href">open</a>
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid></div>
+            }
+        }
+    </Card>
+}
+
+@code {
+    /// <summary>
+    /// One row of the list. <see cref="Kind"/> is what makes one list possible: the reader filters by reading
+    /// it, and a column a kind does not have renders an em dash rather than a blank that reads as a bug.
+    ///
+    /// <para><see cref="Group"/> is the scope the row is grouped under (a job's workspace, an agent's bound
+    /// workspace or <c>(unbound)</c>, a pomnibot job's repo), and <see cref="GroupFirst"/> is set on the first
+    /// row of each group by <see cref="Filtered"/> — a positional member so the view can be built with
+    /// <c>with</c> and the loaded list is never mutated.</para>
+    /// </summary>
+    private sealed record Row(
+        string Kind,
+        string Name,
+        string Where,
+        string State,
+        string Model,
+        string Cost,
+        string Since,
+        string Href,
+        string Group,
+        string? TurnLabel,
+        string? PendingWhy,
+        bool GroupFirst = false);
+
+    private PortalFailure? _failure;
+
+    /// <summary>
+    /// True until the projections have been read. It exists because the page used to render its three
+    /// "Nothing here." empty states while the reads were still in flight, and an empty state that means
+    /// "not loaded yet" is indistinguishable from one that means "there is nothing" — measured in the Pi
+    /// compose lane, where G7 screenshotted exactly that page (`No jobs in this resource group.` with a
+    /// succeeded job in the store) and then failed to find the row it had just created. The grid is
+    /// empty of "open" links until the data lands; a loading line is the honest thing to draw.
+    /// </summary>
+    private bool _loading = true;
+
+    private List<Row> _rows = [];
+
+    /// <summary>What was read, and what was not — an empty kind and an absent provider are different hosts.</summary>
+    private string _sources = "reading…";
+
+    /// <summary>The filter box's text. Empty means "every row".</summary>
+    private string _filter = "";
+
+    private string Filter
+    {
+        get => _filter;
+        set => _filter = value;
+    }
+
+    /// <summary>
+    /// The rows the grid renders: filtered, then re-labelled so the first row of each group is the only one
+    /// carrying the group heading — including after a filter, where a group can lose rows and still needs its
+    /// label. A match is a name, a workspace/repo or a persona/turn label; the row's KIND is deliberately not
+    /// searched, because the kind is what the reader is looking AT, not what they are looking FOR.
+    /// </summary>
+    private IReadOnlyList<Row> Filtered
+    {
+        get
+        {
+            var needle = _filter.Trim();
+            IEnumerable<Row> rows = _rows;
+            if (needle.Length > 0)
+            {
+                rows = rows.Where(r =>
+                    r.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || r.Where.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || r.Group.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || (r.TurnLabel?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            var grouped = new List<Row>();
+            string? previous = null;
+            foreach (var row in rows)
+            {
+                grouped.Add(row with { GroupFirst = !string.Equals(previous, row.Group, StringComparison.Ordinal) });
+                previous = row.Group;
+            }
+
+            return grouped;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+
+            var workspaces = (await Data.WorkspacesAsync(scope, ct))
+                .Where(w => w.Id is { Length: > 0 } && w.Name is { Length: > 0 })
+                .Select(w => (Id: w.Id!, Name: w.Name!))
+                .ToList();
+
+            foreach (var job in await Data.JobsAsync(scope, ct))
+            {
+                var id = job.Id ?? "";
+                var workspaceName = workspaces
+                    .FirstOrDefault(w => id.StartsWith(w.Id + "/jobs/", StringComparison.OrdinalIgnoreCase))
+                    .Name ?? "?";
+                var pending = PendingWhy(
+                    job.Properties?.PendingApprovalId,
+                    inbox: false,
+                    awaitingStatus: string.Equals(job.Properties?.Status, "awaitingApproval", StringComparison.OrdinalIgnoreCase));
+                _rows.Add(new Row(
+                    "job",
+                    job.Name ?? "?",
+                    workspaceName,
+                    job.Properties?.Status ?? "unknown",
+                    job.Properties?.AgentId ?? "—",
+                    PortalData.Money(job.Properties?.Cost.TotalUsd),
+                    job.Properties?.StartedAt?.UtcDateTime.ToString("MM-dd HH:mm:ss'Z'", CultureInfo.InvariantCulture) ?? "—",
+                    $"/portal/jobs/{Uri.EscapeDataString(workspaceName)}/{Uri.EscapeDataString(job.Name ?? "")}",
+                    workspaceName,
+                    null,
+                    pending));
+            }
+
+            foreach (var agent in await Data.AgentsAsync(scope, ct))
+            {
+                // The agent's bound workspace when the record holds one — the same pair the rail groups by —
+                // and `(unbound)` when it does not, which is a truthful group rather than a dropped row.
+                var workspace = agent.Properties?.WorkspaceId is { Length: > 0 } bound
+                    ? bound
+                    : agent.Properties?.ComputeWorkspaceId is { Length: > 0 } compute ? compute : "";
+                var pending = PendingWhy(
+                    agent.Properties?.PendingApprovalId,
+                    inbox: agent.Properties?.Inbox is { Count: > 0 },
+                    awaitingStatus: false);
+                _rows.Add(new Row(
+                    "agent",
+                    agent.Name ?? "?",
+                    workspace.Length > 0 ? workspace : "—",
+                    agent.Properties?.State ?? "unknown",
+                    agent.Properties?.ModelId ?? agent.Properties?.Driver ?? "—",
+                    PortalData.Money(agent.Properties?.CostUsd),
+                    "—",
+                    $"/portal/agents/{Uri.EscapeDataString(agent.Name ?? "")}",
+                    workspace.Length > 0 ? workspace : "(unbound)",
+                    SessionLabel(agent.Name),
+                    pending));
+            }
+
+            var pomnibot = await LoadPomnibotAsync(scope, ct);
+
+            // Grouped order: a stable sort so a workspace's rows are adjacent without re-ordering the kinds
+            // within a group on every render.
+            _rows = [.. _rows
+                .OrderBy(r => r.Group, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(r => r.Kind, StringComparer.Ordinal)
+                .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)];
+
+            _sources = pomnibot.Absent
+                ? "read jobs and agents; Burbuja.Pomnibot is not registered on this host, so no pomnibot jobs are in the list"
+                : $"read jobs, agents and pomnibot jobs — {Text.Plural(_rows.Count, "row", "rows")}, each with its kind, grouped by workspace";
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// A host with no <c>Burbuja.Pomnibot</c> namespace is normal (the Agents-only build), so the list says so
+    /// rather than failing the page — the same tolerance the dashboard has.
+    /// </summary>
+    private async Task<(bool Absent, int Count)> LoadPomnibotAsync(ArmScope scope, CancellationToken ct)
+    {
+        IReadOnlyList<PortalEnvelope<PortalPomnibotJob>> jobs;
+        try
+        {
+            jobs = await Data.PomnibotJobsAsync(scope, ct);
+        }
+        catch (ArmException ex) when (PortalData.IsTypeAbsent(ex))
+        {
+            return (true, 0);
+        }
+
+        var now = Clock.GetUtcNow();
+        foreach (var job in jobs)
+        {
+            var repo = job.Properties?.Spec.RepoId is { Length: > 0 } bound ? bound : "(no repo)";
+            var status = job.Properties?.ExecutionStatus;
+            var pending = PendingWhy(
+                job.Properties?.PendingApprovalId,
+                inbox: false,
+                awaitingStatus: PortalData.IsPomnibotAwaitingApproval(status));
+            _rows.Add(new Row(
+                "pomnibot",
+                job.Name ?? "?",
+                repo,
+                // The pomnibot RP's own word: `executionStatus` when it has one, the envelope's
+                // provisioning state otherwise. Never a status this page invented.
+                status ?? job.ProvisioningState ?? "unknown",
+                job.Properties?.Spec.Model ?? "—",
+                PortalData.Money(job.Properties?.Cost.TotalUsd),
+                PortalData.Age(PortalData.CreatedAt(job), now),
+                $"/portal/pomnibot/jobs/{Uri.EscapeDataString(job.Name ?? "")}",
+                $"pomnibot, {repo}",
+                SessionLabel(job.Name),
+                pending));
+        }
+
+        return (false, jobs.Count);
+    }
+
+    /// <summary>
+    /// Why a row carries the warning dot, or null when it does not. Every branch is a field the host serves
+    /// (<c>pendingApprovalId</c>, an agent's <c>inbox</c>, the explicit <c>awaitingApproval</c> word) — the dot
+    /// is never a status this page inferred from a quieter fact.
+    /// </summary>
+    private static string? PendingWhy(string? approvalId, bool inbox, bool awaitingStatus)
+    {
+        if (approvalId is { Length: > 0 })
+            return $"waiting on approval {approvalId}";
+        if (inbox)
+            return "an interaction is waiting in the agent's inbox";
+        if (awaitingStatus)
+            return "the host's own status is awaitingApproval";
+        return null;
+    }
+
+    /// <summary>
+    /// The first registered annotation that recognizes this runtime name, or no annotation.
+    /// </summary>
+    private string? SessionLabel(string? name) => Labels.Select(l => l.Label(name)).FirstOrDefault(l => l is not null);
+}

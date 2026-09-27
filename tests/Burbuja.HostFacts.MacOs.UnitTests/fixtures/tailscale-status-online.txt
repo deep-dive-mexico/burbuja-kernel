@@ -1,0 +1,5 @@
+100.64.0.11    demo-laptop  demo@example     macOS  -
+100.64.0.12    demo-relay   tagged-devices   linux  -
+100.64.0.13    demo-phone   demo@example     iOS    offline, last seen 2d ago
+100.64.0.14    demo-tablet  demo@example     iOS    active; direct [2001:db8::14]:41641, tx 2048 rx 1024
+100.64.0.15    demo-node    demo@example     linux  idle; offers exit node

@@ -1,0 +1,30 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+<section class="card @Class">
+    @if (Title is not null || Subtitle is not null)
+    {
+        <header class="card-head">
+            @if (Title is not null)
+            {
+                <h2>@Title</h2>
+            }
+            @if (Subtitle is not null)
+            {
+                <span class="muted small">@Subtitle</span>
+            }
+        </header>
+    }
+    <div class="card-body">
+        @ChildContent
+    </div>
+</section>
+
+@code {
+    [Parameter] public string? Title { get; set; }
+
+    [Parameter] public string? Subtitle { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

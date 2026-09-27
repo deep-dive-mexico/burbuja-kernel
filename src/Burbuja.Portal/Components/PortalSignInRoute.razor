@@ -1,0 +1,23 @@
+@namespace Burbuja.Portal.Components
+@using Microsoft.AspNetCore.WebUtilities
+@inject IPortalArm Arm
+@inject NavigationManager Nav
+
+@if (_ready && !_redirecting)
+{
+    <RouteView RouteData="RouteData" DefaultLayout="typeof(PortalAuthLayout)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public RouteData RouteData { get; set; } = null!;
+    [Parameter, EditorRequired] public PortalScope Scope { get; set; } = null!;
+    private bool _ready, _redirecting;
+    protected override async Task OnParametersSetAsync()
+    {
+        var query = QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        var destination = PortalSignInNavigation.Destination(Scope, await Arm.SessionAsync(), query.GetValueOrDefault("returnUrl"), query.GetValueOrDefault("error"));
+        _redirecting = destination is not null;
+        _ready = true;
+        if (destination is not null) Nav.NavigateTo(destination, forceLoad: true, replace: true);
+    }
+}

@@ -1,0 +1,144 @@
+@page "/portal/agents/{Name}"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject ExecutionView View
+@inject PortalOptions Options
+@inject IPortalArm Arm
+
+<PageTitle>@Name</PageTitle>
+
+<ExecutionDetail Title="@Title"
+                 Subtitle="@Subtitle"
+                 StatusWord="@(_agent?.Properties?.State ?? "unknown")"
+                 Events="@View.Events"
+                 Artifacts="@_artifacts"
+                 ArtifactNote="A stateful agent's history is its session event stream; the transcript route is a data-plane download when the runtime wrote one."
+                 Stream="@View.Stream"
+                 StreamRefused="@View.StreamRefused"
+                 Failure="@(_failure ?? View.Failure)"
+                 Loading="@View.Loading"
+                 Truncated="@View.Truncated"
+                 CostUsd="@_agent?.Properties?.CostUsd"
+                 ApprovalId="@_agent?.Properties?.PendingApprovalId"
+                 Query="@View.Query"
+                 SearchScanned="@View.SearchScanned"
+                 SearchComplete="@View.SearchComplete"
+                 SearchCapped="@View.SearchCapped"
+                 OnSearch="@OnSearch"
+                 OnSignal="@OnSignal"
+                  Loaded="@(_agent is not null || _failure is not null)">
+    <Extra>
+        <dl class="kv kv-inline">
+            <dt>driver</dt><dd>@(_agent?.Properties?.Driver ?? "kernel")</dd>
+            <dt>model</dt><dd>@(_agent?.Properties?.ModelId ?? "—")</dd>
+            <dt>workspace</dt><dd>@(_agent?.Properties?.WorkspaceId ?? _agent?.Properties?.ComputeWorkspaceId ?? "—")</dd>
+            <dt>team</dt><dd>@(_agent?.Properties?.TeamId ?? "—")</dd>
+            <dt>parent</dt><dd>@(_agent?.Properties?.ParentAgentId ?? "—")</dd>
+            <dt>session</dt><dd>@(_sessionId ?? "no session yet")</dd>
+            <dt>event stream</dt><dd><code>@_eventsPath</code></dd>
+        </dl>
+    </Extra>
+</ExecutionDetail>
+
+@code {
+    [Parameter] public string Name { get; set; } = "";
+
+    private PortalEnvelope<PortalAgent>? _agent;
+    private PortalFailure? _failure;
+    private IReadOnlyList<PortalArtifact> _artifacts = [];
+    private string _eventsPath = "";
+    private string? _sessionId;
+    private bool _attached;
+
+    private string Title => _agent?.Properties?.DisplayName is { Length: > 0 } display ? display : Name;
+
+    private string Subtitle => $"{Name}, {_agent?.Properties?.Driver ?? "kernel"} driver";
+
+    protected override async Task OnInitializedAsync()
+    {
+        View.Changed += OnViewChanged;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+
+            var path = $"{scope.AgentsRoot}/agents/{Name}";
+            _agent = await Data.AgentAsync(scope, Name, ct);
+
+            // An agent's events live on its session stream — the agent resource's own `events` route
+            // resolves to the agent id, which the runtime never writes to.
+            var session = await CurrentSessionAsync(scope, ct);
+            if (session is not null)
+            {
+                _sessionId = session;
+                _eventsPath = $"{path}/sessions/{session}/events";
+                await View.LoadAsync(_eventsPath, Options.EventPageSize * 8, ct);
+            }
+            else
+            {
+                _failure = PortalFailure.Local("NoSession", "This agent has no session yet; send it a message and the runtime will open one.");
+            }
+
+            _artifacts = await ProbeAsync(path, ct);
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Attach is RETRIED on every render, and the retry is the fix for a measured defect: this page
+        // renders once while the range read is still in flight, so the first render can arrive BEFORE the
+        // view knows which stream to attach to. Doing it only on `firstRender` therefore lost the live
+        // stream completely — the compose lane's G10 screenshot reads `no live stream` while the ARM plane
+        // shows the second turn, i.e. the page silently stopped being live. `Attach` is idempotent (it
+        // returns the existing stream once it has one), so every later render is a no-op.
+        var stream = View.Attach();
+        if (stream is null || _attached)
+            return;
+
+        _attached = true;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private async Task OnSearch(string query)
+    {
+        if (_eventsPath is { Length: > 0 })
+            await View.SearchAsync(_eventsPath, query, Options.EventPageSize * 8, ExecutionView.SearchMaxPages, CancellationToken.None);
+    }
+
+    private async Task OnSignal(long _) => await View.CatchUpAsync(CancellationToken.None);
+
+    private async Task<string?> CurrentSessionAsync(ArmScope scope, CancellationToken ct)
+    {
+        var sessions = await Data.AgentSessionsAsync(scope, Name, ct);
+        var current = _agent?.Properties?.CurrentSessionId;
+        if (current is { Length: > 0 })
+            return current;
+
+        return sessions
+            .OrderByDescending(s => s.Properties?.LastSeq ?? 0)
+            .Select(s => s.Name)
+            .FirstOrDefault(n => n is { Length: > 0 });
+    }
+
+    private async Task<IReadOnlyList<PortalArtifact>> ProbeAsync(string agentPath, CancellationToken ct)
+    {
+        var candidates = new List<string> { agentPath + "/transcript" };
+        if (_sessionId is { Length: > 0 })
+            candidates.Add($"{agentPath}/sessions/{_sessionId}/transcript");
+
+        var artifacts = new List<PortalArtifact>();
+        foreach (var candidate in candidates)
+            artifacts.Add(await Arm.ProbeAsync(candidate, ct));
+        return artifacts;
+    }
+
+    private void OnViewChanged() => _ = InvokeAsync(StateHasChanged);
+}

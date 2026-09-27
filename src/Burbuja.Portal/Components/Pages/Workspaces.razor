@@ -1,0 +1,309 @@
+@page "/portal/workspaces"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+
+<PageTitle>Workspaces</PageTitle>
+
+<PageHeader Eyebrow="Monitor" Title="Workspaces" Loaded="@(_failure is not null || _rows.Count > 0)">
+    <SubtitleContent>
+            A workspace is the repo record a job runs against: its branch rules, its verify commands, its default
+            budget, and the jobs and schedules it holds. Open one to see what is in it — the kernel answers that in a
+            single read (<code>properties.hub</code>), so this page does no arithmetic of its own.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+@*
+    M10 U7 — deploy a workspace from the console.
+
+    Before this the page's empty state said "a workspace is a PUT" and left the reader to write one. The form
+    PUTs the same resource the CLI does, and when **Initialize compute** is checked it asks for provisioning:
+    the kernel answers **202 + Azure-AsyncOperation**, and the page follows that operation with the same poller
+    every other long-running action uses — so the reader watches `Provisioning → Ready|Failed` instead of being
+    told to come back. `LifecycleError` is shown verbatim when it fails, because a failed provision with no
+    reason is the shape of a console nobody trusts.
+*@
+@if (_failure is null)
+{
+    <Card Title="New workspace" Subtitle="a PUT of Burbuja.Agents/workspaces — and, when asked, the provisioning that follows it">
+        @* M12 R4: the form moved to /portal/create/workspace, where the Create menu points. The note about the
+           backend travels with it — the form is where somebody is about to choose one. *@
+        <div class="row row-wrap">
+            <a class="btn btn-primary" href="/portal/create/workspace">+ New workspace</a>
+            <span class="muted small">
+                the backend defaults to <code>local-directory</code>: a <code>git-worktree</code> would clone with
+                the owner's ssh identity, which is not something a form should reach for.
+            </span>
+        </div>
+
+        @if (_formOpen)
+        {
+            <div class="stack">
+                <div class="row">
+                    <label class="field">
+                        <span class="muted small">name</span>
+                        <input class="input" aria-label="name" @bind="_name" @bind:event="oninput" placeholder="ws-demo" />
+                    </label>
+                    <label class="field">
+                        <span class="muted small">display name</span>
+                        <input class="input" aria-label="display name" @bind="_displayName" @bind:event="oninput" placeholder="Demo workspace" />
+                    </label>
+                </div>
+                <div class="row">
+                    <label class="field">
+                        <span class="muted small">repo id (optional)</span>
+                        <input class="input" aria-label="repo id" @bind="_repoId" @bind:event="oninput" placeholder="demo" />
+                    </label>
+                    <label class="field">
+                        <span class="muted small">base branch</span>
+                        <input class="input" aria-label="base branch" @bind="_branch" @bind:event="oninput" />
+                    </label>
+                </div>
+                <div class="row">
+                    <label class="field">
+                        <span class="muted small">profile</span>
+                        <select class="input" aria-label="profile" @bind="_profile">
+                            <option value="DevFullAuto">DevFullAuto</option>
+                            <option value="DevReadOnly">DevReadOnly</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="muted small">budget / job (USD)</span>
+                        <input class="input" aria-label="budget" type="number" step="0.05" @bind="_budget" />
+                    </label>
+                    <label class="field">
+                        <span class="muted small">compute backend</span>
+                        <select class="input" aria-label="backend" @bind="_backend">
+                            <option value="local-directory">local-directory</option>
+                            <option value="git-worktree">git-worktree</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="muted small">size</span>
+                        <select class="input" aria-label="size" @bind="_size">
+                            <option value="small">small</option>
+                            <option value="medium">medium</option>
+                        </select>
+                    </label>
+                </div>
+                <label class="check">
+                    <input type="checkbox" aria-label="initialize compute" @bind="_initialize" />
+                    Initialize compute — provisions the bound <code>Burbuja.Compute/workspaces</code> and closes an operation
+                </label>
+
+                @if (_notice is { Length: > 0 })
+                {
+                    <div class="alert @(_noticeIsError ? "alert-warn" : "alert-info")" role="status">@_notice</div>
+                }
+
+                <div class="row">
+                    @* M12 R4 will move this form to /portal/create/workspace and this page keeps a "+ New"
+                       link, so the marker is on the button a BROWSER FACT clicks rather than on a class or
+                       a text match. `has-text('Create')` was a substring match that happened to be unique
+                       until M12 R1 put a `+ Create` button in the top bar, which comes first in the DOM —
+                       the fact then opened the global Create menu instead of submitting this form, and the
+                       test failed 90 s later saying the workspace was never provisioned. A stable marker
+                       is the fix; the ambiguity is not the test's fault. *@
+                    <button class="btn btn-primary" type="button" data-action="create-workspace" @onclick="CreateAsync"
+                            disabled="@(_busy || string.IsNullOrWhiteSpace(_name))">
+                        @(_busy ? "Working…" : "Create")
+                    </button>
+                </div>
+            </div>
+        }
+    </Card>
+}
+
+@if (_failure is null && _rows.Count == 0)
+{
+    <Card Title="Workspaces" Subtitle="@_scope">
+        <EmptyState Text="No workspaces in this resource group. Use «+ New workspace» above — or write one with a PUT of Burbuja.Agents/workspaces carrying a repoId and the branch rules its jobs run under." />
+    </Card>
+}
+
+@if (_failure is null && _rows.Count > 0)
+{
+    <Card Title="Workspaces" Subtitle="@($"{_rows.Count} in {_scope}")">
+        <div class="grid-scroll"><QuickGrid Items="_rows.AsQueryable()" Class="grid">
+            <PropertyColumn Property="r => r.Name" Title="name" Sortable="true" />
+            <PropertyColumn Property="r => r.DisplayName" Title="display" Sortable="true" />
+            <PropertyColumn Property="r => r.Repo" Title="repo" />
+            <PropertyColumn Property="r => r.Branch" Title="branch" />
+            <PropertyColumn Property="r => r.Profile" Title="profile" />
+            <PropertyColumn Property="r => r.Budget" Title="default budget" />
+            <PropertyColumn Property="r => r.Revision" Title="rev" Sortable="true" />
+            <TemplateColumn Title="lifecycle" Sortable="true">
+                <ChildContent Context="row">
+                    @if (row.Lifecycle is { Length: > 0 } lifecycle)
+                    {
+                        <span class="chip @(lifecycle == "Ready" ? "chip-good" : lifecycle == "Failed" ? "chip-bad" : "chip-warn")">@lifecycle</span>
+                    }
+                    else
+                    {
+                        <span class="muted small">—</span>
+                    }
+                </ChildContent>
+            </TemplateColumn>
+            <TemplateColumn Title="" Align="Align.Right">
+                <ChildContent Context="row">
+                    <a class="btn btn-small" href="@Href(row.Name)">open</a>
+                </ChildContent>
+            </TemplateColumn>
+        </QuickGrid></div>
+    </Card>
+}
+
+@code {
+    private PortalFailure? _failure;
+    private string _scope = "";
+    private ArmScope? _scopeRef;
+    private List<WorkspaceRow> _rows = [];
+    private bool _formOpen;
+    private bool _busy;
+    private bool _initialize = true;
+    private bool _noticeIsError;
+    private string _name = "";
+    private string _displayName = "";
+    private string _repoId = "";
+    private string _branch = "main";
+    private string _profile = "DevFullAuto";
+    private decimal _budget = 1m;
+    private string _backend = "local-directory";
+    private string _size = "small";
+    private string _notice = "";
+
+    /// <summary>
+    /// The create, and the provisioning it may ask for.
+    ///
+    /// <para><b>The 202 is the interesting half.</b> With `initialize: true` the kernel accepts rather than
+    /// answers, and `RunActionAsync` follows `Azure-AsyncOperation` to a terminal state — so by the time this
+    /// returns, the lifecycle is `Ready` or `Failed`, and the message says which with the kernel's own words
+    /// (`LifecycleError`) when it failed. The list is re-read afterwards, which is what puts the row on screen
+    /// with the state the operation left it in.</para>
+    /// </summary>
+    private async Task CreateAsync()
+    {
+        if (_busy || _scopeRef is null || string.IsNullOrWhiteSpace(_name))
+            return;
+        _busy = true;
+        _notice = "";
+        _noticeIsError = false;
+        var ct = CancellationToken.None;
+        try
+        {
+            var name = _name.Trim();
+            var properties = new JsonObject
+            {
+                ["displayName"] = string.IsNullOrWhiteSpace(_displayName) ? name : _displayName.Trim(),
+                ["baseBranch"] = string.IsNullOrWhiteSpace(_branch) ? "main" : _branch.Trim(),
+                ["profile"] = _profile,
+                ["defaultMaxUsd"] = _budget,
+                ["revision"] = 1,
+            };
+            if (!string.IsNullOrWhiteSpace(_repoId))
+                properties["repoId"] = _repoId.Trim();
+            if (_initialize)
+            {
+                properties["initialize"] = true;
+                properties["compute"] = new JsonObject
+                {
+                    ["backend"] = _backend,
+                    ["size"] = _size,
+                };
+            }
+
+            var body = new JsonObject { ["properties"] = properties }.ToJsonString();
+            var result = await Data.RunActionAsync(
+                $"{_scopeRef.AgentsRoot}/workspaces/{name}", null, body, null, TimeSpan.FromMinutes(2), ct,
+                // A workspace is CREATED, so the verb is PUT — the same call the CLI and every lane make.
+                method: "PUT");
+
+            if (!result.Ok)
+            {
+                _noticeIsError = true;
+                _notice = $"The host refused the workspace: {result.ErrorCode} — {result.ErrorMessage}";
+                return;
+            }
+
+            await ReloadAsync();
+            var row = _rows.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (row is null)
+            {
+                _notice = $"Workspace {name} created.";
+            }
+            else if (string.Equals(row.Lifecycle, "Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                _noticeIsError = true;
+                _notice = $"Workspace {name} was created but provisioning FAILED: {row.LifecycleError ?? "the host gave no reason"}";
+            }
+            else
+            {
+                _notice = $"Workspace {name} created — lifecycle {row.Lifecycle ?? "not asked for"}"
+                          + (row.ComputeWorkspaceId is { Length: > 0 } compute ? $", bound to compute {compute}" : "");
+                _formOpen = false;
+                _name = "";
+                _displayName = "";
+            }
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _failure = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scope = scope.Display;
+            _scopeRef = scope;
+
+            _rows = [.. (await Data.WorkspacesAsync(scope, ct)).Select(w => new WorkspaceRow(
+                w.Name ?? "?",
+                w.Properties?.DisplayName ?? "—",
+                w.Properties?.RepoId ?? "—",
+                w.Properties?.BaseBranch ?? "—",
+                w.Properties?.Profile ?? "—",
+                w.Properties?.DefaultMaxUsd is { } usd ? $"${usd:0.##}/job" : "—",
+                w.Properties?.Revision ?? 0,
+                w.Properties?.Lifecycle,
+                w.Properties?.LifecycleError,
+                w.Properties?.ComputeWorkspaceId))];
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    private static string Href(string name) => $"/portal/workspaces/{Uri.EscapeDataString(name)}";
+
+    private sealed record WorkspaceRow(
+        string Name,
+        string DisplayName,
+        string Repo,
+        string Branch,
+        string Profile,
+        string Budget,
+        int Revision,
+        string? Lifecycle,
+        string? LifecycleError,
+        string? ComputeWorkspaceId);
+}

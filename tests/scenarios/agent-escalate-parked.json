@@ -1,0 +1,29 @@
+{
+  "id": "agent-escalate-parked",
+  "defaultUsage": { "inputTokens": 120, "outputTokens": 40, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_park", "name": "bash", "input": { "command": "aws s3 cp file s3://prod-bucket/" } }
+          ]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "resumed after the human decided" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "escalate", "reason": "needs a human", "confidence": 0.4 } }
+    ]
+  }
+}

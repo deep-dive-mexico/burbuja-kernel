@@ -1,0 +1,164 @@
+@namespace Burbuja.Portal.Components.Primitives
+@using System.Net.Http
+@inject IServiceProvider Services
+
+@* M15 M-R3 (item 18) — the host's liveness, as the only page an anonymous caller gets can honestly
+   state it. Extracted in M16 so BOTH sign-in doors carry the same read: the kernel's English one and
+   the client's Spanish one would otherwise be two copies of one probe, and the second copy is the one
+   that quietly stops reading the same endpoint.
+
+   It never rounds up — the tone comes from the host's OWN `status` word, not from the 2xx alone,
+   because a Degraded kernel answers 200; a read that fails is `unreachable`, and one this render could
+   not make is `unknown`. `data-liveness` is the state itself so a fact reads the same word the reader
+   does, and the title says WHY this state and not another — a pill whose reason only exists in a
+   comment is a pill nobody can audit. *@
+@if (Template is not null)
+{
+    @Template(new PortalLiveness(State, Why))
+}
+else
+{
+    <p class="signin-live">
+        <span class="pill @Tone" data-liveness="@State" title="@Why">
+            <span class="dot @(_liveness == HostLiveness.Healthy ? "dot-live" : null)"></span>@Text
+        </span>
+    </p>
+}
+
+@code {
+    /// <summary>Products may render the same probe in their own vocabulary.</summary>
+    [Parameter] public RenderFragment<PortalLiveness>? Template { get; set; }
+
+    /// <summary>
+    /// The language of the four sentences. The STATE is a machine word either way — a test and a reader
+    /// must read the same one — and only the words around it are translated.
+    /// </summary>
+    [Parameter]
+    public string Lang { get; set; } = "en";
+
+    private bool Spanish => string.Equals(Lang, "es", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// M15 M-R3 (item 18) — what this render knows about the host, and nothing more. The pill starts
+    /// <see cref="HostLiveness.Unknown"/> and stays there unless a read produces an answer: the page never
+    /// assumes a host is well because it could not ask.
+    /// </summary>
+    private HostLiveness _liveness = HostLiveness.Unknown;
+
+    /// <summary>The states the liveness read can honestly produce.</summary>
+    private enum HostLiveness
+    {
+        /// <summary>No HTTP seam to ask with — a bare component render — or the instant before the read runs.</summary>
+        Unknown,
+
+        /// <summary>The host's document said <c>Healthy</c>.</summary>
+        Healthy,
+
+        /// <summary>The host answered and said it is <c>Degraded</c>: serving, but not everything is well.</summary>
+        Degraded,
+
+        /// <summary>The host did not answer healthy — a refused connection, a timeout, or a non-2xx.</summary>
+        Unreachable,
+    }
+
+    /// <summary>The state as a word, written into the DOM so a fact and a reader see the same one.</summary>
+    private string State => _liveness switch
+    {
+        HostLiveness.Healthy => "healthy",
+        HostLiveness.Degraded => "degraded",
+        HostLiveness.Unreachable => "unreachable",
+        _ => "unknown",
+    };
+
+    private string Tone => _liveness switch
+    {
+        HostLiveness.Healthy => "pill-ok",
+        HostLiveness.Degraded => "pill-wait",
+        HostLiveness.Unreachable => "pill-bad",
+        _ => "pill-idle",
+    };
+
+    private string Text => _liveness switch
+    {
+        HostLiveness.Healthy => Spanish ? "host disponible" : "host healthy",
+        HostLiveness.Degraded => Spanish ? "host degradado" : "host degraded",
+        HostLiveness.Unreachable => Spanish ? "host sin respuesta" : "host unreachable",
+        _ => Spanish ? "estado del host sin dato" : "host health unknown",
+    };
+
+    private string Why => _liveness switch
+    {
+        HostLiveness.Healthy => Spanish
+            ? "El host respondió /health/plugins y se declaró Healthy."
+            : "The host answered /health/plugins and reported itself Healthy.",
+        HostLiveness.Degraded => Spanish
+            ? "El host respondió /health/plugins como Degraded: sirve, pero no todo está bien."
+            : "The host answered /health/plugins as Degraded: it is serving, but not everything is well.",
+        HostLiveness.Unreachable => Spanish
+            ? "El host no respondió /health/plugins, así que esta página no puede decir que esté bien."
+            : "The host did not answer /health/plugins, so this page cannot say it is well.",
+        _ => Spanish
+            ? "Esta lectura no pudo leer un estado de /health/plugins, así que el estado del host es desconocido — no se asume que esté bien."
+            : "This render could not read a status from /health/plugins, so the host's state is unknown — not assumed healthy.",
+    };
+
+    protected override async Task OnInitializedAsync() => _liveness = await LivenessAsync();
+
+    /// <summary>
+    /// The host's liveness, read BEFORE anybody signs in. The endpoint is the same
+    /// <c>/health/plugins</c> the console's dashboard reads, and it is reachable anonymously: the kernel's
+    /// own middleware skips <c>/health</c>, and the endpoint is mapped before the portal's auth. The client
+    /// is resolved through the provider rather than injected because a bare component render has no HTTP
+    /// stack, and that render must still draw the pill — in the honest <c>unknown</c> state — instead of
+    /// failing inside DI.
+    /// </summary>
+    private async Task<HostLiveness> LivenessAsync()
+    {
+        var factory = Services.GetService<IHttpClientFactory>();
+        if (factory is null)
+            return HostLiveness.Unknown;
+
+        try
+        {
+            // The named client's BaseAddress is this host's own front door (PortalArm's, so a page and the
+            // console's reads answer about the same host). Its timeout is INFINITE because a stream must not
+            // be cut by a wall clock, so this probe carries its own: a liveness read that hangs is worse than
+            // one that says it could not tell.
+            using var client = factory.CreateClient(PortalArm.ClientName);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var response = await client.GetAsync("/health/plugins", timeout.Token);
+            if (!response.IsSuccessStatusCode)
+                return HostLiveness.Unreachable; // an Unhealthy kernel answers 503, never a 2xx
+
+            // The host's OWN word decides the tone. A Degraded kernel answers 200, so the status code alone
+            // is not a health claim — reading only the 2xx is exactly how a degraded host comes back green.
+            return StatusOf(await response.Content.ReadAsStringAsync(timeout.Token)) switch
+            {
+                null => HostLiveness.Unknown,
+                var word when word.Equals("Healthy", StringComparison.OrdinalIgnoreCase) => HostLiveness.Healthy,
+                var word when word.Equals("Unhealthy", StringComparison.OrdinalIgnoreCase) => HostLiveness.Unreachable,
+                _ => HostLiveness.Degraded,
+            };
+        }
+        catch (Exception)
+        {
+            // A refused connection, a DNS failure, a timed-out probe, an unconfigured client: the page says
+            // it could not READ the host. It never rounds that up to healthy, and it invents no number.
+            return HostLiveness.Unreachable;
+        }
+    }
+
+    /// <summary>The <c>status</c> word of a <c>/health/plugins</c> body, or null when the body is not that
+    /// document — the pill stays <c>unknown</c> rather than guessing a tone from a shape it did not read.</summary>
+    private static string? StatusOf(string body)
+    {
+        try
+        {
+            return JsonNode.Parse(body)?["status"]?.GetValue<string>();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+}

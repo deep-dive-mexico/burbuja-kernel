@@ -1,0 +1,141 @@
+@page "/portal/plugins"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+
+<PageTitle>Plugins</PageTitle>
+
+<PageHeader Eyebrow="Catalogue" Title="Plugins" Loaded="@(_failure is not null || _health is not null || _rows.Count > 0)">
+    <SubtitleContent>
+            What this kernel loaded, what each plugin may do, and what the supervisor says about it. The list is the
+            process's own answer from <code>/health/plugins</code>, not a copy the portal keeps.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+@if (_health is null && _failure is null)
+{
+    <Card Title="Plugins" Subtitle="loading">
+        <EmptyState Text="Asking the host what it loaded…" />
+    </Card>
+}
+
+@if (_health is not null)
+{
+    <Card Title="Host" Subtitle="@($"{_health.Status}, {_health.HealthyPlugins}/{_health.Plugins.Count} healthy")">
+        @if (_health.Host is { } host)
+        {
+            @* M16 K-R2 — the middot between a value and its qualifier became a COMMA with a space
+               (the de-noise pass), and a comma with NO space before it read as a typo, so role and
+               started are their own rows: the fact block is a <dl> and a qualifier is a fact. *@
+            <dl class="kv">
+                <dt>node</dt><dd>@host.NodeId</dd>
+                <dt>role</dt><dd>@host.Role</dd>
+                <dt>pid</dt><dd>@host.Pid</dd>
+                <dt>started</dt><dd>@(host.StartedAt?.ToString("u") ?? "—")</dd>
+                <dt>machine</dt><dd>@host.MachineName, @host.OS @host.Arch</dd>
+                <dt>runtime</dt><dd>@host.Framework, host @host.Version</dd>
+                <dt>memory</dt><dd>@($"{host.WorkingSetBytes / 1024.0 / 1024.0:0.#} MB")</dd>
+                <dt>plugins dir</dt><dd>@(host.PluginsDirectory is { Length: > 0 } dir ? dir : "(static plugins only)")</dd>
+            </dl>
+        }
+        <p class="muted small">
+            A plugin cannot be reloaded in place — the load context is non-collectible, so this roster is what
+            the process booted with. A change means a restart, and a plugin whose manifest does not match its
+            host role is never loaded at all (the boot fails with exit 78 rather than serving less than it
+            promised).
+        </p>
+    </Card>
+
+    <Card Title="Loaded plugins" Subtitle="@($"{_health.Plugins.Count} in this process")">
+        @if (_health.Plugins.Count == 0)
+        {
+            <EmptyState Text="No plugins: this host is running the kernel's own resources only." />
+        }
+        else
+        {
+            <QuickGrid Items="_rows.AsQueryable()" Class="grid">
+                <PropertyColumn Property="r => r.Id" Title="id" Sortable="true" />
+                <PropertyColumn Property="r => r.Version" Title="version" />
+                <TemplateColumn Title="trust">
+                    <ChildContent Context="row">
+                        @if (row.Trusted)
+                        {
+                            <span class="chip chip-good">trusted</span>
+                        }
+                        else
+                        {
+                            <span class="chip chip-bad">untrusted</span>
+                        }
+                    </ChildContent>
+                </TemplateColumn>
+                <PropertyColumn Property="r => r.State" Title="state" Sortable="true" />
+                <PropertyColumn Property="r => r.Load" Title="load" />
+                <PropertyColumn Property="r => r.Provides" Title="provides" />
+                <PropertyColumn Property="r => r.Requires" Title="requires" />
+                <PropertyColumn Property="r => r.Services" Title="services" />
+                <TemplateColumn Title="health">
+                    <ChildContent Context="row">
+                        @if (row.Healthy)
+                        {
+                            <span class="chip chip-good">healthy</span>
+                        }
+                        else
+                        {
+                            <span class="chip chip-bad">@row.Status</span>
+                        }
+                    </ChildContent>
+                </TemplateColumn>
+            </QuickGrid>
+        }
+    </Card>
+}
+
+@code {
+    private PortalFailure? _failure;
+    private PortalPluginHealth? _health;
+    private List<PluginRow> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _ = await Arm.SessionAsync();
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _failure = null;
+        try
+        {
+            _health = await Data.PluginHealthAsync(CancellationToken.None);
+            _rows = [.. (_health?.Plugins ?? []).Select(p => new PluginRow(
+                p.Id,
+                p.Version,
+                p.Trusted,
+                p.State,
+                p.Load,
+                string.Join(", ", p.Provides),
+                string.Join(", ", p.Requires),
+                string.Join(", ", p.HostedServices),
+                p.Status,
+                p.IsHealthy))];
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    private sealed record PluginRow(
+        string Id,
+        string Version,
+        bool Trusted,
+        string State,
+        string Load,
+        string Provides,
+        string Requires,
+        string Services,
+        string Status,
+        bool Healthy);
+}

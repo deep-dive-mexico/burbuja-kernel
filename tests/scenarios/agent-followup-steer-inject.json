@@ -1,0 +1,20 @@
+{
+  "id": "agent-followup-steer-inject",
+  "defaultUsage": { "inputTokens": 12, "outputTokens": 6, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "ack" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

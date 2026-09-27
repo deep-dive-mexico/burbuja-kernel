@@ -1,0 +1,342 @@
+@page "/portal/pomnibot/jobs/{Name}"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject ExecutionView View
+@inject PortalOptions Options
+
+<PageTitle>@Name</PageTitle>
+
+@*
+    The pomnibot sibling of JobDetail.razor, and it reuses the same shell on purpose: the view ring,
+    the live SSE signal and the range read are the ExecutionDetail/ExecutionView pair, so a pomnibot
+    job gets the trace quality the agents pages have instead of a second, thinner renderer. The one
+    real difference is where the bytes come from — a pomnibot job declares no data-plane artifact
+    route, so its artifacts are read through the getArtifact action (POST, base64) and rendered
+    inline, while the events route is the same JSON page the agents path reads.
+*@
+<ExecutionDetail Title="@Title"
+                 Subtitle="@Subtitle"
+                 StatusWord="@(_job?.Properties?.ExecutionStatus ?? "unknown")"
+                 Events="@View.Events"
+                 Prompt="@_job?.Properties?.Spec.Brief"
+                 Artifacts="@_artifacts"
+                 ArtifactNote="pomnibot jobs expose no artifact download route: each name is fetched through the getArtifact action (POST, base64) and rendered here."
+                 Stream="@View.Stream"
+                 StreamRefused="@View.StreamRefused"
+                 Failure="@(_failure ?? View.Failure)"
+                 Loading="@View.Loading"
+                 Truncated="@View.Truncated"
+                 CostUsd="@_job?.Properties?.Cost.TotalUsd"
+                 ApprovalId="@_job?.Properties?.PendingApprovalId"
+                 Query="@View.Query"
+                 SearchScanned="@View.SearchScanned"
+                 SearchComplete="@View.SearchComplete"
+                 SearchCapped="@View.SearchCapped"
+                 OnSearch="@OnSearch"
+                 OnSignal="@OnSignal"
+                  Loaded="@(_job is not null || _failure is not null)">
+    <Extra>
+        @if (_job?.Properties?.PendingApprovalId is { Length: > 0 } pending)
+        {
+            <div class="alert alert-warn" role="status">
+                <strong>Waiting for a human</strong>
+                <span>approval <code>@pending</code> is parked; the gate is blocked until it is decided.</span>
+                <a class="btn btn-small btn-warn" href="/portal/approvals">decide in the approvals inbox</a>
+            </div>
+        }
+        @* M10 U8: the verbs, above the facts, because acting on a running job is what this page is FOR. *@
+        <div class="row">
+            @if (Running)
+            {
+                <button class="btn btn-small" type="button" @onclick="() => _steerOpen = !_steerOpen">steer</button>
+                <button class="btn btn-small btn-bad" type="button" @onclick="CancelAsync" disabled="@_busy">cancel</button>
+                <button class="btn btn-small" type="button" @onclick="ExtendAsync" disabled="@_busy">extend</button>
+            }
+            @if (Awaiting)
+            {
+                <button class="btn btn-small btn-ok" type="button" @onclick="ConfirmAsync" disabled="@_busy">confirm</button>
+                <a class="btn btn-small" href="/portal/approvals">decide in the inbox</a>
+            }
+        </div>
+        @if (_steerOpen)
+        {
+            <div class="stack">
+                <label class="field">
+                    <span class="muted small">steer — delivered to the running turn</span>
+                    <textarea class="input" rows="3" aria-label="steer text" @bind="_steerText" @bind:event="oninput"></textarea>
+                </label>
+                <div class="row">
+                    <button class="btn btn-primary" type="button" @onclick="SteerAsync"
+                            disabled="@(_busy || string.IsNullOrWhiteSpace(_steerText))">Send steer</button>
+                </div>
+            </div>
+        }
+        @if (_notice is { Length: > 0 })
+        {
+            <div class="alert alert-info" role="status">@_notice</div>
+        }
+        <dl class="kv kv-inline">
+            <dt>repo</dt><dd>@(_job?.Properties?.Spec.RepoId ?? "—")</dd>
+            <dt>kind</dt><dd>@(_job?.Properties?.Spec.Kind ?? "—")</dd>
+            <dt>target env</dt><dd>@(_job?.Properties?.Spec.TargetEnv ?? "—")</dd>
+            <dt>engine</dt><dd>@(_job?.Properties?.Spec.Engine ?? "—")</dd>
+            <dt>model</dt><dd>@(_job?.Properties?.Spec.Model ?? "—")</dd>
+            <dt>profile</dt><dd>@(_job?.Properties?.Spec.Profile ?? "—")</dd>
+            <dt>effort</dt><dd>@(_job?.Properties?.Spec.Effort ?? "—")</dd>
+            <dt>budget</dt><dd>@Budget</dd>
+            <dt>turns</dt><dd>@Turns</dd>
+            <dt>requester</dt><dd>@(_job?.Properties?.RequesterId ?? "—")</dd>
+            <dt>session</dt><dd>@(_job?.Properties?.Session?.SessionId ?? "—")</dd>
+            <dt>resumes</dt><dd>@(_job?.Properties?.Session?.ResumeCount ?? 0)</dd>
+            <dt>outcome</dt><dd>@Outcome</dd>
+            <dt>delivery</dt><dd>@Delivery</dd>
+            <dt>runs</dt><dd>@_runs.Count</dd>
+            <dt>approvals</dt><dd>@Approvals</dd>
+            <dt>event stream</dt><dd><code>@_eventsPath</code></dd>
+        </dl>
+        @if (_approvals.Count > 0)
+        {
+            @* The job's own approval surface: it also lists the decisions that never reach the
+               kernel inbox (deferred, denied, answered), which is what a trace reader wants. *@
+            <table class="table">
+                <thead>
+                    <tr><th>approval</th><th>kind</th><th>action</th><th>risk</th><th>status</th><th>decided by</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var approval in _approvals)
+                    {
+                        <tr>
+                            <td><code class="muted small">@Short(approval.Name)</code></td>
+                            <td>@(approval.Properties?.Kind ?? "—")</td>
+                            <td>@(approval.Properties?.Action ?? "—")</td>
+                            <td>@(approval.Properties?.RiskClass ?? "—")</td>
+                            <td><StatusPill Status="@(approval.Properties?.Status ?? "unknown")" /></td>
+                            <td>@(approval.Properties?.DecidedBy ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </Extra>
+</ExecutionDetail>
+
+@code {
+    /// <summary>The three names a pomnibot job writes; the action is probed for each one.</summary>
+    private static readonly string[] ArtifactNames = ["patch.diff", "report.md", "session.log"];
+
+    [Parameter] public string Name { get; set; } = "";
+
+    private PortalEnvelope<PortalPomnibotJob>? _job;
+    private PortalFailure? _failure;
+    private IReadOnlyList<PortalArtifact> _artifacts = [];
+    private IReadOnlyList<PortalEnvelope<PortalPomnibotRun>> _runs = [];
+    private IReadOnlyList<PortalEnvelope<PortalPomnibotApproval>> _approvals = [];
+    private string _eventsPath = "";
+    private bool _attached;
+    private bool _busy;
+    private string _notice = "";
+    private string _steerText = "";
+    private string _scopeSubscription = "local";
+    private string _scopeResourceGroup = "dev";
+
+    private string Title => _job?.Properties?.Spec.Title is { Length: > 0 } title ? title : Name;
+
+    private string Subtitle =>
+        $"{Name}, {_job?.Properties?.Spec.Kind ?? "job"}, {_job?.Properties?.Spec.Model ?? "host default"}, {_job?.Properties?.Spec.Profile ?? "default profile"}";
+
+    private string Budget =>
+        _job?.Properties?.Spec.MaxBudgetUsd is { } max ? PortalData.Money(max) : "—";
+
+    private string Turns =>
+        _job?.Properties?.Cost.Turns is { } turns
+            ? _job.Properties.Spec.MaxTurns is { } max ? $"{turns} / {max}" : turns.ToString(CultureInfo.InvariantCulture)
+            : "—";
+
+    private string Outcome
+    {
+        get
+        {
+            var outcome = _job?.Properties?.Outcome;
+            if (outcome is null)
+                return "—";
+            var parts = new List<string>();
+            if (outcome.Error is { Length: > 0 } error)
+                parts.Add(error);
+            if (outcome.Commits > 0)
+                parts.Add(Text.Plural(outcome.Commits, "commit", "commits"));
+            if (outcome.PrUrl is { Length: > 0 } pr)
+                parts.Add(pr);
+            return parts.Count == 0 ? "no error" : string.Join(", ", parts);
+        }
+    }
+
+    private string Delivery =>
+        _job?.Properties?.Outcome?.Delivery?.State is { Length: > 0 } state
+            ? _job.Properties.Outcome.Review?.Verdict is { Length: > 0 } verdict ? $"{state}, review {verdict}" : state
+            : "—";
+
+    private string Approvals =>
+        _approvals.Count == 0
+            ? "—"
+            : $"{_approvals.Count(a => string.Equals(a.Properties?.Status, "pending", StringComparison.OrdinalIgnoreCase))} pending of {_approvals.Count}";
+
+    private static string Short(string? id) => id is { Length: > 0 } ? id : "—";
+
+    /// <summary>
+    /// The four verbs, on the job's own page (M10 U8). Before this the only way to steer, cancel, confirm or
+    /// extend a pomnibot job from the console was to hand-type JSON into the generic blade's Actions tab — a
+    /// surface that works and is not one a person uses.
+    ///
+    /// <para>Each carries this page's `If-Match`, so a job that moved under the reader is a 412 they see. The
+    /// kernel re-decides authorization on the wire; these buttons are UX and never the boundary.</para>
+    /// </summary>
+    private async Task SteerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_steerText))
+            return;
+        await ActAsync("steer", new JsonObject { ["text"] = _steerText.Trim(), ["mode"] = "steer" });
+        if (_notice is { Length: > 0 } notice && !notice.Contains("refused", StringComparison.OrdinalIgnoreCase))
+            _steerText = "";
+    }
+
+    private Task CancelAsync() => ActAsync("cancel", new JsonObject { ["note"] = "canceled by the operator" });
+
+    private Task ConfirmAsync() => ActAsync("confirm", new JsonObject { ["note"] = "confirmed by the operator" });
+
+    private Task ExtendAsync() => ActAsync("extend", new JsonObject { ["note"] = "extended by the operator" });
+
+    private async Task ActAsync(string action, JsonObject body)
+    {
+        if (_busy)
+            return;
+        _busy = true;
+        _notice = "";
+        var ct = CancellationToken.None;
+        try
+        {
+            var scope = string.IsNullOrEmpty(_eventsPath)
+                ? null
+                : _eventsPath[.._eventsPath.IndexOf("/jobs/", StringComparison.Ordinal)];
+            if (scope is null)
+                return;
+
+            var result = await Data.RunActionAsync(
+                $"{scope}/jobs/{Name}", action, body.ToJsonString(), _job?.ETag, ct: ct);
+
+            _notice = result.Ok
+                ? $"{action}: accepted."
+                : $"{action}: the host refused it — {result.ErrorCode}: {result.ErrorMessage}";
+
+            _job = await Data.PomnibotJobAsync(
+                new ArmScope(_scopeSubscription, _scopeResourceGroup), Name, ct) ?? _job;
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        View.Changed += OnViewChanged;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+
+            _scopeSubscription = scope.SubscriptionId;
+            _scopeResourceGroup = scope.ResourceGroup;
+            _job = await Data.PomnibotJobAsync(scope, Name, ct);
+            _eventsPath = $"{scope.PomnibotRoot}/jobs/{Name}/events";
+            await View.LoadAsync(_eventsPath, Options.EventPageSize * 8, ct);
+
+            try
+            {
+                _runs = await Data.PomnibotRunsAsync(scope, Name, ct);
+                _approvals = await Data.PomnibotApprovalsAsync(scope, Name, pendingOnly: false, ct);
+            }
+            catch (ArmException)
+            {
+                // A job that never started has no runs and no approvals; the artifacts below still render.
+                _runs = [];
+                _approvals = [];
+            }
+
+            _artifacts = await ArtifactsAsync(scope, ct);
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Retried on every render, not once on `firstRender`: the page renders once while the range read is
+        // in flight, so the first render can arrive before the view knows which stream to attach. See
+        // `AgentDetail` for the measurement (G10's `no live stream` screenshot) — all three detail pages
+        // carried the same race.
+        var stream = View.Attach();
+        if (stream is null || _attached)
+            return;
+
+        _attached = true;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// T4: the search is the kernel's, over the whole stream — the page sends the words and shows what
+    /// came back. An empty query clears it and reloads the range.
+    /// </summary>
+    private bool _steerOpen;
+
+    // M10 U8, and the defect the browser fact found: the first version listed running/starting/queued, so the
+    // verbs VANISHED while the job was verifying, reviewing or finalizing — the phases a long job spends most of
+    // its time in, and exactly when a person wants to steer or cancel. The set is the pomnibot enum's
+    // non-terminal values, kept beside the two questions they answer.
+    private static readonly string[] ActiveStatuses =
+        ["running", "starting", "queued", "verifying", "reviewing", "finalizing", "paused"];
+
+    private static readonly string[] AwaitingStatuses = ["awaitingConfirm", "awaitingApproval", "intake"];
+
+    private bool Running => ActiveStatuses.Contains(_job?.Properties?.ExecutionStatus ?? "", StringComparer.OrdinalIgnoreCase);
+
+    private bool Awaiting => AwaitingStatuses.Contains(_job?.Properties?.ExecutionStatus ?? "", StringComparer.OrdinalIgnoreCase);
+
+    private async Task OnSearch(string query)
+    {
+        if (_eventsPath is { Length: > 0 })
+            await View.SearchAsync(_eventsPath, query, Options.EventPageSize * 8, ExecutionView.SearchMaxPages, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// The live signal only says "there is more": the records themselves come from the range read.
+    /// </summary>
+    private async Task OnSignal(long _)
+    {
+        await View.CatchUpAsync(CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Each artifact name through the job's <c>getArtifact</c> action. A 404 is the run saying "I
+    /// never wrote this", which the ring renders as absent — the same contract the agents page has
+    /// with its data-plane probes, reached through the action the pomnibot resource actually offers.
+    /// </summary>
+    private async Task<IReadOnlyList<PortalArtifact>> ArtifactsAsync(ArmScope scope, CancellationToken ct)
+    {
+        var artifacts = new List<PortalArtifact>(ArtifactNames.Length);
+        foreach (var name in ArtifactNames)
+            artifacts.Add(await Data.PomnibotArtifactAsync(scope, Name, name, ct));
+        return artifacts;
+    }
+
+    private void OnViewChanged() => _ = InvokeAsync(StateHasChanged);
+}

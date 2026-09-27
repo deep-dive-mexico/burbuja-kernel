@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Portal</RootNamespace>
+    <Description>Burbuja Portal — the Blazor server-rendered portal at /portal (M5.5).</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Burbuja.Portal.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.QuickGrid" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core.Sdk/Burbuja.Core.Sdk.csproj" />
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+    <ProjectReference Include="../Burbuja.Agents.Abstractions/Burbuja.Agents.Abstractions.csproj" />
+    <ProjectReference Include="../Burbuja.Mcp.Abstractions/Burbuja.Mcp.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

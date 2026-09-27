@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "spec": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "type": "string" },
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "brief": { "type": "string" },
+        "language": { "type": "string" }
+      }
+    },
+    "status": { "type": "string" },
+    "specHash": { "type": "string" }
+  }
+}

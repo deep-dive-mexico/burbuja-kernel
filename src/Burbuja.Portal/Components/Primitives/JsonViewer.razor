@@ -1,0 +1,53 @@
+@namespace Burbuja.Portal.Components.Primitives
+@inject IJSRuntime JS
+
+<div class="json">
+    <div class="json-head">
+        <span class="muted small">@NodeBytes bytes@(Truncated ? $", showing the first {Limit} bytes" : "")</span>
+        @if (!Truncated)
+        {
+            <button class="btn btn-ghost btn-small" type="button" @onclick="CopyAsync">Copy</button>
+        }
+    </div>
+    <pre class="json-body">@Text</pre>
+</div>
+
+@code {
+    private string _text = "";
+    private int _bytes;
+
+    [Parameter] public JsonNode? Node { get; set; }
+
+    [Parameter] public int Limit { get; set; } = 128 * 1024;
+
+    private int NodeBytes => _bytes;
+
+    private bool Truncated => _bytes > Limit;
+
+    private string Text => _text;
+
+    protected override void OnParametersSet() => Build();
+
+    private void Build()
+    {
+        if (Node is null)
+        {
+            _text = "(empty)";
+            _bytes = 0;
+            return;
+        }
+
+        var pretty = Node.ToJsonString(new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        });
+        _bytes = System.Text.Encoding.UTF8.GetByteCount(pretty);
+        _text = Truncated ? pretty[..Math.Min(pretty.Length, Limit)] : pretty;
+    }
+
+    private async Task CopyAsync()
+    {
+        await JS.InvokeVoidAsync("portal.copy", _text);
+    }
+}

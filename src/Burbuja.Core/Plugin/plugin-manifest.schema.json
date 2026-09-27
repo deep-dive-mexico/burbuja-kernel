@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://burbuja.dev/schemas/plugin-manifest.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "version",
+    "contracts_version",
+    "assembly",
+    "entry_type",
+    "load",
+    "provides",
+    "extension_points",
+    "requires",
+    "roles",
+    "trusted",
+    "depends_on",
+    "load_order"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "contracts_version": { "type": "string", "minLength": 1 },
+    "assembly": { "type": "string", "minLength": 1 },
+    "entry_type": { "type": "string", "minLength": 1 },
+    "load": { "type": "string", "enum": ["static", "dynamic"] },
+    "provides": { "type": "array", "items": { "type": "string" } },
+    "extension_points": { "type": "array", "items": { "type": "string" } },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "ProcessExecution",
+          "FilesystemWrite",
+          "Network",
+          "Secrets",
+          "BackgroundService",
+          "HttpEndpoints"
+        ]
+      }
+    },
+    "roles": { "type": "array", "items": { "type": "string" } },
+    "config_section": { "type": ["string", "null"] },
+    "trusted": { "type": "boolean" },
+    "depends_on": { "type": "array", "items": { "type": "string" } },
+    "load_order": { "type": "integer" }
+  }
+}

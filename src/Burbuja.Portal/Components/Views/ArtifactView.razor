@@ -1,0 +1,63 @@
+@namespace Burbuja.Portal.Components.Views
+
+@*
+    The artifacts a resource exposes, probed through this session. Two shapes:
+    a data-plane route (GET, linked to /portal/download) and an ARM action (the pomnibot
+    getArtifact POST returns base64), whose body is rendered inline because there is no GET route
+    to link to. Same presenter, same present/absent contract — no second renderer.
+*@
+<div class="artifacts">
+    @if (Artifacts.Count == 0)
+    {
+        <EmptyState Text="This resource declares no artifact routes." />
+    }
+    else
+    {
+        @foreach (var artifact in Artifacts)
+        {
+            <div class="artifact">
+                <span class="artifact-name">@(artifact.Name ?? Name(artifact.Path))</span>
+                @if (artifact.Exists)
+                {
+                    <span class="muted small">@(artifact.ContentType ?? "application/octet-stream")@Size(artifact.Length)</span>
+                    @if (artifact.Downloadable)
+                    {
+                        <a class="btn btn-small" href="@Download(artifact.Path)">Download</a>
+                    }
+                    else
+                    {
+                        <span class="muted small">action-fetched, no download route</span>
+                    }
+                }
+                else
+                {
+                    <span class="muted small">absent (HTTP @artifact.Status)</span>
+                }
+                <code class="muted small artifact-path">@artifact.Path</code>
+            </div>
+            @if (artifact.Text is { Length: > 0 } text)
+            {
+                <pre class="artifact-body" data-artifact="@(artifact.Name ?? Name(artifact.Path))">@text</pre>
+            }
+        }
+    }
+    @if (Note is not null)
+    {
+        <p class="muted small">@Note</p>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<PortalArtifact> Artifacts { get; set; } = [];
+
+    [Parameter] public string? Note { get; set; }
+
+    /// <summary>The browser cannot send x-api-key, so downloads are proxied through the session.</summary>
+    public static string Download(string path) => "/portal/download?path=" + Uri.EscapeDataString(path);
+
+    private static string Name(string path) =>
+        path.Split('?')[0].TrimEnd('/').Split('/').LastOrDefault() ?? path;
+
+    private static string Size(long? bytes) =>
+        bytes is null or < 0 ? "" : bytes < 1024 ? $", {bytes} B" : $", {bytes / 1024.0:0.0} KiB";
+}

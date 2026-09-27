@@ -1,0 +1,47 @@
+{
+  "id": "deepseek-thinking-tooluse",
+  "defaultUsage": { "inputTokens": 800, "outputTokens": 240, "cacheReadInputTokens": 512, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants a file written. I should call write_file with the exact path they named.",
+              "signature": "sig-deepseek-001"
+            },
+            {
+              "type": "tool_use",
+              "id": "tu_think_write",
+              "name": "write_file",
+              "input": { "path": "thinking.txt", "content": "written after thinking" }
+            }
+          ]
+        }
+      },
+      {
+        "when": { "toolResult": { "toolName": "write_file", "isError": false } },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "written" }]
+        }
+      },
+      {
+        "when": { "any": true },
+        "comment": "fallback only; AssertConsumed fails the test if the toolResult turn above never fires",
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "stopped without a matching tool result" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

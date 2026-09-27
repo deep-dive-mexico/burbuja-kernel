@@ -1,0 +1,17 @@
+{
+  "id": "Test.CoreRef",
+  "name": "Test CoreRef",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Test.CoreRef.dll",
+  "entry_type": "Burbuja.Plugins.Test.CoreRef.CoreRefPlugin",
+  "load": "dynamic",
+  "provides": [],
+  "extension_points": [],
+  "requires": [],
+  "roles": ["all"],
+  "config_section": null,
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 50
+}

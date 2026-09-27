@@ -1,0 +1,166 @@
+@namespace Burbuja.Portal.Components.Views
+
+@*
+    The trajectory: the same event range the runtime derives its own state from, folded into
+    turn/step rows. Purely a function of Events — the page owns loading and the live signal, so this
+    component is also the fixture the unit suite asserts against.
+*@
+<div class="traj">
+    @if (OnSearch.HasDelegate)
+    {
+        @* T4: the search asks the STREAM, not the events this page happens to hold. The kernel's answer
+           carries how much of the stream it read, so an empty result can say whether it looked
+           everywhere — a filter over the loaded window cannot say that. *@
+        <form class="traj-toolbar" @onsubmit="Submit" @onsubmit:preventDefault>
+            <input class="traj-search"
+                   type="search"
+                   aria-label="Search this stream"
+                   placeholder="Search summary and payload…"
+                   value="@_draft"
+                   @oninput="e => _draft = e.Value?.ToString() ?? string.Empty" />
+            <button type="submit" class="traj-button">search</button>
+            @if (Query is { Length: > 0 })
+            {
+                <span class="muted small" data-search-facts="1">@MatchText()</span>
+                <button type="button" class="traj-button" @onclick="Clear">clear</button>
+            }
+        </form>
+    }
+
+    @if (Rows.Count == 0)
+    {
+        <EmptyState Text="@EmptyText()" />
+    }
+    else
+    {
+        <div class="strip" title="One segment per record; width is the time to the next record.">
+            @foreach (var row in Rows)
+            {
+                <button type="button"
+                        class="strip-seg strip-@row.KindLabel"
+                        style="@($"flex-grow:{Grow(row)};")"
+                        title="@($"{row.KindLabel} #{row.Seq}, {row.Title}, {Ms(row.DurationMs)}")"
+                        @onclick="() => Select(row)"></button>
+            }
+        </div>
+
+        <ol class="traj-rows">
+            @{ var turn = 0; }
+            @foreach (var row in Rows)
+            {
+                if (row.Turn != turn && row.Turn > 0)
+                {
+                    turn = row.Turn;
+                    <li class="traj-turn">turn @turn</li>
+                }
+                <li class="traj-row @(Selected?.Seq == row.Seq ? "traj-row-on" : "")">
+                    <button type="button" class="traj-button" @onclick="() => Select(row)">
+                        @* M16 K-R2 — the kind is a TAG: a tag names a KIND, a pill names a STATE, and this
+                           column names what a record IS. The tone is still the row's own `KindLabel`, so the
+                           six kinds keep the six series hues they had as bare coloured words. *@
+                        <span class="tag @KindTag(row.KindLabel)">@row.KindLabel</span>
+                        <span class="traj-seq muted small">#@row.Seq@(row.Step > 0 ? $", step {row.Step}" : "")</span>
+                        <span class="traj-title">@row.Title</span>
+                        <StatusPill Status="@row.Status" />
+                        <span class="traj-ms muted small">@Ms(row.DurationMs)</span>
+                        <span class="traj-at muted small">@Stamp(row.At)</span>
+                    </button>
+                    @if (row.Text.Length > 0)
+                    {
+                        <p class="traj-text">@Trim(row.Text, 400)</p>
+                    }
+                </li>
+            }
+        </ol>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<LedgerEvent> Events { get; set; } = [];
+
+    [Parameter] public string? Prompt { get; set; }
+
+    [Parameter] public TrajectoryRow? Selected { get; set; }
+
+    [Parameter] public EventCallback<TrajectoryRow> SelectedChanged { get; set; }
+
+    /// <summary>The words the stream was last searched with, or null when the range is unfiltered.</summary>
+    [Parameter] public string? Query { get; set; }
+
+    /// <summary>How many events the kernel read to answer that search.</summary>
+    [Parameter] public long SearchScanned { get; set; }
+
+    /// <summary>Whether the search read the whole stream (false = it stopped at its page budget).</summary>
+    [Parameter] public bool SearchComplete { get; set; }
+
+    /// <summary>Whether the matches themselves hit the page cap, so there are more to fetch.</summary>
+    [Parameter] public bool SearchCapped { get; set; }
+
+    /// <summary>Raised with the words to search for; the page owns the read.</summary>
+    [Parameter] public EventCallback<string> OnSearch { get; set; }
+
+    private IReadOnlyList<TrajectoryRow> Rows { get; set; } = [];
+
+    private string _draft = "";
+
+    protected override void OnParametersSet()
+    {
+        Rows = TrajectoryBuilder.Build(Events, Prompt);
+        _draft = Query ?? "";
+    }
+
+    /// <summary>
+    /// M16 K-R2 — a kind's tag tone. One place, so the row's tag and nothing else decides the colour:
+    /// `user`/`assistant`/… are the SIX kinds of a trajectory (TrajectoryBuilder's own enum), and a kind
+    /// the list does not carry is `tag-neutral` — never green, exactly as every other word→tone map here.
+    /// </summary>
+    internal static string KindTag(string kind) => kind.ToLowerInvariant() switch
+    {
+        "user" => "tag-run",
+        "assistant" => "tag-neutral",
+        "tool" => "tag-run",
+        "supervisor" => "tag-wait",
+        "approval" => "tag-bad",
+        _ => "tag-neutral",
+    };
+
+    private Task Submit() => OnSearch.InvokeAsync(_draft.Trim());
+
+    private Task Clear()
+    {
+        _draft = "";
+        return OnSearch.InvokeAsync("");
+    }
+
+    internal string EmptyText() =>
+        Query is { Length: > 0 }
+            ? $"No event in this stream matches “{Query}”."
+            : "No events in this range.";
+
+    /// <summary>
+    /// What the search actually did, in words. A count without the read bound is the vacuous green this
+    /// repository keeps finding: "0 matches" and "0 matches in the 20 000 events I looked at" are
+    /// different answers and the user is entitled to the difference.
+    /// </summary>
+    internal string MatchText()
+    {
+        var matches = $"{Rows.Count} match{(Rows.Count == 1 ? "" : "es")}";
+        var read = $"read {SearchScanned:N0} event{(SearchScanned == 1 ? "" : "s")}";
+        if (SearchCapped)
+            return $"{matches}, showing the first page, {read} so far";
+        return SearchComplete ? $"{matches}, {read}" : $"{matches}, {read} so far";
+    }
+
+    internal static string Ms(long? ms) =>
+        ms is null ? "—" : ms < 1000 ? $"{ms} ms" : $"{ms / 1000.0:0.0} s";
+
+    internal static string Stamp(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+
+    private static double Grow(TrajectoryRow row) => Math.Max(0.5, Math.Min(60, (row.DurationMs ?? 50) / 50.0));
+
+    private static string Trim(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
+
+    private Task Select(TrajectoryRow row) => SelectedChanged.InvokeAsync(row);
+}

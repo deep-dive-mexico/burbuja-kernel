@@ -1,0 +1,45 @@
+@namespace Burbuja.Portal.Components.Views
+
+@*
+    The plan's five-tab view ring. Chat, Trajectory, Artifacts and — since M9 U3 — Metrics are built from the
+    event range; Context is still rendered disabled, because the team board it would show is a different
+    projection and the ring says so instead of hiding the gap.
+*@
+<nav class="ring" role="tablist">
+    @foreach (var tab in Tabs)
+    {
+        var selected = string.Equals(tab.Id, Selected, StringComparison.Ordinal);
+        <button type="button"
+                role="tab"
+                aria-selected="@selected"
+                class="ring-tab @(selected ? "ring-tab-on" : "")"
+                title="@(tab.Enabled ? tab.Title : $"{tab.Title} — not built yet (deferred)")"
+                disabled="@(!tab.Enabled)"
+                @onclick="() => Select(tab.Id)">
+            @tab.Label
+            @if (!tab.Enabled)
+            {
+                <span class="ring-later">later</span>
+            }
+        </button>
+    }
+</nav>
+
+@code {
+    public sealed record RingTab(string Id, string Label, bool Enabled, string Title);
+
+    public static readonly IReadOnlyList<RingTab> Tabs =
+    [
+        new("chat", "Chat", true, "What was said, what ran, what a human was asked."),
+        new("trajectory", "Trajectory", true, "The turn/step ledger read from the event range."),
+        new("artifacts", "Artifacts", true, "The data-plane downloads this resource exposes."),
+        new("metrics", "Metrics", true, "What the run cost in time and tokens, folded from its own events."),
+        new("context", "Context", false, "Deferred: no context view in M5.5."),
+    ];
+
+    [Parameter] public string Selected { get; set; } = "chat";
+
+    [Parameter] public EventCallback<string> SelectedChanged { get; set; }
+
+    private Task Select(string id) => SelectedChanged.InvokeAsync(id);
+}

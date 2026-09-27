@@ -1,0 +1,20 @@
+name: Kernel source validation
+on:
+  push:
+  pull_request:
+jobs:
+  build-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.400
+      - name: Check official committed source boundary
+        run: python3 scripts/release-source.py --check
+      - name: Build source and Workbench example
+        run: |
+          dotnet build Burbuja.slnx -c Release -m:1
+          dotnet build examples/Example.Workbench/Example.Workbench.slnx -c Release -m:1
+      - name: Run generic unit projects
+        run: python3 scripts/test-kernel.py

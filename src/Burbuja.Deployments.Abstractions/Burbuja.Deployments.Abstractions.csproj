@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Deployments.Abstractions</RootNamespace>
+    <Description>Contracts for the Burbuja.Deployments resource provider.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>Burbuja.Deployments.Abstractions</PackageId>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

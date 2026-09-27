@@ -1,0 +1,66 @@
+{
+  "id": "agent-fork-resume",
+  "bind": "firstCallOrder",
+  "defaultUsage": { "inputTokens": 60, "outputTokens": 30, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "scripts": [
+    {
+      "label": "parent",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_seed", "name": "write_file", "input": { "path": "seed.txt", "content": "seed" } }
+            ]
+          }
+        },
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "parent done" }]
+          }
+        }
+      ]
+    },
+    {
+      "label": "fork",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_fork", "name": "write_file", "input": { "path": "fork.txt", "content": "forked" } }
+            ]
+          }
+        },
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "fork done" }]
+          }
+        }
+      ]
+    },
+    {
+      "label": "resume",
+      "turns": [
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "resumed after cold start" }]
+          }
+        }
+      ]
+    }
+  ],
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "adjacent child", "confidence": 0.95 } }
+    ]
+  }
+}

@@ -1,0 +1,1020 @@
+@page "/portal/explore/resource"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+@inject ResourceViewRegistry Views
+@inject PortalOptions Options
+@inject NavigationManager Nav
+@inject ExecutionView Events
+@inject PortalPermissions Permissions
+
+<PageLoaded Loaded="@(_envelope is not null || _failure is not null)" />
+<PageTitle>@(_envelope?.Name ?? "resource")</PageTitle>
+
+<h1>@(_envelope?.Name ?? "resource")</h1>
+<p class="muted small">
+    @if (Namespace is { Length: > 0 } && Type is { Length: > 0 })
+    {
+        <a href="@($"/portal/explore/{Namespace}/{Type}")">@Namespace/@Type</a>
+    }
+    <span>, @Descriptor.Title view</span>
+    @if (_generic)
+    {
+        <span>, generic</span>
+    }
+</p>
+<p class="muted small"><code>@Id</code></p>
+
+<ErrorAlert Failure="_failure" />
+
+@if (_failure is null && _isScope)
+{
+    @*
+        Some ids are SCOPES rather than resources: `/subscriptions/local` is the subscription itself, and
+        `/subscriptions/{s}/resourceGroups/{rg}` is a resource group. The kernel answers a GET on one with a
+        PAGE (`{value:[…]}`), not with an envelope, so a blade that expected properties rendered a screen of
+        dashes. Saying what the id is beats pretending it is a resource with no fields.
+    *@
+    <Card Title="This id is a scope" Subtitle="@Id">
+        <p class="muted small">
+            A scope is a container, not a resource: the kernel answers a read of it with the list of what it
+            holds. Browse its types instead.
+        </p>
+        <a class="btn" href="/portal/explore">Explore the catalogue</a>
+    </Card>
+}
+
+@if (_failure is null && !_isScope && _envelope is not null)
+{
+    <div class="tabs" role="tablist">
+        @foreach (var tab in Descriptor.EffectiveTabs)
+        {
+            <button type="button" role="tab" class="@(tab == Tab ? "tab active" : "tab")"
+                    aria-selected="@(tab == Tab ? "true" : "false")" @onclick="() => SelectAsync(tab)">
+                @Label(tab)
+            </button>
+        }
+    </div>
+
+    @if (Tab == "overview")
+    {
+        <Card Title="Overview" Subtitle="the envelope, and every property it carries">
+            <dl class="kv kv-inline">
+                <dt>type</dt><dd>@_envelope.Type</dd>
+                <dt>name</dt><dd>@_envelope.Name</dd>
+                <dt>location</dt><dd>@(_envelope.Location ?? "—")</dd>
+                <dt>provisioning</dt><dd>@(_envelope.ProvisioningState ?? "—")</dd>
+                <dt>modified</dt><dd>@(_envelope.SystemData?.LastModifiedAt?.ToString("u") ?? "—")</dd>
+                <dt>etag</dt><dd><code>@(_envelope.ETag ?? "—")</code></dd>
+            </dl>
+
+            @*
+                The properties are rendered GENERICALLY: whatever keys the resource has, in the order the
+                kernel wrote them. That is the whole claim of this tab — a type nobody registered a view for
+                is still readable, which is what makes this an explorer rather than a list of the types
+                somebody remembered to add.
+            *@
+            <h3>Properties</h3>
+            @if (_properties.Count == 0)
+            {
+                <EmptyState Text="This resource carries no properties." />
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>key</th><th>value</th></tr></thead>
+                    <tbody>
+                        @foreach (var (key, value, node) in _properties)
+                        {
+                            <tr>
+                                <td><code>@key</code></td>
+                                <td class="mono small">
+                                    @if (node is JsonObject or JsonArray)
+                                    {
+                                        @* Bounded: a blade is a page, not a viewer, and a 200 KB property would
+                                           make every other row on it unreachable. The JSON tab has no bound. *@
+                                        <JsonViewer Node="node" Limit="8 * 1024" />
+                                    }
+                                    else
+                                    {
+                                        @value
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+        </Card>
+    }
+
+    @if (Tab == "json")
+    {
+        <Card Title="JSON" Subtitle="the envelope as ARM returned it">
+            <JsonViewer Node="@_node" />
+        </Card>
+    }
+
+    @if (Tab == "actions")
+    {
+        @*
+            M9 U2: the command bar. The verbs are the PROVIDER's, not a list this page keeps: the kernel's
+            descriptor already declares what each type can do, so a new provider's actions appear here with no
+            front-door change — the same claim `ResourceViewRegistry` makes about views, one level down. Every
+            call carries this resource's ETag, so a stale page is a 412 a human can see rather than a silent
+            retry, and a 202 is polled to its terminal state instead of being reported as "done".
+        *@
+        <Card Title="Actions" Subtitle="@($"{Descriptor.Title}, the verbs this type declares")">
+            @if (_actions.Count == 0)
+            {
+                <EmptyState Text="This type declares no actions. It is still readable, writable and deletable through its own verbs." />
+            }
+            else
+            {
+                <p class="muted small">
+                    Each action is a POST to this resource with <code>If-Match</code>. A long-running one is
+                    polled through its own <code>Azure-AsyncOperation</code> before this page calls it finished.
+                </p>
+                @* M16 K-R2 — the declared acts are bordered: a ghost row of verbs read as plain text, which
+                   is the same defect Schedules' row had. Each is still a `.btn-small`, so a resource with six
+                   declared actions does not paint six loud capsules. *@
+                <div class="row-actions">
+                    @foreach (var action in _actions)
+                    {
+                        <button class="btn btn-outline btn-small" disabled="@_busy" @onclick="() => RunAsync(action)">@action</button>
+                    }
+                </div>
+                <label class="field">
+                    <span class="muted small">body (JSON; leave empty to send none)</span>
+                    <textarea class="input mono" rows="3" aria-label="action body"
+                              @bind="_body" @bind:event="oninput"></textarea>
+                </label>
+            }
+
+            @if (_notice is { Length: > 0 })
+            {
+                <div class="alert alert-info" role="status">@_notice</div>
+            }
+            @if (_actionResult is not null)
+            {
+                <h3>Result</h3>
+                <JsonViewer Node="@_actionResult" />
+            }
+        </Card>
+    }
+
+    @if (Tab == "access")
+    {
+        @*
+            M9 U2: who can reach THIS resource. A role assignment is an ARM extension resource, so the same list
+            answers at a subscription, a resource group or one job — hence no per-type code. The reader's own
+            roles sit beside it because "am I allowed to do this" is the question somebody arrives with, and the
+            answer is on the session rather than in this table.
+        *@
+        <Card Title="Access" Subtitle="@($"{Id}, role assignments at this scope")">
+            <dl class="kv kv-inline">
+                <dt>you</dt>
+                <dd>@(_principal is { Length: > 0 } ? _principal : "—")</dd>
+                <dt>your roles</dt>
+                <dd>@(_roles.Count == 0 ? "—" : string.Join(", ", _roles))</dd>
+                <dt>scope</dt>
+                <dd><code>@Id</code></dd>
+            </dl>
+
+            @if (_assignments.Count == 0)
+            {
+                <EmptyState Text="No role assignment is scoped to this resource. Access comes from a broader scope — check the subscription or the resource group." />
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>principal</th><th>type</th><th>role</th><th>scope</th><th>condition</th></tr></thead>
+                    <tbody>
+                        @foreach (var a in _assignments)
+                        {
+                            <tr>
+                                <td>@a.PrincipalId</td>
+                                <td class="small">@a.PrincipalType</td>
+                                <td><code>@a.Role</code></td>
+                                <td class="small mono">@a.Scope</td>
+                                <td class="small">@(a.Condition ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+
+            <p class="muted small">
+                An assignment is a PUT to
+                <code>@($"{Id}/providers/Burbuja.Authorization/roleAssignments/{{name}}")</code> by a principal
+                holding <code>Microsoft.Authorization/roleAssignments/write</code> at this scope. The kernel
+                re-authorises every call; a Reader sees this list and is refused the write.
+            </p>
+        </Card>
+    }
+
+    @if (Tab == "children")
+    {
+        @*
+            M9 U2/U4: what hangs under this resource. The list is the DESCRIPTOR's `children`, so a type that
+            gains a child gains this tab — the same claim the generic view makes, one level down. Each row is
+            listed (a bounded page) rather than only linked, because "does this workspace have jobs" is the
+            question, and a link that answers it only after a click is a link a reader clicks twice.
+        *@
+        <Card Title="Children" Subtitle="@($"{Descriptor.Title}, the child types its descriptor declares")">
+            @if (_children.Count == 0)
+            {
+                <EmptyState Text="This type declares no children. Its own verbs and its stream are the whole resource." />
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>child type</th><th>count</th><th>listing</th></tr></thead>
+                    <tbody>
+                        @foreach (var child in _children)
+                        {
+                            <tr>
+                                <td><code>@child.Name</code></td>
+                                <td>
+                                    @if (child.Failure is { Length: > 0 })
+                                    {
+                                        <span class="warn small">@child.Failure</span>
+                                    }
+                                    else
+                                    {
+                                        <span>@child.Count@(child.Truncated ? "+" : "")</span>
+                                    }
+                                </td>
+                                <td>
+                                    <a class="btn btn-small"
+                                       href="@($"/portal/explore/{Uri.EscapeDataString(Namespace ?? "")}/{Uri.EscapeDataString(child.Name)}")">browse type</a>
+                                    <span class="muted small mono">@child.Path</span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+        </Card>
+    }
+
+    @if (Tab == "operations")
+    {
+        @*
+            M9 U4: the async operations that ran ON this resource. An operation's envelope carries the TARGET's
+            canonical id, so the filter is the identity rather than a name — a name would also match a
+            sibling, and "which of my resources is still provisioning" is the question this tab answers. This
+            is the same list `/portal/operations` shows for the whole subscription, narrowed to one row.
+        *@
+        <Card Title="Operations" Subtitle="@($"{Id}, async operations whose target is this resource")">
+            @if (_operations.Count == 0)
+            {
+                <EmptyState Text="No async operation has run on this resource. A synchronous PUT or action leaves nothing here — and that is a fact about the resource, not a gap in the console." />
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>operation</th><th>status</th><th>state</th><th>started</th><th>ended</th></tr></thead>
+                    <tbody>
+                        @foreach (var op in _operations)
+                        {
+                            <tr>
+                                <td class="small mono">@op.Name</td>
+                                <td><StatusPill Status="@op.Status" /></td>
+                                <td class="small">@op.ProvisioningState</td>
+                                <td class="small">@Stamp(op.StartedAt)</td>
+                                <td class="small">@Stamp(op.EndedAt)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+        </Card>
+    }
+
+    @if (Tab == "tags")
+    {
+        @*
+            M9 U2/U4: tags, which are the one field of an envelope a human edits in place. The write is a PATCH
+            with this page's ETag, so a stale page is a 412 a human sees rather than a silent overwrite; the
+            controls render only when the reader's roles allow the write, and the kernel re-decides either way
+            (the pre-check is a courtesy, never the boundary).
+        *@
+        <Card Title="Tags" Subtitle="@($"{Id}, the envelope's tags")">
+            @if (_tags.Count == 0)
+            {
+                <p class="muted small">No tags on this resource.</p>
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>key</th><th>value</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var tag in _tags.ToList())
+                        {
+                            <tr>
+                                <td><code>@tag.Key</code></td>
+                                <td>@tag.Value</td>
+                                <td class="right">
+                                    @if (_canWriteTags)
+                                    {
+                                        <button class="btn btn-small" disabled="@_busy"
+                                                @onclick="() => RemoveTagAsync(tag.Key)">remove</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+
+            @if (_canWriteTags)
+            {
+                <div class="row-actions">
+                    <label class="field">
+                        <span class="muted small">key</span>
+                        <input class="input" aria-label="tag key" @bind="_tagKey" @bind:event="oninput" />
+                    </label>
+                    <label class="field">
+                        <span class="muted small">value</span>
+                        <input class="input" aria-label="tag value" @bind="_tagValue" @bind:event="oninput" />
+                    </label>
+                    <button class="btn btn-small" disabled="@_busy" @onclick="SetTagAsync">set</button>
+                </div>
+            }
+            else
+            {
+                <p class="muted small">
+                    Your roles do not include a write on this type, so the tags are read-only here. The kernel
+                    would refuse the PATCH regardless — this only says so before you try.
+                </p>
+            }
+
+            @if (_notice is { Length: > 0 })
+            {
+                <div class="alert alert-info" role="status">@_notice</div>
+            }
+        </Card>
+    }
+
+    @if (Tab == "locks")
+    {
+        @*
+            M9 U2/U4: the locks that apply HERE. Like a role assignment, a lock is an ARM extension resource
+            addressable at any scope, so one list call answers for a subscription, a resource group or this
+            resource and its children. The tab says what a lock MEANS (`CanNotDelete` refuses a delete,
+            `ReadOnly` refuses every write) because a table of levels without that sentence makes a reader
+            look the semantics up somewhere else — which is how a console stops being the place the truth is.
+        *@
+        <Card Title="Locks" Subtitle="@($"{Id}, locks scoped here or inherited from above")">
+            @if (_locks.Count == 0)
+            {
+                <EmptyState Text="No lock is scoped to this resource or to a scope above it. A delete or a write is limited by your roles and by the policy gate, not by a lock." />
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>lock</th><th>level</th><th>scope</th><th>notes</th></tr></thead>
+                    <tbody>
+                        @foreach (var @lock in _locks)
+                        {
+                            <tr>
+                                <td><code>@@lock.Name</code></td>
+                                <td><StatusPill Status="@@lock.Level" /></td>
+                                <td class="small mono">@@lock.Scope</td>
+                                <td class="small">@(@lock.Notes is { Length: > 0 } ? @lock.Notes : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+                <p class="muted small">
+                    <code>CanNotDelete</code> refuses a delete of this resource or of anything under it;
+                    <code>ReadOnly</code> refuses every write. Both are decided by the kernel on the request,
+                    not by this page.
+                </p>
+            }
+        </Card>
+    }
+
+    @if (Tab == "events")
+    {
+        <Card Title="Events" Subtitle="@($"{Id}/events, newest first")">
+            <EventStreamView Stream="Events.Stream" StreamRefused="Events.StreamRefused" />
+            @if (Events.Events.Count == 0)
+            {
+                <EmptyState Text="No events on this resource's stream." />
+            }
+            else
+            {
+                <div class="grid-scroll">
+                <table class="table">
+                    <thead><tr><th>seq</th><th>type</th><th>summary</th><th>at</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in Events.Events)
+                        {
+                            <tr>
+                                <td>@e.StreamSeq</td>
+                                <td><code>@e.Type</code></td>
+                                <td class="small">@e.Summary</td>
+                                <td class="small">@e.At.ToString("u")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+        </Card>
+    }
+}
+
+@code {
+    /// <summary>
+    /// The resource's canonical id, from the list that offered it.
+    ///
+    /// <para><b>An id in the query string, not segments in the path.</b> The id is the only thing that says
+    /// where a resource lives: `subscriptions` and `resourceGroups` are addressed at canonical paths of
+    /// their own (`/subscriptions/local`) and NOT under `…/providers/{ns}/{type}/{name}`, so a blade that
+    /// rebuilt the path got a 404 from the kernel for the very subscription the explorer had just listed.
+    /// Carrying the id also removes the class of URL questions a namespace with a dot in it raises.</para>
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "id")]
+    private string? IdParameter { get; set; }
+
+    [SupplyParameterFromQuery(Name = "tab")]
+    private string? TabParameter { get; set; }
+
+    private PortalEnvelope<JsonNode>? _envelope;
+    private PortalFailure? _failure;
+    private ResourceViewDescriptor _view = ResourceViewRegistry.Generic("");
+    private bool _generic;
+    private bool _isScope;
+    private JsonNode? _node;
+    /// <summary>
+    /// One property of the envelope: the key, the one-line rendering, and the NODE.
+    ///
+    /// <para><b>M14 R6.</b> The node is kept because a property whose value is a JSON document (a job's
+    /// `spec`, a mandate's `envelope`, a persona's `capabilities`) was rendered as one long line inside a table
+    /// cell — technically true and unreadable, and the reader's next move was always to open the JSON tab and
+    /// find it again. A document renders as bounded pretty JSON in its own cell now; a scalar renders as
+    /// before.</para>
+    /// </summary>
+    private List<(string Key, string Value, JsonNode? Node)> _properties = [];
+
+    // M9 U2 — the two control tabs.
+    private IReadOnlyList<string> _actions = [];
+    private string _body = "";
+    private string _notice = "";
+    private JsonNode? _actionResult;
+    private bool _busy;
+    private List<AssignmentRow> _assignments = [];
+    private string _principal = "";
+    private IReadOnlyList<string> _roles = [];
+
+    // M9 U2/U4 — the four remaining tabs: what hangs under it, what ran on it, what it is called, and what
+    // is locked.
+    private List<ChildRow> _children = [];
+    private List<OperationRow> _operations = [];
+    private Dictionary<string, string> _tags = new(StringComparer.OrdinalIgnoreCase);
+    private List<LockRow> _locks = [];
+    private bool _canWriteTags;
+    private string _tagKey = "";
+    private string _tagValue = "";
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    private string Id => IdParameter ?? "";
+
+    private ResourceViewDescriptor Descriptor => _view;
+
+    /// <summary>
+    /// The namespace and type read off the id when it carries them, so the header can link back to the type's
+    /// list. A canonical path like `/subscriptions/local` has neither, and then there is nothing to link to —
+    /// which is a fact about that resource rather than a failure.
+    /// </summary>
+    private string? Namespace => SegmentAfter("/providers/");
+
+    private string? Type => Namespace is { Length: > 0 } ns ? SegmentAfter($"/providers/{ns}/") : null;
+
+    private string? SegmentAfter(string marker)
+    {
+        var at = Id.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (at < 0)
+            return null;
+        var rest = Id[(at + marker.Length)..];
+        var slash = rest.IndexOf('/');
+        return slash < 0 ? rest : rest[..slash];
+    }
+
+    /// <summary>
+    /// The tab, defaulting to the first one the descriptor declares and ignoring anything it does not list —
+    /// the tab arrives from the query string, so it is caller-controlled text.
+    /// </summary>
+    private string Tab
+    {
+        get
+        {
+            var fallback = Descriptor.EffectiveTabs.Count > 0 ? Descriptor.EffectiveTabs[0] : "overview";
+            return TabParameter is { Length: > 0 } asked
+                   && Descriptor.EffectiveTabs.Contains(asked, StringComparer.OrdinalIgnoreCase)
+                ? asked.ToLowerInvariant()
+                : fallback;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _failure = null;
+        _envelope = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            if (Id.Length == 0)
+            {
+                _failure = PortalFailure.Local("MissingId", "Open a resource from the explorer list.");
+                return;
+            }
+
+            // The reader's own roles are read for EVERY tab, not only Access: the Tags tab decides from them
+            // whether to render its controls, and a page whose permission answer depends on which tab you
+            // opened first is a page that shows a Reader a button on one path and not another.
+            var session = await Arm.SessionAsync();
+            _principal = session?.PrincipalId ?? "";
+            _roles = session?.Roles ?? [];
+
+            var type = $"{Namespace}/{Type}";
+            _view = Views.Find(type);
+            _generic = !Views.All.Any(v => v.Type.Equals(type, StringComparison.OrdinalIgnoreCase));
+
+            var client = await Data.ClientAsync(ct);
+            // JsonNode, not JsonElement: a `JsonElement` deserialised from a response is backed by a
+            // JsonDocument that the client disposes, and re-serialising one throws "Operation is not valid
+            // due to the current state of the object" — which is what the JSON tab did on its first live
+            // render, in the RENDERER rather than in the page, so the whole blade answered 500. Reading a
+            // disposed element looks like it works (the Overview tab only enumerates), which is what makes
+            // this one worth naming: the failure appears one tab away from the code that caused it.
+            _envelope = await client.GetAsync<PortalEnvelope<JsonNode>>(Id, ct: ct);
+            _node = JsonSerializer.SerializeToNode(_envelope, JsonOptions);
+            // A scope answers with a page: no `id` of its own, and a `value` array where a resource would
+            // have `properties`.
+            _isScope = _envelope?.Id is null && _node?["value"] is JsonArray;
+            _properties = _envelope?.Properties is JsonObject properties
+                ? [.. properties.Select(p => (p.Key, Render(p.Value), p.Value))]
+                : [];
+
+            // The events tab is the same seam every other blade uses: a bounded range read plus the live
+            // signal. Reading it only when the tab is open keeps a resource page from opening a stream
+            // nobody asked for.
+            if (Tab == "events")
+                await Events.LoadAsync(Id + "/events", Options.EventPageSize * 4, ct);
+
+            // M9 U2: the same discipline for the two control tabs — the verbs and the assignments are read
+            // when somebody opens the tab, not on every render of every blade.
+            if (Tab == "actions")
+                await LoadActionsAsync(client, ct);
+            if (Tab == "access")
+                await LoadAccessAsync(client, ct);
+            if (Tab == "children")
+                await LoadChildrenAsync(client, ct);
+            if (Tab == "operations")
+                await LoadOperationsAsync(client, ct);
+            if (Tab == "tags")
+                LoadTags();
+            if (Tab == "locks")
+                await LoadLocksAsync(client, ct);
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    /// <summary>
+    /// The verbs this resource's TYPE declares, from the provider descriptor the kernel already serves.
+    ///
+    /// <para>A type the provider does not declare (a scope, or an id the router normalised differently) has
+    /// no catalogue — which is not an error, and the tab says so rather than rendering an empty command bar
+    /// that reads like a host with nothing to offer.</para>
+    /// </summary>
+    private async ValueTask LoadActionsAsync(IArmClient client, CancellationToken ct)
+    {
+        _actions = [];
+        if (Namespace is not { Length: > 0 } ns || Type is not { Length: > 0 } declared)
+            return;
+
+        var providers = await Data.ProvidersAsync(ct);
+        var provider = providers.FirstOrDefault(p => p.DisplayNamespace.Equals(ns, StringComparison.OrdinalIgnoreCase));
+        var type = provider?.ResourceTypes.FirstOrDefault(t =>
+            t.ResourceType.Equals(declared, StringComparison.OrdinalIgnoreCase));
+        // M11 U12 — hide the routes that are not buttons, and ONLY those.
+        //
+        // The filter used to be `.Where(a => !a.IsDataAction)`, which is a descriptor field that nothing reads
+        // when authorizing (M10 H2). Reading it as "is a data-plane route" is what hid `initialize` — an
+        // ordinary POST verb declared as a data action — from the Actions tab, so the one action that deploys a
+        // workspace was the one the tab could not offer. The honest filter is the DATA-PLANE ROUTE KIND: a
+        // `Stream` (attach) or a `Download` (snapshot, transcript) is not something a button posts to.
+        var notAButton = (type?.DataPlaneRoutes ?? [])
+            .Where(r => r.Kind.Equals("Stream", StringComparison.OrdinalIgnoreCase)
+                || r.Kind.Equals("Download", StringComparison.OrdinalIgnoreCase))
+            .Select(r => r.Segment)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _actions = type is null
+            ? []
+            : [.. type.Actions
+                .Select(a => a.Name)
+                .Where(n => n.Length > 0 && !notAButton.Contains(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)];
+    }
+
+    /// <summary>
+    /// The role assignments scoped to this resource, plus the reader's own roles.
+    ///
+    /// <para>An extension resource, so the SAME call answers at a subscription, a resource group or one job.
+    /// A 403 is not caught here: the caller's permission to read assignments is the kernel's decision, and
+    /// swallowing it would render "no assignments" for "you may not look" — the misreading this portal keeps
+    /// having to remove.</para>
+    /// </summary>
+    private async ValueTask LoadAccessAsync(IArmClient client, CancellationToken ct)
+    {
+        _assignments = [];
+        await foreach (var item in client.ListAsync<PortalEnvelope<RoleAssignmentShape>>(
+                           $"{Id}/providers/{ArmConstants.AuthorizationNamespace}/roleAssignments", ct: ct))
+        {
+            var props = item.Properties;
+            _assignments.Add(new AssignmentRow(
+                props?.PrincipalId ?? "—",
+                props?.PrincipalType ?? "—",
+                Role(props?.RoleDefinitionId),
+                item.Id ?? Id,
+                props?.Condition));
+        }
+    }
+
+    /// <summary>
+    /// Run one action. Everything a caller needs to judge the outcome is shown, because an action's result
+    /// is the kernel's answer and not this page's summary of it.
+    /// </summary>
+    private async Task RunAsync(string action)
+    {
+        if (_busy)
+            return;
+        _busy = true;
+        _notice = "";
+        _failure = null;
+        _actionResult = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            JsonNode? body = null;
+            if (!string.IsNullOrWhiteSpace(_body))
+            {
+                try
+                {
+                    body = JsonNode.Parse(_body);
+                }
+                catch (JsonException ex)
+                {
+                    _failure = PortalFailure.Local("InvalidJson", "The body is not JSON: " + ex.Message);
+                    return;
+                }
+            }
+
+            var client = await Data.ClientAsync(ct);
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (_envelope?.ETag is { Length: > 0 } etag)
+                headers["If-Match"] = etag;
+
+            var response = await client.SendAsync(
+                new ArmClientRequest("POST", $"{Id}/{action}", Headers: headers, Body: body), ct);
+
+            if (response.StatusCode == 412)
+            {
+                // Surfaced, never retried: the resource moved and a human has to look at what changed.
+                _notice = $"'{_envelope?.Name}' changed since this page rendered it. Reload and act again.";
+                return;
+            }
+
+            if (response.StatusCode is < 200 or > 299)
+            {
+                _failure = PortalFailure.Local(
+                    $"HTTP {response.StatusCode}",
+                    response.Error?.Message ?? $"The kernel refused '{action}'.");
+                return;
+            }
+
+            if (response.StatusCode == 202)
+            {
+                // Long-running: the operation is the answer until it reaches a terminal state. Polling here
+                // (rather than telling the reader to come back) is what makes this a console and not a log.
+                var finished = await client.PollOperationAsync<JsonNode>(
+                    response, TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(250), ct);
+                _actionResult = finished ?? response.Body;
+                _notice = $"{action}: accepted, and the operation reached a terminal state.";
+            }
+            else
+            {
+                _actionResult = response.Body;
+                _notice = $"{action}: HTTP {response.StatusCode}.";
+            }
+
+            // The action may have changed the resource (a state, a count, a lock) — re-read the envelope so
+            // the Overview and JSON tabs are not left describing the resource as it was before the click.
+            _envelope = await client.GetAsync<PortalEnvelope<JsonNode>>(Id, ct: ct);
+            _node = JsonSerializer.SerializeToNode(_envelope, JsonOptions);
+            _properties = _envelope?.Properties is JsonObject props
+                ? [.. props.Select(p => (p.Key, Render(p.Value), p.Value))]
+                : [];
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+            _notice = $"{action}: the host answered with {ex.Error.Code}.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// The child types the descriptor declares, each with a bounded count. Bounded on purpose: a parent with
+    /// ten thousand children should not make a blade page read all of them to say "many", and the count says
+    /// which it is (`12` versus `50+`).
+    /// </summary>
+    private async ValueTask LoadChildrenAsync(IArmClient client, CancellationToken ct)
+    {
+        _children = [];
+        if (Namespace is not { Length: > 0 } ns || Type is not { Length: > 0 } declared)
+            return;
+
+        var providers = await Data.ProvidersAsync(ct);
+        var type = providers
+            .FirstOrDefault(p => p.DisplayNamespace.Equals(ns, StringComparison.OrdinalIgnoreCase))
+            ?.ResourceTypes.FirstOrDefault(t => t.ResourceType.Equals(declared, StringComparison.OrdinalIgnoreCase));
+        if (type is null)
+            return;
+
+        foreach (var child in type.Children)
+        {
+            var path = $"{Id}/{child}";
+            var count = 0;
+            var truncated = false;
+            string? failure = null;
+            try
+            {
+                await foreach (var _ in client.ListAsync<PortalEnvelope<JsonNode>>(path, ct: ct))
+                {
+                    count++;
+                    if (count >= ChildCountBound)
+                    {
+                        truncated = true;
+                        break;
+                    }
+                }
+            }
+            catch (ArmException ex)
+            {
+                // A child type a child resource does not have (the parent's other branch) answers 404, and a
+                // row that says so is more useful than a count of zero that means the same thing as "empty".
+                failure = ex.Error.Code;
+            }
+
+            _children.Add(new ChildRow(child, path, count, truncated, failure));
+        }
+    }
+
+    /// <summary>How many children one row counts before it says "50+".</summary>
+    private const int ChildCountBound = 50;
+
+    /// <summary>
+    /// The async operations whose TARGET is this resource. The whole subscription's operation list is read
+    /// once and filtered here, because the kernel's operations resource is keyed by operation id and carries
+    /// the target inside the envelope — there is no by-target query to ask.
+    /// </summary>
+    private async ValueTask LoadOperationsAsync(IArmClient client, CancellationToken ct)
+    {
+        _operations = [];
+        var subscription = SubscriptionOf(Id);
+        if (subscription.Length == 0)
+            return;
+
+        await foreach (var op in client.ListAsync<PortalEnvelope<JsonNode>>(
+                           $"/subscriptions/{subscription}/providers/{ArmConstants.ResourcesNamespace}/operations", ct: ct))
+        {
+            var target = op.Id ?? "";
+            if (!target.Equals(Id, StringComparison.OrdinalIgnoreCase)
+                && !target.StartsWith(Id + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            _operations.Add(new OperationRow(
+                op.Name ?? "—",
+                op.Properties?["status"]?.GetValue<string>() ?? op.ProvisioningState ?? "—",
+                op.ProvisioningState ?? "—",
+                op.SystemData?.CreatedAt,
+                op.SystemData?.LastModifiedAt));
+        }
+    }
+
+    /// <summary>
+    /// The envelope's tags, as an editable dictionary. The dictionary is the page's COPY: the write sends the
+    /// whole set with the ETag this render held, so a concurrent edit is a 412 rather than a lost update.
+    /// </summary>
+    private void LoadTags()
+    {
+        _tags = _envelope?.Tags is { Count: > 0 } tags
+            ? new Dictionary<string, string>(tags, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _canWriteTags = Namespace is { Length: > 0 } ns && Type is { Length: > 0 } declared
+                        && Permissions.CanWrite(_roles, $"{ns}/{declared}");
+    }
+
+    private Task SetTagAsync()
+    {
+        if (_tagKey.Trim().Length == 0)
+        {
+            _failure = PortalFailure.Local("MissingTagKey", "A tag needs a key.");
+            return Task.CompletedTask;
+        }
+
+        _tags[_tagKey.Trim()] = _tagValue;
+        _tagKey = "";
+        _tagValue = "";
+        return WriteTagsAsync();
+    }
+
+    private Task RemoveTagAsync(string key)
+    {
+        _tags.Remove(key);
+        return WriteTagsAsync();
+    }
+
+    /// <summary>
+    /// PATCH the tag set. The ETag travels as `If-Match`, so a page rendered before somebody else's edit is
+    /// refused with a 412 and the reader is told — never silently merged.
+    /// </summary>
+    private async Task WriteTagsAsync()
+    {
+        _busy = true;
+        _notice = "";
+        _failure = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var client = await Data.ClientAsync(ct);
+            var body = new JsonObject
+            {
+                ["tags"] = new JsonObject(_tags.Select(t => KeyValuePair.Create<string, JsonNode?>(t.Key, t.Value))),
+            };
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (_envelope?.ETag is { Length: > 0 } etag)
+                headers["If-Match"] = etag;
+
+            var response = await client.SendAsync(new ArmClientRequest("PATCH", Id, Headers: headers, Body: body), ct);
+            if (response.StatusCode == 412)
+            {
+                _notice = "This resource changed since the page rendered it. Reload before editing its tags.";
+                return;
+            }
+
+            if (response.StatusCode is < 200 or > 299)
+            {
+                _failure = PortalFailure.Local(
+                    $"HTTP {response.StatusCode}",
+                    response.Error?.Message ?? "The kernel refused the tag write.");
+                return;
+            }
+
+            _notice = "tags written";
+            if (response.Body is JsonNode written && written["tags"] is JsonObject settled)
+            {
+                _tags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var tag in settled)
+                    _tags[tag.Key] = tag.Value?.GetValue<string>() ?? "";
+            }
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>The locks at this scope. An extension resource, like a role assignment: one list call.</summary>
+    private async ValueTask LoadLocksAsync(IArmClient client, CancellationToken ct)
+    {
+        _locks = [];
+        await foreach (var item in client.ListAsync<PortalEnvelope<LockShape>>(
+                           $"{Id}/providers/{ArmConstants.AuthorizationNamespace}/locks", ct: ct))
+        {
+            _locks.Add(new LockRow(
+                item.Name ?? "—",
+                item.Properties?.Level ?? "—",
+                item.Id ?? Id,
+                item.Properties?.Notes));
+        }
+    }
+
+    /// <summary>The subscription segment of an id, or empty for a resource that has none.</summary>
+    private static string SubscriptionOf(string id)
+    {
+        const string marker = "/subscriptions/";
+        var at = id.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (at < 0)
+            return "";
+        var rest = id[(at + marker.Length)..];
+        var slash = rest.IndexOf('/');
+        return slash < 0 ? rest : rest[..slash];
+    }
+
+    private static string Stamp(DateTimeOffset? at) =>
+        at is { } instant ? instant.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss'Z'", CultureInfo.InvariantCulture) : "—";
+
+    /// <summary>
+    /// The role's NAME from its definition id — the id is a path (`…/roleDefinitions/owner`) and a table of
+    /// paths is a table nobody reads.
+    /// </summary>
+    private static string Role(string? definitionId) =>
+        definitionId is { Length: > 0 } id
+            ? id[(id.LastIndexOf('/') + 1)..]
+            : "—";
+
+    private sealed record AssignmentRow(
+        string PrincipalId,
+        string PrincipalType,
+        string Role,
+        string Scope,
+        string? Condition);
+
+    /// <summary>One child type of this resource: its declared name, where it lists, and how many there are.</summary>
+    private sealed record ChildRow(string Name, string Path, int Count, bool Truncated, string? Failure);
+
+    private sealed record OperationRow(
+        string Name,
+        string Status,
+        string ProvisioningState,
+        DateTimeOffset? StartedAt,
+        DateTimeOffset? EndedAt);
+
+    private sealed record LockRow(string Name, string Level, string Scope, string? Notes);
+
+    /// <summary>The wire shape of a lock, as the kernel writes it.</summary>
+    private sealed class LockShape
+    {
+        public string Level { get; set; } = "";
+        public string? Notes { get; set; }
+    }
+
+    /// <summary>The wire shape of a role assignment, as the kernel writes it.</summary>
+    private sealed class RoleAssignmentShape
+    {
+        public string RoleDefinitionId { get; set; } = "";
+        public string PrincipalId { get; set; } = "";
+        public string PrincipalType { get; set; } = "User";
+        public string? Condition { get; set; }
+    }
+
+    private Task SelectAsync(string tab)
+    {
+        Nav.NavigateTo($"/portal/explore/resource?id={Uri.EscapeDataString(Id)}&tab={tab}");
+        return Task.CompletedTask;
+    }
+
+    private static string Label(string tab) => tab switch
+    {
+        "overview" => "Overview",
+        "json" => "JSON",
+        "actions" => "Actions",
+        "access" => "Access",
+        "children" => "Children",
+        "operations" => "Operations",
+        "tags" => "Tags",
+        "locks" => "Locks",
+        "events" => "Events",
+        _ => tab,
+    };
+
+    private static string Render(JsonNode? node) => node switch
+    {
+        null => "null",
+        JsonValue value => value.ToJsonString().Trim('"'),
+        _ => node.ToJsonString(),
+    };
+}

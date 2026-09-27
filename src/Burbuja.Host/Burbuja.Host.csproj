@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Host</RootNamespace>
+    <Description>Burbuja Host — ARM front door, portal, and worker roles.</Description>
+    <IsPackable>false</IsPackable>
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Burbuja.Host.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Hosting/Burbuja.Hosting.csproj" />
+    <ProjectReference Include="../Burbuja.Portal/Burbuja.Portal.csproj" />
+  </ItemGroup>
+</Project>

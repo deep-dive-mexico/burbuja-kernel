@@ -1,0 +1,18 @@
+@namespace Burbuja.Portal.Components.Layout
+@inject PortalData Data
+
+@*
+    M14 R5p — one rail group per file, so four lanes never edit one `NavMenu.razor`.
+*@
+    <div class="rail-group">
+        <span class="rail-title">Catalogue</span>
+        <NavLink class="nav-link" href="/portal/explore" title="Explore">
+            <span class="rail-icon"><Icon Name="explore" /></span><span class="rail-label">Explore</span>
+        </NavLink>
+        <NavLink class="nav-link" href="/portal/integrations" title="Integrations">
+            <span class="rail-icon"><Icon Name="integrations" /></span><span class="rail-label">Integrations</span>
+        </NavLink>
+        <NavLink class="nav-link" href="/portal/plugins" title="Plugins">
+            <span class="rail-icon"><Icon Name="plugins" /></span><span class="rail-label">Plugins</span>
+        </NavLink>
+    </div>

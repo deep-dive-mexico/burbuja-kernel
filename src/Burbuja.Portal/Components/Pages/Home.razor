@@ -1,0 +1,207 @@
+@page "/portal"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+
+<PageTitle>Home</PageTitle>
+<PageHeader Eyebrow="Home" Title="What this host is doing"
+            Subtitle="@(_scope is null ? "Reading the tenancy…" : $"{_scope.Display}, {_model?.Health?.Summary ?? "health unknown"}")"
+            Loaded="@(_scope is not null || _scopeFailure is not null)">
+    <Actions>
+        <a class="btn" href="/portal/sessions">All sessions</a>
+        <PortalContributions Slot="home.header" />
+    </Actions>
+</PageHeader>
+
+@if (_scopeFailure is not null)
+{
+    <ErrorAlert Failure="_scopeFailure" />
+}
+else if (_scope is null)
+{
+    <Skeleton Kind="tiles" Count="5" Label="reading this host's state…" />
+}
+else
+{
+    @if (_attention.Count > 0)
+    {
+        <div class="card">
+            <div class="card-head"><h2>Needs attention</h2><span class="muted small">@Text.Plural(_attention.Count, "item", "items")</span></div>
+            <div class="card-body">
+                <div class="rows attention-rows">
+                    @foreach (var item in _attention)
+                    {
+                        <a class="row-link @item.Tone" href="@item.Href"><span class="row-name">@item.Label</span><span class="row-value tabular">@item.Value</span><span class="row-action">@item.Delta</span></a>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    <div class="tiles">
+        <StatTile Label="Plugin health" Value="@HealthValue" Delta="@HealthDelta" Href="/portal/plugins"
+                  Tone="@(Degraded() ? "tile-warn" : null)" Title="the kernel's own /health/plugins document" />
+        <StatTile Label="Spend today" Value="@SpendValue" Delta="@SpendDelta" Href="/portal/pomnibot"
+                  Tone="@(_model?.Today?.HardStopReached == true ? "tile-bad" : null)"
+                  Series="@_spendSeries" SparkLabel="spend over the last 14 days" />
+        <StatTile Label="Active jobs" Value="@ActiveJobs" Delta="@($"{_model?.AwaitingJobs ?? 0} awaiting a decision")" Href="/portal/sessions" />
+        <StatTile Label="Runtime sessions" Value="@AgentsValue" Delta="stateful, holding a session" Href="/portal/sessions" />
+        <PortalContributions Slot="home.tiles" />
+        <StatTile Label="Pending approvals" Value="@PendingValue"
+                  Delta="@((_model?.PendingApprovals ?? 0) == 0 ? "nothing is waiting for a human" : "waiting for a human")"
+                  Href="/portal/approvals" Tone="@((_model?.PendingApprovals ?? 0) > 0 ? "tile-warn" : null)" />
+    </div>
+    @if (_model?.Today is not null)
+    {
+        <div class="card">
+            <div class="card-head"><h2>@(_model.Today.HardStopUsd is null ? "Today's spend" : "Today's ceiling")</h2><a class="small" href="/portal/pomnibot">the separate pomnibot ledger</a></div>
+            <div class="card-body"><Meter Label="Burbuja.Agents spend against the host's daily stop" Fraction="@SpendFraction" Value="@SpendValue" Status="@SpendStatus" Note="@SpendNote" /></div>
+        </div>
+    }
+    <div class="card">
+        <div class="card-head"><h2>Create a resource</h2></div>
+        <div class="card-body">
+            @if (_mayWrite is false)
+            {
+                <p class="muted small" role="status">@NoCreateWhy</p>
+            }
+            <div class="rows create-rows">
+                @foreach (var (kind, name, hint) in Creates)
+                {
+                    @if (_mayWrite is false)
+                    {
+                        <span class="row-link rows-disabled" aria-disabled="true" title="@NoCreateWhy"><span class="row-name">@name</span><span class="row-hint">@hint</span></span>
+                    }
+                    else
+                    {
+                        <a class="row-link" href="/portal/create/@kind"><span class="row-name">@name</span><span class="row-hint">@hint</span></a>
+                    }
+                }
+                <PortalContributions Slot="home.create" />
+            </div>
+        </div>
+    </div>
+    <div class="panels">
+        <div class="card">
+            <div class="card-head"><h2>Recent changes</h2><a class="small" href="/portal/activity">all activity</a></div>
+            <div class="card-body">
+                @if (_recent.Count == 0)
+                {
+                    <EmptyState Text="Nothing has changed on this host since the ring began." />
+                }
+                else
+                {
+                    <ul class="recent">
+                        @foreach (var row in _recent)
+                        {
+                            <li><span class="truncate"><span class="pill @StatusPill.Tone(row.Status.ToString(CultureInfo.InvariantCulture))" title="@row.Status">@row.Method</span>
+                                <a href="@ActivityHref(row)" title="@row.Path">@ShortPath(row.Path)</a></span>
+                                <span class="recent-when" title="@row.At.ToString("u")">@Age(row.At)</span></li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+        <PortalContributions Slot="home.panels" />
+    </div>
+    <div class="card">
+        <div class="card-head"><h2>All services</h2></div>
+        <div class="card-body"><div class="services">
+            @foreach (var (name, hint, href, icon) in Services)
+            {
+                <a class="service" href="@href"><span class="service-icon"><Icon Name="@icon" Size="18" /></span><span class="service-name">@name</span><span class="service-hint">@hint</span></a>
+            }
+            <PortalContributions Slot="home.services" />
+        </div></div>
+    </div>
+    @if (_model is { HiddenNamespaces.Count: > 0 })
+    {
+        <div class="alert alert-warn" role="status"><strong>Some panels are not requested</strong><span>not visible for your role: @string.Join(", ", _model.HiddenNamespaces). They are not missing from this host — your roles simply cannot read them, so the portal neither fetches nor paints them.</span></div>
+    }
+    @foreach (var failure in _model?.Failures ?? [])
+    {
+        <ErrorAlert Failure="failure" />
+    }
+}
+
+@code {
+    private ArmScope? _scope;
+    private PortalFailure? _scopeFailure;
+    private PortalDashboardModel? _model;
+    private IReadOnlyList<PortalActivityRow> _recent = [];
+    private IReadOnlyList<double> _spendSeries = [];
+    private readonly List<Attention> _attention = [];
+    private bool? _mayWrite;
+    private const string NoCreateWhy = "Your role cannot create resources: creating anything here needs write on the namespace's resource (Burbuja.Agents/workspaces/write for a workspace, a job or an agent). The kernel would refuse the PUT.";
+    private static readonly (string Kind, string Name, string Hint)[] Creates = [
+        ("job", "Agent job", "A scripted or model-backed job in a workspace"),
+        ("agent", "Stateful agent", "A named agent that keeps its session"),
+        ("workspace", "Workspace", "The compute root a job or agent runs in")];
+    private static readonly (string Name, string Hint, string Href, string Icon)[] Services = [
+        ("Sessions", "jobs and agents, by workspace", "/portal/sessions", "sessions"),
+        ("Activity", "what this host was asked for", "/portal/activity", "activity"),
+        ("Workspaces", "the compute roots", "/portal/workspaces", "workspace"),
+        ("Approvals", "decisions waiting for a human", "/portal/approvals", "approvals"),
+        ("Pomnibot", "the sibling deployment", "/portal/pomnibot", "jobs"),
+        ("Schedules", "recurring work", "/portal/schedules", "schedules"),
+        ("Explore", "any resource type", "/portal/explore", "explore"),
+        ("Integrations", "external tool surfaces", "/portal/integrations", "integrations"),
+        ("Plugins", "what this host loaded", "/portal/plugins", "plugins")];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var ct = CancellationToken.None;
+        try { (_scope, _scopeFailure) = await Data.ResolveScopeAsync(ct); }
+        catch (ArmException ex) { _scopeFailure = PortalFailure.From(ex); return; }
+        if (_scope is not { } scope) return;
+        _model = await Data.DashboardAsync(ct);
+        try { _mayWrite = await Data.MayAsync("Burbuja.Agents/workspaces/write", ct); }
+        catch (Exception) { _mayWrite = null; }
+        // Optional reads cost their own section, never the whole landing page.
+        try { _recent = await Data.RecentAsync(scope, 12, ct, (await Arm.SessionAsync())?.PrincipalId); }
+        catch (Exception) { _recent = []; }
+        try { _spendSeries = await Data.SpendSeriesAsync(scope, 14, ct); }
+        catch (Exception) { _spendSeries = []; }
+        BuildAttention();
+    }
+
+    private void BuildAttention()
+    {
+        _attention.Clear();
+        if (_model is not { } model) return;
+        if (model.PendingApprovals > 0)
+            _attention.Add(new("Approvals parked", model.PendingApprovals.ToString(CultureInfo.InvariantCulture), "a decision is the only thing that moves them", "/portal/approvals", "tile-warn"));
+        if (model.Today?.HardStopReached == true)
+            _attention.Add(new("Daily stop reached", SpendValue, "the host refuses new spending until the UTC day turns", "/portal/pomnibot", "tile-bad"));
+        if (Degraded() && model.Health is { } health)
+            _attention.Add(new("Plugin health", health.Status, health.Summary, "/portal/plugins", "tile-warn"));
+    }
+    private bool Degraded() => _model?.Health is { } health && !string.Equals(health.Status, "Healthy", StringComparison.OrdinalIgnoreCase);
+    private string HealthValue => _model?.Health is { } health ? $"{health.HealthyPlugins}/{health.Plugins.Count}" : "—";
+    private string HealthDelta => _model?.HealthText ?? "the probe could not be read";
+    private string SpendValue => $"${(_model?.SpendTodayUsd ?? 0m).ToString("0.0000", CultureInfo.InvariantCulture)}";
+    private string SpendDelta => _model?.Today?.HardStopUsd is { } stop
+        ? $"of ${stop.ToString("0.00", CultureInfo.InvariantCulture)} today, " + Text.Plural(_model.SpendTodayJobs, "booking", "bookings")
+        : "no daily stop is configured on this host";
+    private string ActiveJobs => (_model?.ActiveJobs ?? 0).ToString(CultureInfo.InvariantCulture);
+    private string AgentsValue => (_model?.ActiveAgents ?? 0).ToString(CultureInfo.InvariantCulture);
+    private string PendingValue => (_model?.PendingApprovals ?? 0).ToString(CultureInfo.InvariantCulture);
+    private double SpendFraction => _model?.Today?.HardStopUsd is { } stop && stop > 0 ? (double)(_model.SpendTodayUsd / stop) : 0;
+    private string SpendStatus => SpendFraction switch { >= 1.0 => "critical", >= 0.9 => "serious", >= 0.75 => "warning", _ => "good" };
+    private string SpendNote => _model?.Today is { HardStopReached: true }
+        ? "At or over the stop: this host refuses new spending for the rest of the UTC day."
+        : "Both ledgers are summed here; neither books the other's jobs.";
+    private static string ActivityHref(PortalActivityRow row) => PortalData.JobLink(row.Path, null)
+        ?? (row.Path.Contains("/approvals", StringComparison.Ordinal) ? "/portal/approvals"
+            : $"/portal/explore/resource?id={Uri.EscapeDataString(row.Path)}");
+    private static string ShortPath(string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length <= 2 ? path : string.Join('/', parts[^2..]);
+    }
+    private static string Age(DateTimeOffset at) => (DateTimeOffset.UtcNow - at) switch {
+        { TotalSeconds: < 60 } delta => $"{delta.TotalSeconds:0}s ago",
+        { TotalMinutes: < 60 } delta => $"{delta.TotalMinutes:0}m ago",
+        { TotalHours: < 24 } delta => $"{delta.TotalHours:0}h ago",
+        var delta => $"{delta.TotalDays:0}d ago" };
+    private sealed record Attention(string Label, string Value, string Delta, string Href, string? Tone);
+}

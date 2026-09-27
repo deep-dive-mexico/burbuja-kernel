@@ -1,0 +1,17 @@
+{
+  "id": "HostFacts.MacOs",
+  "name": "Host facts (macOS)",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.HostFacts.MacOs.dll",
+  "entry_type": "Burbuja.Plugins.HostFactsMacOs.HostFactsMacOsPlugin",
+  "load": "dynamic",
+  "provides": ["host.facts"],
+  "extension_points": [],
+  "requires": ["ProcessExecution", "BackgroundService"],
+  "roles": ["all", "control-plane"],
+  "config_section": null,
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 340
+}

@@ -1,0 +1,91 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@* M12 R3 — the stat tile. It replaces the `.tile` markup that was copy-pasted into five pages, and it
+ * carries the dataviz figure contract the M12 plan pinned:
+ *
+ *   • the VALUE is proportional, not tabular — a big number set in tabular figures looks gappy at 24px,
+ *     and there is no column for it to line up with;
+ *   • a sparkline is optional, is 12 points at most, and NEVER the only encoding: the delta beside it is
+ *     the same information as a number, so the trend is readable without decoding a line;
+ *   • the whole tile is one link when <see cref="Href"/> is set, because a number an operator cannot act
+ *     on is a number they will read somewhere else.
+ *@
+@if (Href is { Length: > 0 })
+{
+    <a class="tile @Tone" href="@Href" title="@Title">
+        @Body
+    </a>
+}
+else
+{
+    <div class="tile @Tone" title="@Title">
+        @Body
+    </div>
+}
+
+@code {
+    private RenderFragment Body => __builder =>
+    {
+        <span class="tile-label">@Label</span>
+        <span class="tile-value">@Value</span>
+        @if (Delta is { Length: > 0 })
+        {
+            <span class="tile-delta">@Delta</span>
+        }
+        @if (Series.Count > 1)
+        {
+            <svg class="tile-spark" viewBox="0 0 100 22" width="100%" height="22" preserveAspectRatio="none" role="img"
+                 aria-label="@SparkLabel">
+                <polyline class="chart-line" points="@Points" />
+            </svg>
+        }
+    };
+
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = "";
+
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = "";
+
+    /// <summary>The same fact as the sparkline, as words — e.g. "12 of the last 14 days".</summary>
+    [Parameter]
+    public string? Delta { get; set; }
+
+    /// <summary>Makes the whole tile a link. Absent, the tile is a figure rather than a control.</summary>
+    [Parameter]
+    public string? Href { get; set; }
+
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>Up to 12 points, oldest first. Fewer than two renders no line at all.</summary>
+    [Parameter]
+    public IReadOnlyList<double> Series { get; set; } = [];
+
+    /// <summary>What the sparkline shows, for a reader who cannot see it. Required when Series is set.</summary>
+    [Parameter]
+    public string? SparkLabel { get; set; }
+
+    /// <summary>`tile-warn` / `tile-bad` are the caller's claim about the state, never an inference here.</summary>
+    [Parameter]
+    public string? Tone { get; set; }
+
+    /// <summary>SVG polyline points in a 100×22 box. A flat series draws its midline rather than nothing,
+    /// because "no change" is a fact and an empty box is not the same statement.</summary>
+    private string Points
+    {
+        get
+        {
+            var series = Series.Count > 12 ? Series.Skip(Series.Count - 12).ToList() : Series.ToList();
+            var min = series.Min();
+            var max = series.Max();
+            var span = max - min;
+            var step = series.Count > 1 ? 100.0 / (series.Count - 1) : 100.0;
+            return string.Join(' ', series.Select((v, i) =>
+            {
+                var y = span <= 0 ? 11.0 : 20.0 - ((v - min) / span * 18.0);
+                return $"{i * step:0.##},{y:0.##}";
+            }));
+        }
+    }
+}

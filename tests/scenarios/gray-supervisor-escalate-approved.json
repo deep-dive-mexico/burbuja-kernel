@@ -1,0 +1,29 @@
+{
+  "id": "gray-supervisor-escalate-approved",
+  "defaultUsage": { "inputTokens": 80, "outputTokens": 40, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_esc", "name": "bash", "input": { "command": "unknowncmd --escalate" } }
+          ]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "approved path" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "escalate", "reason": "needs human", "confidence": 0.8 } }
+    ]
+  }
+}

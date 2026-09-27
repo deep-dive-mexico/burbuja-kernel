@@ -1,0 +1,22 @@
+{
+  "id": "max-turns",
+  "defaultUsage": { "inputTokens": 20, "outputTokens": 10, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_loop", "name": "list_dir", "input": { "path": "." } }
+          ]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "subagent-settled-error",
+  "bind": "firstCallOrder",
+  "defaultUsage": { "inputTokens": 50, "outputTokens": 25, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "scripts": [
+    {
+      "label": "ok",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_ok", "name": "write_file", "input": { "path": "ok.txt", "content": "ok" } }
+            ]
+          }
+        },
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "member ok" }]
+          }
+        }
+      ]
+    },
+    {
+      "label": "boom",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_boom", "name": "bash", "input": { "command": "exit 3" } }
+            ]
+          }
+        },
+        {
+          "when": { "toolResult": { "toolName": "bash", "isError": true } },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "member failed after tool error" }]
+          }
+        }
+      ]
+    }
+  ],
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "adjacent child", "confidence": 0.95 } }
+    ]
+  }
+}

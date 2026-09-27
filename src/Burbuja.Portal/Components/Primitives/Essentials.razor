@@ -1,0 +1,41 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@* M12 R1 — Essentials. The Azure-portal convention the M12 plan asked for: a two-column fact block at
+ * the TOP of every detail page, before the tabs, answering "what am I looking at" without a click.
+ *
+ * The rule that makes it useful is that it holds FACTS, not controls: an id, a state, who owns it, when
+ * it last moved. Anything a reader can change belongs in the tab that owns it, because a detail page
+ * whose first screen is a form is a page whose first screen is a question.
+ *@
+@if (Items.Count > 0)
+{
+    <div class="card">
+        <div class="card-head"><h2>@Heading</h2></div>
+        <div class="card-body">
+            <dl class="essentials">
+                @foreach (var item in Items)
+                {
+                    <div>
+                        <dt>@item.Label</dt>
+                        <dd>@item.Display</dd>
+                    </div>
+                }
+            </dl>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string Heading { get; set; } = "Essentials";
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<Item> Items { get; set; } = [];
+
+    /// <summary>One label/value pair. A record rather than a tuple so a page can name what it is passing.</summary>
+    public sealed record Item(string Label, string? Value)
+    {
+        /// <summary>An absent fact renders as an em dash, never as an empty cell a reader reads as a bug.</summary>
+        public string Display => string.IsNullOrWhiteSpace(Value) ? "—" : Value;
+    }
+}

@@ -1,0 +1,77 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@*
+    M15 M-R1 (item 3) — the page's SHAPE while its first read is in flight.
+
+    Home was photographed three times unloaded showing `○ resolving the tenancy…` on an otherwise empty
+    surface. The word is honest and the page underneath it is not: a reader arriving at a console sees a
+    spinner where the product should be, and cannot tell a slow host from an empty one. This draws the page's
+    form instead — tile outlines, a table header, card outlines — so the wait is the page arriving. The real
+    content replaces it when `data-loaded` flips on the page root, which is the one signal G43 waits on.
+
+    It is deliberately NOT `LoadingState`: that component's sentence ("this is not an empty state") belongs to
+    a reader who needs the distinction, and printing it inside a shape would be two answers to one question.
+*@
+<div class="skeleton skeleton-@Kind" role="status" aria-live="polite">
+    @switch (Kind)
+    {
+        case "table":
+            <div class="skeleton-table">
+                <div class="skeleton-row skeleton-row-head">
+                    @for (var i = 0; i < Columns; i++)
+                    {
+                        <div class="skeleton-cell"></div>
+                    }
+                </div>
+                @for (var row = 0; row < Rows; row++)
+                {
+                    <div class="skeleton-row">
+                        @for (var i = 0; i < Columns; i++)
+                        {
+                            <div class="skeleton-cell"></div>
+                        }
+                    </div>
+                }
+            </div>
+            break;
+        case "cards":
+            <div class="skeleton-cards">
+                @for (var i = 0; i < Count; i++)
+                {
+                    <div class="skeleton-card"></div>
+                }
+            </div>
+            break;
+        default:
+            <div class="skeleton-tiles">
+                @for (var i = 0; i < Count; i++)
+                {
+                    <div class="skeleton-tile"></div>
+                }
+            </div>
+            break;
+    }
+    <span class="skeleton-label">@Label</span>
+</div>
+
+@code {
+    /// <summary>`tiles` (stat grids), `table` (a grid with its header) or `cards`.</summary>
+    [Parameter]
+    public string Kind { get; set; } = "tiles";
+
+    /// <summary>How many tile/card outlines to draw.</summary>
+    [Parameter]
+    public int Count { get; set; } = 4;
+
+    /// <summary>How many placeholder rows a table draws, including its header.</summary>
+    [Parameter]
+    public int Rows { get; set; } = 5;
+
+    /// <summary>How many columns a table draws.</summary>
+    [Parameter]
+    public int Columns { get; set; } = 4;
+
+    /// <summary>The short sentence a screen reader (and the visible corner) gets while the read lands.</summary>
+    [Parameter]
+    public string Label { get; set; } = "cargando…";
+}

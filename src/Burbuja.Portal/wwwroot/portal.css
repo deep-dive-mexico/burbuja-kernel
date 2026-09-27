@@ -1,0 +1,915 @@
+/* Burbuja portal — hand-written, no Tailwind, no CDN, no downloaded font, and no palette of its own.
+ *
+ * M12 R1: this file is CONSUMERS ONLY. It names what the portal MEANS by "raised", "muted" or
+ * "running" and how a page is laid out; it never says what a colour IS. Every literal lives in
+ * burbuja-tokens.css as a `--bb-*` step, and the semantic aliases this file speaks are re-bound
+ * wholesale in that file's dark block. A literal colour here would be a second palette, and the two
+ * would drift the first time one of them changed — which is exactly the defect M12 found in the M9
+ * theme work: the palette was correct, and it belonged to somebody else.
+ *
+ * Do not add a colour-scheme media block here. The OS preference is read once, at boot, by the
+ * bootstrap in App.razor, and after that the attribute is the state — a stylesheet that also reacted
+ * to the media query would disagree with the toggle that just wrote the attribute.
+ *
+ * The theme attribute is `body[data-theme="dark"]`; absent means light. That rename matters beyond
+ * cosmetics: the attribute was dsh's (`data-ds-dark-theme`) and it is Burbuja's now, so nothing in this
+ * portal can be switched by a stylesheet that is not ours.
+ */
+
+/* The canvas colour scheme follows the same attribute, so form controls and scrollbars are drawn by the
+   platform in the theme the page is actually in. `color-scheme` is read off the ROOT element, which is
+   why this is `html:has(...)` rather than a rule on `body`. */
+html { color-scheme: light; }
+html:has(body[data-theme="dark"]) { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: var(--mono); font-size: var(--fs-caption); line-height: 19px; }
+
+/* Headings. M16 K-R1: the display face is dsh's — the SAME sans as the body, one family, no serif — and
+   `--display` is kept as the name every consumer already reads (h1 here, `.hero-statement`,
+   `.brand-name`, `.persona-name`, `.ladder-number`, `.rail-motto`, `.orb-ring`, `.motto`), rebound to
+   the sans stack in the token file. Type is most of what made the console read as a client-console
+   mock; one family, three sizes and weight as the only device. h2 is a card's section label and is no
+   longer an uppercase tracked eyebrow. */
+h1 { font-family: var(--display); font-size: var(--fs-h1); line-height: var(--lh-h1); font-weight: 500; letter-spacing: -.01em; margin: 0 0 4px; }
+h2 { font-size: var(--fs-h2); line-height: var(--lh-h2); margin: 0; color: var(--text); font-weight: 500; }
+h3 { font-size: var(--fs-body); line-height: var(--lh-body); margin: 0; font-weight: 500; }
+p { margin: 4px 0; }
+
+/* The eyebrow is a 13px SECONDARY LABEL above the title. It used to be 11px, uppercase, tracked — the
+   first item on the owner's list of generated-page tells, and the one the frontend-design skill names
+   first. The class stays (PageHeader still renders it, and every page passes a word); the caps and the
+   tracking go, in this rule and in the ten other label rules below, so nothing is left to catch up. */
+.eyebrow {
+    font-size: var(--fs-secondary); line-height: var(--lh-secondary);
+    color: var(--text-secondary); font-weight: 500; margin: 0 0 2px;
+}
+.muted { color: var(--text-muted); }
+.small { font-size: var(--fs-caption); }
+.warn { color: var(--warn); }
+.row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.row-wrap { flex-wrap: wrap; }
+.spacer { flex: 1; }
+.tabular { font-variant-numeric: tabular-nums; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- shell: top bar, rail, content ---------- */
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+.topbar {
+    display: flex; align-items: center; gap: 12px;
+    height: 48px; padding: 0 14px; background: var(--bg);
+    border-bottom: .5px solid var(--line); position: sticky; top: 0; z-index: 20;
+}
+.brand { display: flex; gap: 8px; align-items: center; color: var(--text); font-weight: 500; white-space: nowrap; }
+.brand:hover { text-decoration: none; color: var(--text-secondary); }
+.brand-mark { display: inline-flex; color: var(--accent-mark); }
+.brand-name { font-family: var(--display); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 500; }
+
+/* The rail collapses to a 56px icon strip so a reader on a laptop can give the content the width. The
+   state is ONE attribute on <html>, written by App.razor's bootstrap before the first paint and flipped
+   by portal.js — never a Blazor field, because a flag hydrated after the circuit came up would paint an
+   expanded rail first and snap the whole page sideways. */
+/* FLEX, not grid, and this is a fix rather than a preference.
+ *
+ * It was `display:grid; grid-template-columns:220px 1fr`, which is the obvious shape and is WRONG here,
+ * because the rail is rendered CONDITIONALLY (only for a signed-in caller). With the rail present the grid
+ * has two children and everything looks right. With it absent — the sign-in page, the 404 — the grid has
+ * ONE child and an empty second track, and auto-placement put `main.content` into the 220px track while the
+ * `1fr` track stayed empty. The content column was 220px wide on every anonymous page, the sign-in card
+ * collapsed to 144px, and every line of it wrapped into a column.
+ *
+ * Nothing in the CSS looks wrong, every functional assertion passed, and dashboard screenshots could not
+ * show it because a signed-in page always has the rail. G34's screenshot caught it; the width assertions
+ * beside that screenshot keep it caught. Flex has no empty track to be placed into: the rail takes its
+ * width when it exists and the content takes everything else, at every width, with or without it. */
+.shell-body { display: flex; flex: 1; align-items: stretch; min-width: 0; }
+/* The rail is dsh's SIDEBAR: its own fill (`--bg-sidebar`, one step below the page in the dark theme
+   and the near-white `#f9fafb` in the light one), a .5px right edge in `--line-3`, and a filled active
+   row rather than an accent-tinted one. The width is 220px in both themes — G33 measures it. */
+.rail-nav { display: flex; flex-direction: column; gap: 16px; padding: 14px 10px; background: var(--bg-sidebar); border-right: .5px solid var(--line-3); position: sticky; top: 48px; max-height: calc(100vh - 48px); overflow-y: auto; flex: 0 0 220px; }
+.rail-group { display: flex; flex-direction: column; gap: 1px; }
+/* A rail GROUP TITLE is a 12px faint label, not an 11px tracked caps word (the `CATALOGUE` tell). */
+.rail-title {
+    font-size: var(--fs-caption); line-height: var(--lh-caption);
+    color: var(--text-faint); font-weight: 500; padding: 0 10px 4px;
+}
+.rail-motto { font-family: var(--display); font-style: italic; font-size: var(--fs-caption); line-height: var(--lh-caption); letter-spacing: 0; text-transform: none; color: var(--text-faint); padding: 2px 10px 6px; }
+.rail-nav .nav-link { display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: var(--radius-control); color: var(--text-secondary); }
+.rail-nav .nav-link:hover { background: var(--nav-hover); text-decoration: none; color: var(--text); }
+.rail-nav .nav-link.active { background: var(--nav-active); color: var(--text); font-weight: 500; }
+/* The gap is a MARGIN on the icon rather than flex `gap`, and that is load-bearing: with `gap` the icon
+   and the label are adjacent boxes that the rendered text runs together ("HomeSessions"), which is what a
+   reader's screen reader and copy-paste would get too. A margin is a real gap in the text. */
+.rail-icon { display: inline-flex; flex: none; margin-right: 9px; }
+.rail-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Collapsed: the label is gone and the row is an icon with a title, so this only has to centre it. The
+   text stays in the DOM and is hidden, which keeps the accessible name on the link.
+ *
+ * The GROUP TITLES are hidden too, and the screenshot is why: a 56px column cannot hold the word
+ * "CATALOGUE", and the first version rendered it clipped to "ATALOGU" with the letters running off both
+ * edges. A half-word is worse than no word. The groups are still real — the `nav` they live in keeps its
+ * label and every row carries a title — and a reader who wants the words clicks the toggle, which is
+ * right there in the top bar. */
+html[data-rail="collapsed"] .rail-nav { padding: 14px 8px; align-items: center; gap: 10px; flex-basis: 56px; }
+html[data-rail="collapsed"] .rail-nav .nav-link { justify-content: center; padding: 7px; }
+html[data-rail="collapsed"] .rail-title { display: none; }
+html[data-rail="collapsed"] .rail-motto { display: none; }
+html[data-rail="collapsed"] .rail-label { display: none; }
+
+.rail-toggle { padding: 4px 7px; line-height: 1; display: none; }
+.rail-toggle .icon { transition: transform var(--dur) var(--ease); }
+html[data-rail="collapsed"] .rail-toggle .icon { transform: rotate(180deg); }
+@media (min-width: 901px) { .rail-toggle { display: inline-flex; } }
+
+.crumbs { display: flex; gap: 6px; align-items: center; margin-left: 4px; font-size: var(--fs-caption); color: var(--text-muted); min-width: 0; }
+.crumb { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+.crumb:hover { color: var(--text); }
+.crumb-current { color: var(--text); }
+.crumb-sep { color: var(--line); }
+.search { display: flex; align-items: center; }
+.search input { width: 220px; margin: 0; }
+
+.topbar-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.session-chip { display: flex; gap: 6px; align-items: center; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); white-space: nowrap; }
+.session-chip strong { color: var(--text); font-weight: 500; }
+
+/* The theme toggle. The glyph is chosen by the THEME, in CSS, from our own attribute — not by a Blazor
+   render — so the button cannot disagree with the page it is on, and a re-render that replaced the node
+   cannot leave a stale label behind. */
+.theme-toggle { padding: 4px 7px; line-height: 1; display: inline-flex; }
+/* The glyph container: `display` belongs on the base class so the two visibility rules below are the
+   ONLY thing that differs between the light and dark glyphs (K-R2's audit found the base unstyled, which
+   made the toggle's two spans two inline boxes that wrapped). */
+.theme-glyph { display: inline-flex; align-items: center; }
+body:not([data-theme="dark"]) .theme-glyph-dark { display: none; }
+body[data-theme="dark"] .theme-glyph-light { display: none; }
+
+/* StateDot, dsh's shape: an 8px dot with a 10 % halo, and the colour comes from the PARENT — the
+   `.pill-*` tone, or `currentColor` where a component sets its own. `.dot-live` keeps its meaning (the
+   host is up) and its class, because MainLayout, SignIn and the tests name it. */
+.dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; position: relative; display: inline-block; flex: none; }
+.dot::before { content: ""; position: absolute; inset: -3px; border-radius: 50%; background: currentColor; opacity: .1; }
+.dot-live { color: var(--ok); }
+.content { padding: 20px 22px 40px; flex: 1 1 auto; min-width: 0; }
+.footer { padding: 12px 18px; border-top: .5px solid var(--line-1); font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); }
+
+/* Under 900px the rail becomes a DRAWER off the top bar. It used to wrap into a row above the content,
+   which pushed every page down by a strip of links and made the first thing a phone showed a menu
+   instead of the page. */
+.rail-drawer-button { display: none; }
+@media (max-width: 900px) {
+    .shell-body { display: block; }
+    .rail-nav {
+        position: fixed; inset: 48px auto 0 0; width: 240px; z-index: 30;
+        box-shadow: var(--shadow-lift); max-height: none;
+        transform: translateX(-100%); transition: transform var(--dur) var(--ease);
+    }
+    .shell-body.rail-open .rail-nav { transform: translateX(0); }
+    /* The collapse preference is a desktop one. A drawer is a drawer: reopening it must never hand a
+       phone a 56px icon strip it cannot read a label from. */
+    html[data-rail="collapsed"] .rail-nav { padding: 14px 10px; align-items: stretch; flex-basis: auto; }
+    html[data-rail="collapsed"] .rail-nav .nav-link { justify-content: flex-start; padding: 6px 10px; }
+    html[data-rail="collapsed"] .rail-title { text-align: left; font-size: var(--fs-caption); padding: 0 10px 4px; }
+    html[data-rail="collapsed"] .rail-motto { display: block; }
+    html[data-rail="collapsed"] .rail-label { display: inline; }
+    .rail-drawer-button { display: inline-flex; }
+    .crumbs { display: none; }
+    .search input { width: 140px; }
+    .brand-name { display: none; }
+    .content { padding: 14px 12px 32px; }
+}
+
+/* A phone-width top bar, and the reason it is a second breakpoint rather than more of the one above.
+ *
+ * The first version of this shell overflowed the viewport by **273px at 390px** — measured in G33, not
+ * eyeballed — because the bar tried to carry everything a desktop carries: search, the Create label, the
+ * theme toggle, the rail toggle, the chip and a "Sign out" button. Chrome simply scrolled the page
+ * sideways, and the screenshot looked like a plausible crop of a wider page.
+ *
+ * What narrows, in order of what a phone can live without: the global search (a phone user searching the
+ * console is a different feature, and the box was the widest thing in the bar), the username-and-roles
+ * chip (the name is in the sign-out button's own tooltip and on every page the person can reach), the
+ * rail toggle (the DRAWER button replaces it under 900px, so two controls did one job), and the labels on
+ * Create and Sign out — both of which keep an `aria-label`/`title` in the markup, so the words are gone
+ * from the bar and not from the accessible name. */
+@media (max-width: 620px) {
+    .search { display: none; }
+    .session-chip { display: none; }
+    .rail-toggle { display: none; }
+    .topbar { gap: 6px; padding: 0 6px; }
+    .topbar-right { gap: 4px; }
+    .btn-label { display: none; }
+    .btn { height: 32px; padding: 0 9px; }
+    /* The bell's badge is positioned off the button's corner, and at this padding it needs to move in. */
+    .bell-count { top: -5px; right: -3px; }
+}
+
+/* ---------- create menu (top bar) ---------- */
+.menu { position: relative; }
+/* A popover is dsh's `specific-menu`: the LAYER-3 surface (one step above a card in the dark theme,
+   white in the light one), a .5px `--line-3` edge, radius 12 and the lift shadow — the one place a
+   shadow belongs. */
+.menu-panel {
+    position: absolute; right: 0; top: calc(100% + 6px); min-width: 240px; z-index: 40;
+    background: var(--bg-layer-3); border: .5px solid var(--line-3); border-radius: 12px;
+    box-shadow: var(--shadow-lift); padding: 6px; margin: 0; list-style: none;
+}
+.menu-item { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: var(--radius-control); color: var(--text); }
+.menu-item:hover { background: var(--hover); text-decoration: none; }
+.menu-item-label { font-weight: 500; }
+.menu-item-hint { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); }
+.menu-head { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-faint); padding: 6px 10px 2px; font-weight: 500; }
+
+/* The pending-approvals count is a TAG, not a solid amber disc with dark text on it: dsh's warn tint,
+   the warn word, 11/17 and a capsule. */
+.bell { position: relative; }
+.bell-count {
+    position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px;
+    border-radius: var(--radius-capsule); background: var(--tag-wait); color: var(--warn);
+    font-size: var(--fs-tag); font-weight: 500; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+}
+
+/* ---------- page header ---------- */
+.page-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin: 0 0 16px; }
+.page-head-text { min-width: 0; }
+.page-head h1 { margin: 0; }
+.page-sub { color: var(--text-secondary); font-size: var(--fs-secondary); line-height: var(--lh-secondary); margin: 2px 0 0; max-width: 72ch; }
+.page-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.page-body { min-width: 0; }
+
+/* ---------- card, alert, pill ---------- */
+/* A card is a HAIRLINE and nothing else: `.5px` in `--line`, one radius, NO shadow. dsh does not raise
+   a panel; the shadow is what made a page of identical rounded cards read as a template. */
+.card {
+    background: var(--bg-raised); border: .5px solid var(--line);
+    border-radius: var(--radius); margin: 12px 0; overflow: hidden;
+    box-shadow: none;
+}
+.card:first-child { margin-top: 0; }
+.card-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 12px 16px; border-bottom: .5px solid var(--line-1); background: transparent;
+}
+.card-head h2 { margin: 0; }
+.card-body { padding: 16px; }
+.card-tight .card-body { padding: 0; }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+.panels .card { margin: 0; }
+
+.alert { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 10px 12px; border-radius: var(--radius); margin: 10px 0; border: .5px solid var(--line); }
+.alert-error { border-color: color-mix(in srgb, var(--bad) 30%, transparent); background: var(--tag-bad); }
+.alert-warn { border-color: color-mix(in srgb, var(--warn) 30%, transparent); background: var(--tag-wait); }
+.alert-ok { border-color: color-mix(in srgb, var(--ok) 30%, transparent); background: var(--tag-ok); }
+/* A NEUTRAL notice: the same alert shape with no tone claim at all (`@_notice` on the integration and
+   blade pages is "the host answered this", which is not good news and not bad). */
+.alert-info { border-color: var(--line-3); background: var(--bg-sunken); }
+
+/* A pill NEVER rounds up: each variant is bound to the state it names, and the caller chooses. There is
+   deliberately no generic "success" style a FAILED could be rendered with by accident.
+ *
+ * M16 K-R1 — A PILL IS A DOT AND A WORD. It used to be a bordered capsule in the state's colour, which
+ * made every status look like a control and put six colours of small caps text on one screen. dsh's
+ * StateDot is the shape: an 8px dot with a 10 % halo, and the WORD in the body colour. The class names
+ * are unchanged (`pill-ok`, `pill-run`, …) because `AkosStatus.Tone`, `AkosReplyKind.Tone`,
+ * `StatusPill.Tone` and ten test files name them; only what they PAINT changed, and now only the
+ * pseudo-element carries the tone. No coloured text, no coloured border, no green word. */
+.pill { display: inline-flex; gap: 6px; align-items: center; padding: 0; border: 0; border-radius: 0; background: none; font: 500 var(--fs-secondary)/var(--lh-secondary) var(--sans); color: var(--text); white-space: nowrap; }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 10%, transparent); }
+.pill-ok::before { color: var(--ok); }
+.pill-run::before { color: var(--run); }
+.pill-wait::before { color: var(--warn); }
+.pill-bad::before { color: var(--bad); }
+.pill-idle::before, .pill-neutral::before { color: var(--idle); }
+.pill-accent::before { color: var(--accent-mark); }
+
+/* A TAG names a KIND; a pill names a STATE. This is the one place a tinted capsule is right (dsh's
+   Tag.module.css: a 10 % tint of the tone, the tone as text, 11/17, capsule; warn is 12 %). */
+.tag { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: var(--radius-capsule); font: 500 var(--fs-tag)/var(--lh-tag) var(--sans); white-space: nowrap; }
+.tag-ok { background: var(--tag-ok); color: var(--ok); }
+.tag-run { background: var(--tag-run); color: var(--run); }
+.tag-wait { background: var(--tag-wait); color: var(--warn); }
+.tag-bad { background: var(--tag-bad); color: var(--bad); }
+.tag-outline { border: .5px solid var(--line-4); color: var(--text-muted); }
+.tag-neutral { background: var(--bg-sunken); color: var(--text-secondary); }
+
+/* ---------- buttons, tables, tiles ---------- */
+/* GHOST IS THE DEFAULT (dsh's Button, variant ghost): a 36px capsule with no border and no fill, which
+   shows itself only on hover and press. The bordered `.btn` was the old default and it made every
+   secondary action a box. `.btn-ghost` therefore becomes an alias of `.btn` — it is still in markup,
+   and a rule that said something different from the default would be a second default. */
+.btn {
+    display: inline-flex; gap: 4px; align-items: center; height: 36px; padding: 0 14px;
+    /* The reserved edge: a `.5px` transparent border so a button's box cannot change when it becomes
+       disabled or outlined. At phone width it collapses to 0 (`min()`), because the top bar at 390px
+       fits by ONE pixel and a reserved edge that is never painted would spend it — measured by G33's
+       `documentElement.scrollWidth - innerWidth <= 0` check, which the reserved border broke by 1px. */
+    border: min(.5px, 0px) solid transparent; border-radius: var(--radius-capsule); background: transparent; color: var(--text);
+    font: 500 var(--fs-body)/var(--lh-body) var(--sans);
+    cursor: pointer; transition: background var(--dur) var(--ease);
+}
+.btn:hover { background: var(--hover); text-decoration: none; }
+.btn:active, .btn[aria-expanded="true"] { background: var(--active); }
+.btn-small { height: 28px; padding: 0 10px; font: 500 var(--fs-caption)/var(--lh-caption) var(--sans); }
+/* The page's ONE loud element: a near-white capsule in the dark theme, a near-black one in the light.
+   The accent is a link and marker colour, never a button fill — dsh's own primary is neutral. */
+.btn-primary { background: var(--btn-primary-fill); color: var(--on-primary); font-weight: 500; }
+.btn-primary:hover { background: var(--btn-primary-hover); }
+.btn-primary .icon { color: var(--on-primary); }
+.btn-ghost { background: transparent; }
+.btn-ghost:hover { background: var(--hover); }
+/* A state action is outline plus the state's WORD, never a filled red button. */
+.btn-ok { border: .5px solid var(--line-3); color: var(--ok); }
+.btn-bad { border: .5px solid var(--line-3); color: var(--bad); }
+.btn-warn { border: .5px solid var(--line-3); color: var(--warn); }
+/* A destructive verb is a state action like any other: outline plus the state's word. `.btn-danger`
+   is an ALIAS of the bad tone — it was a class with no rule anywhere, so the Cancel button on a job
+   painted as an ordinary ghost. */
+.btn-danger { border: .5px solid var(--line-3); color: var(--bad); }
+/* A DISABLED control still has to LOOK like a control. The ghost default has no border and no fill, so
+   opacity alone left a dead button indistinguishable from the sentence beside it — measured on the
+   screenshot of the reader's Schedules page, where the only thing marking the row as a button was the
+   hover it would never get. The dashed `--line-3` edge is the affordance M13 R0 used for a create door
+   the caller's role cannot open (`.create-card-disabled`, deleted in K-R2), moved to the one rule that
+   covers every variant. `.btn-disabled` (an `aria-disabled` link, which cannot use `:disabled`) gets
+   both rules by name. */
+/* A transparent border belongs to the BASE rule so a button cannot change size when it becomes disabled:
+   the dashed edge below only paints it. (A ghost button has no visible edge in any state; the box is
+   reserved for the one that needs it.) */
+.btn-outline { border: min(.5px, 0px) solid var(--line-3); }
+.btn:disabled, .btn-disabled { opacity: .4; cursor: not-allowed; border: min(.5px, 0px) dashed var(--line-3); }
+.btn:disabled:hover, .btn-disabled:hover { background: transparent; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 8px; border-bottom: .5px solid var(--line-1); }
+.table th { color: var(--text-secondary); font-weight: 500; font-size: var(--fs-secondary); line-height: var(--lh-secondary); border-bottom-color: var(--line); }
+.table td { font-size: var(--fs-secondary); line-height: var(--lh-secondary); }
+/* Numbers line up in a table and are proportional on a tile: a column of figures that shifts width by
+   digit is a column nobody can scan. */
+.table td.num, .table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* M12 R3 — a wide grid scrolls ITSELF; it does not widen the page.
+ *
+ * Both grids carry real tables (a QuickGrid with seven columns, a roster with twelve rows), and a table
+ * cannot be made to fit a 390px phone without hiding data. Before this, the table simply pushed the whole
+ * document wider: G33 measured **518px of sideways page scroll at 390px** on /portal/approvals, and the
+ * screenshot looked like a plausible crop. `overflow-x: auto` plus `max-width: 100%` keeps the table at its
+ * natural width and gives it its own scrollbar, so the shell stays the width of the viewport and only the
+ * thing that is genuinely wide is scrollable. */
+.grid, .table { border-collapse: collapse; }
+.grid-scroll { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.grid-scroll .grid, .grid-scroll .table { width: 100%; }
+.grid th, .grid td { padding: 8px; border-bottom: .5px solid var(--line-1); text-align: left; }
+.grid th { color: var(--text-secondary); font-weight: 500; font-size: var(--fs-secondary); line-height: var(--lh-secondary); border-bottom-color: var(--line); }
+.grid th button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.grid td { font-size: var(--fs-secondary); line-height: var(--lh-secondary); }
+/* A row says it is a row: the hover is the whole line, not the cell under the pointer. */
+.grid tbody tr:hover td { background: var(--hover); }
+.grid col { border: 0; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 12px 0; }
+.tile { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; background: var(--bg-raised); border: .5px solid var(--line); border-radius: var(--radius); color: var(--text); box-shadow: none; }
+/* A card is not a button: the ordinary hover stays hairline. A tile and a persona card ARE doors, so
+   those two light their edge up (`--line-4`) instead. */
+.tile:hover { border-color: var(--line-4); text-decoration: none; }
+.tile-label { font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--text-secondary); font-weight: 500; }
+.tile-value { font-size: 24px; line-height: 32px; font-weight: 500; }
+.tile-delta { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); }
+/* A tile that needs attention carries an inset rule rather than a red BORDER: the border is the card
+   vocabulary's, and a coloured one reads as a different kind of object. */
+.tile-warn { box-shadow: inset 3px 0 0 var(--warn); }
+.tile-bad { box-shadow: inset 3px 0 0 var(--bad); }
+.tile-spark { display: block; margin-top: 2px; color: var(--accent-mark); }
+
+.chip { display: inline-flex; align-items: center; padding: 0 8px; height: 24px; margin: 2px 4px 2px 0; border: 0; border-radius: 12px; background: var(--bg-layer-2); color: var(--text-secondary); font: 400 var(--fs-caption)/var(--lh-caption) var(--sans); }
+.check { display: inline-flex; gap: 6px; align-items: center; margin: 8px 0; color: var(--text-secondary); }
+/* dsh's Input: 32px, radius 8, a `--line-4` hairline and the layer-1 fill. The vertical rhythm is the
+   page's (4px above, 10px below) and is kept, so a form does not have to be re-laid-out.
+   `min-height` and not `height` on the shared rule: `select` and `textarea` are the same component in
+   this file and a fixed 32px would crop a textarea's box to one line. */
+input, textarea, select { display: block; width: 100%; margin: 4px 0 10px; min-height: 32px; padding: 0 8px; background: var(--input-bg); color: var(--text); border: .5px solid var(--line-4); border-radius: 8px; font: 400 var(--fs-body)/var(--lh-body) var(--sans); }
+textarea { padding: 6px 8px; }
+input::placeholder, textarea::placeholder { color: var(--text-faint); }
+input[type="checkbox"] { width: auto; min-height: 0; display: inline-block; margin: 0; padding: 0; border: 0; }
+/* M14 R5d (request row X14). The ring is the ONE outline the console paints, and the list had grown by
+   enumeration rather than by rule: a plain `<a>` (every grid row's link, every card's door), a QuickGrid sort
+   header and the blade's own tabs were left with the browser's blue default. Lane S's keyboard walk found five
+   routes painting it, one line fixes all of them, and the selector is now spelled for what it covers.
+   G43 reads this rule's accent — it is the visible focus a keyboard user depends on. */
+input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-visible, .ring-tab:focus-visible, .nav-link:focus-visible, .menu-item:focus-visible, a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: inherit; }
+input:focus-within, input:focus, textarea:focus, select:focus { border-color: var(--btn-primary-fill); outline: none; }
+
+/* Why the primary action is disabled, in words, under the button (request row X15). A `title` is not enough on
+   its own: a screen reader announces it inconsistently and a keyboard user has to hover to read it. */
+.reason { color: var(--text-muted); font-size: var(--fs-caption); margin-top: 4px; }
+/* M13 R0 — F23. `<FocusOnNavigate>` moves focus to the page's h1 so a screen-reader user lands on the
+   page's title rather than at the top of the shell. Chromium then paints its UA focus ring around that
+   heading: a blue box around every page title in every light screenshot, in a palette whose accent is
+   gold. The heading is a focus TARGET, not a control — no visible ring — and the accent ring above stays
+   exactly where a keyboard user needs it: on the things that can be pressed. */
+h1[tabindex]:focus, h1[tabindex]:focus-visible { outline: none; }
+label { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); }
+/* A `label.field` is a field GROUP (the label, the control and a hint), not a field's caption, so the
+   caption rule above does not apply to it: it takes the body size back and its own rhythm. */
+.field { display: block; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text); }
+.field .row-actions { margin-top: 6px; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+/* The action strip beside a form or a card head: the buttons sit at the END of the line, which is where
+   a console puts a verb. */
+.row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+/* A sub-heading inside a card body (`.panel-sub`): 14/22 at weight 500, one step below the card head. */
+.panel-sub { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 500; margin: 12px 0 4px; }
+.panel-sub:first-child { margin-top: 0; }
+.form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 12px; }
+.form-label-inline { display: inline-flex; gap: 6px; align-items: center; margin: 4px 0 10px; }
+
+/* ---------- essentials (the Azure-style fact block on every detail page) ---------- */
+.essentials { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 20px; margin: 0; }
+.essentials dt { font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--text-secondary); font-weight: 500; }
+.essentials dd { margin: 1px 0 0; overflow-wrap: anywhere; }
+
+/* ---------- meter (a magnitude, not a category: one hue, same ramp both themes) ---------- */
+.meter { display: flex; flex-direction: column; gap: 3px; }
+.meter-head { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-caption); }
+.meter-track { position: relative; height: 8px; border-radius: 4px; background: var(--seq-200); overflow: hidden; }
+.meter-fill { position: absolute; inset: 0 auto 0 0; background: var(--seq-600); border-radius: 4px; }
+.meter-fill-good { background: var(--status-good); }
+.meter-fill-warning { background: var(--status-warning); }
+.meter-fill-serious { background: var(--status-serious); }
+.meter-fill-critical { background: var(--status-critical); }
+.meter-note { font-size: 11px; color: var(--text-muted); }
+
+/* ---------- charts ---------- */
+.chart { width: 100%; display: block; overflow: visible; }
+.chart-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chart-area { fill: color-mix(in srgb, var(--accent-mark) 14%, transparent); }
+.chart-grid { stroke: var(--line-soft); stroke-width: 1; }
+.chart-label { fill: var(--text-muted); font-size: 10px; }
+.chart-current { fill: var(--accent-mark); }
+.bars { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.bar-row { display: grid; grid-template-columns: 110px 1fr 56px; gap: 8px; align-items: center; }
+.bar-track { position: relative; height: 12px; background: var(--seq-200); border-radius: 2px; }
+.bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent-mark); border-radius: 2px; height: 12px; }
+.bar-value { text-align: right; font-variant-numeric: tabular-nums; font-size: var(--fs-caption); }
+
+/* ---------- sessions rail / list rows ---------- */
+.rail { display: flex; flex-direction: column; gap: 14px; }
+.rail-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: .5px solid var(--line-1); padding-bottom: 4px; }
+.rail-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.rail-item { display: flex; flex-direction: column; }
+.rail-link { display: grid; grid-template-columns: 54px 1fr auto 70px 80px; gap: 8px; align-items: center; padding: 5px 6px; border-radius: var(--radius-control); color: var(--text); }
+.rail-link:hover { background: var(--hover); text-decoration: none; }
+/* A KIND is not a state: job and agent are categories, and they take series hues rather than the run
+   blue and the success green. `--ok` as a category colour was the M12 defect that made a green cast
+   everywhere (`.strip-assistant`, `.msg-assistant` and this rule all painted with it). */
+.rail-kind { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); }
+.rail-kind-job { color: var(--series-6); }
+.rail-kind-agent { color: var(--series-7); }
+.rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-age, .rail-cost { text-align: right; }
+.rail-cost { font-family: var(--mono); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+.rail-detail { padding-left: 68px; }
+
+/* ---------- the view ring ---------- */
+.ring { display: flex; gap: 4px; border-bottom: .5px solid var(--line); margin: 14px 0 10px; overflow-x: auto; }
+.ring-small { margin: 0 0 8px; }
+.ring-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-secondary); padding: 6px 10px; cursor: pointer; font: 400 var(--fs-body)/var(--lh-body) var(--sans); white-space: nowrap; }
+.ring-tab:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+/* The selected tab is marked by the TEXT, not by an accent underline: dsh's tab bar is a weight and a
+   colour change, and a blue bottom border on a card is one more line on a page of hairlines. */
+.ring-tab-on { color: var(--text); font-weight: 500; border-bottom-color: var(--text); }
+.ring-tab:disabled { opacity: .5; cursor: not-allowed; }
+.ring-later { font-size: var(--fs-tag); line-height: var(--lh-tag); margin-left: 4px; color: var(--text-faint); }
+.ring-body { min-height: 120px; }
+
+/* ---------- segmented control (the turn trace's Normal / Inspección / Técnico) ---------- */
+.segmented { display: inline-flex; gap: 2px; background: var(--bg-layer-2); border: 0; border-radius: var(--radius-capsule); padding: 2px; }
+.segmented button { background: none; border: 0; border-radius: var(--radius-capsule); color: var(--text-secondary); height: 28px; padding: 0 12px; cursor: pointer; font: 400 var(--fs-secondary)/var(--lh-secondary) var(--sans); }
+.segmented button:hover { background: var(--hover); color: var(--text); }
+/* The pressed segment is RAISED off the track: the raised fill plus a half-pixel edge, never an accent
+   fill (a filled blue segment reads as the primary action of the page). */
+.segmented button[aria-pressed="true"] { background: var(--bg-raised); color: var(--text); font-weight: 500; box-shadow: 0 0 0 .5px var(--line-3); }
+
+/* ---------- detail + facts ---------- */
+.detail-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.detail-facts { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.fact { font-size: var(--fs-caption); color: var(--text); }
+.detail-extra { margin: 8px 0; }
+.kv { display: grid; grid-template-columns: 140px 1fr; gap: 2px 12px; margin: 0; }
+.kv dt { color: var(--text-muted); font-size: var(--fs-caption); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv-inline { grid-template-columns: 90px 1fr 90px 1fr 90px 1fr; }
+.kv-inline dt { align-self: center; }
+
+/* ---------- stream bar ---------- */
+.stream-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 10px; background: transparent; border: .5px solid var(--line-1); border-radius: var(--radius); margin: 10px 0; }
+
+/* ---------- timing strip + trajectory rows ---------- */
+.traj-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 8px; }
+.traj-search { flex: 0 1 320px; min-width: 180px; height: 32px; padding: 0 8px; font: 400 var(--fs-secondary)/var(--lh-secondary) var(--sans); color: var(--text); background: var(--input-bg); border: .5px solid var(--line-4); border-radius: 8px; }
+.traj-search:focus { outline: none; border-color: var(--btn-primary-fill); }
+.traj-toolbar .traj-button { width: auto; display: inline-flex; height: 32px; padding: 0 10px; border: .5px solid var(--line-3); border-radius: var(--radius-capsule); background: transparent; }
+.strip { display: flex; gap: 1px; height: 14px; margin: 6px 0 12px; align-items: stretch; }
+.strip-seg { border: 0; padding: 0; min-width: 2px; cursor: pointer; opacity: .85; }
+.strip-seg:hover { opacity: 1; outline: 1px solid var(--text); }
+/* A CATEGORY is not a status. user/assistant/tool/supervisor/approval/system are the six kinds of cell
+   in a trajectory, and painting assistant green and approval red made a healthy turn look like a
+   traffic light. They take series hues now; only `system` keeps the idle grey, because it has no
+   category of its own. */
+.strip-user { background: var(--series-1); }
+.strip-assistant { background: var(--series-7); }
+.strip-tool { background: var(--series-6); }
+.strip-supervisor { background: var(--series-4); }
+.strip-approval { background: var(--series-8); }
+.strip-system { background: var(--idle); }
+
+.traj { display: flex; flex-direction: column; gap: 8px; }
+.traj-rows { list-style: none; margin: 0; padding: 0; }
+.traj-turn { font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--text-secondary); margin: 10px 0 2px; border-top: .5px dashed var(--line); padding-top: 6px; }
+.traj-row { border-bottom: .5px solid var(--line-1); padding: 2px 0; }
+.traj-row-on { background: var(--hover); }
+.traj-button { display: grid; grid-template-columns: 86px 120px 1fr auto 70px 150px; gap: 8px; align-items: center; width: 100%; background: none; border: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; padding: 4px 6px; }
+/* M16 K-R2 — `.traj-kind*` is DELETED: the row's kind renders as a `.tag` now (a tag names a KIND),
+   and the six series hues it used to paint as bare coloured words live on in the strip's fills, which is
+   where a chart belongs. A rule with no consumer is the same defect as a class with no rule. */
+.traj-title { font-family: var(--mono); font-size: var(--fs-caption); line-height: var(--lh-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.traj-text { margin: 0 0 6px 92px; color: var(--text-secondary); white-space: pre-wrap; }
+.traj-at, .traj-ms { text-align: right; }
+
+/* ---------- inspector, json ---------- */
+.inspector { border: .5px solid var(--line); border-radius: var(--radius); margin-top: 12px; background: var(--bg-raised); box-shadow: none; }
+.inspector-body { padding: 12px; }
+.json-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+/* The blade's own tab strip: `.tabs`/`.tab` had NO rule, so the resource blade's sections painted as
+   default buttons. It is the ring's recipe (a text-weight tab bar over one hairline), kept as its own
+   class names because the blade's strip is not the view ring. `:where()` keeps this at the specificity
+   of `.tabs button`, so `.tab:where(.active)` below still wins. */
+.tabs { display: flex; gap: 4px; border-bottom: .5px solid var(--line); margin: 14px 0 10px; overflow-x: auto; }
+.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-secondary); padding: 6px 10px; cursor: pointer; font: 400 var(--fs-body)/var(--lh-body) var(--sans); white-space: nowrap; }
+.tabs button:hover { color: var(--text); background: var(--hover); }
+.tab:where(.active) { color: var(--text); font-weight: 500; border-bottom-color: var(--text); }
+.mono { font-family: var(--mono); }
+.right { text-align: right; }
+.traj-seq { font-variant-numeric: tabular-nums; }
+/* The metrics ring's per-turn bars: one column per turn, a fill, and the turn's name under it. The
+   `not measured` case is a DISTINCT class, so an unknown token count never draws as a zero bar. */
+.spark { display: flex; align-items: flex-end; gap: 3px; height: 96px; margin: 6px 0 4px; }
+.spark-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; flex: 1 1 0; min-width: 0; height: 100%; }
+.spark-bar { width: 100%; background: var(--accent-mark); border-radius: 2px 2px 0 0; min-height: 2px; }
+.spark-unknown { background: repeating-linear-gradient(45deg, var(--line-3) 0 3px, transparent 3px 6px); }
+.spark-label { font-size: var(--fs-tag); line-height: var(--lh-tag); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.json-body { background: var(--bg-sunken); border: .5px solid var(--line-1); border-radius: var(--radius-control); padding: 10px; overflow: auto; max-height: 420px; margin: 6px 0 0; }
+/* M16 K-R2 §6 — the create forms' live PUT preview is the block, not a card inside a card: the `pre`
+   already rides `--bg-sunken`, and a second hairline around it was a frame drawn inside a frame. */
+.card-body > .json:only-child > .json-body { margin: 0; border-color: transparent; }
+.empty { display: flex; gap: 8px; align-items: center; color: var(--text-secondary); padding: 14px; }
+.empty-mark { color: var(--line-3); }
+
+/* ---------- chat ---------- */
+.chat { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow: auto; }
+.msg { border: .5px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--bg-raised); box-shadow: none; }
+.msg-user { border-left: 3px solid var(--series-1); }
+.msg-assistant { border-left: 3px solid var(--series-7); }
+.msg-head { display: flex; justify-content: space-between; gap: 10px; }
+.msg-who { font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--text-secondary); }
+.msg-text { white-space: pre-wrap; margin: 6px 0 0; }
+.chat-footer { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 12px; margin-top: 10px; border: .5px dashed var(--line); border-radius: var(--radius); font-family: var(--mono); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+
+/* A tool card is a neutral hairline; the STATE is carried by `.tool-dot` (a dot plus its word in the
+   header), not by a coloured left rule. Six cards with six coloured edges is a legend nobody asked for. */
+.tool { border: .5px solid var(--line); border-radius: var(--radius); background: var(--bg-raised); padding: 8px 10px; box-shadow: none; }
+.tool-pill-bad .tool-dot { background: var(--bad); }
+.tool-pill-ok .tool-dot { background: var(--ok); }
+.tool-pill-wait .tool-dot { background: var(--warn); }
+.tool-head { display: flex; gap: 8px; align-items: center; }
+.tool-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run); flex: none; }
+.tool-name { font-family: var(--mono); }
+.tool-part { margin-top: 6px; }
+.tool-part summary { cursor: pointer; color: var(--text-secondary); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+
+.approval { border: .5px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--radius); background: var(--tag-wait); padding: 8px 10px; }
+.approval-head { display: flex; gap: 8px; align-items: center; }
+.approval-title { font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--warn); font-weight: 500; }
+.approval-id { margin: 4px 0 6px; }
+
+/* ---------- metrics (the execution views' own figures) ---------- */
+/* M16 K-R2 — `.metrics`/`.metric-*` had NO rule anywhere: the numbers painted as bare text against the
+   page, which is the "unstyled" end of the same tell the skin exists to remove. A metric is a label and
+   a figure, in the tile vocabulary's own hierarchy: label 13/20 secondary, figure 24/32 at weight 500
+   (the tile value's weight — 600 belongs to the page's one bold element, `.hero-statement`). */
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 12px 0; }
+.metric { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: .5px solid var(--line); border-radius: var(--radius); background: var(--bg-raised); }
+.metric-value { font-size: 24px; line-height: 32px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.metric-label { font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--text-secondary); }
+
+/* ---------- artifacts ---------- */
+.artifacts { display: flex; flex-direction: column; gap: 8px; }
+.artifact { display: grid; grid-template-columns: 220px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border: .5px solid var(--line); border-radius: var(--radius); background: var(--bg-raised); box-shadow: none; }
+.artifact-name { font-family: var(--mono); }
+/* The inline body of an action-fetched artifact: the same sunken block every other raw document uses. */
+.artifact-body { background: var(--bg-sunken); border: .5px solid var(--line-1); border-radius: var(--radius-control); padding: 10px; overflow: auto; max-height: 420px; margin: 0; }
+.artifact-path { grid-column: 1 / -1; overflow-wrap: anywhere; }
+
+/* ---------- sign in ---------- */
+/* Centring by MARGIN, not by flex — and that is a fix, not a preference.
+ *
+ * The card was `display:flex; justify-content:center` with the form as the flex item. That made the item's
+ * width depend on the flex algorithm's min-content floor, and on the ANONYMOUS page — where the shell has
+ * no rail beside it — the whole content column collapsed to about 220px and every line of the sign-in card
+ * wrapped into a column roughly 100px wide. Every functional assertion passed; G34's screenshot is the only
+ * thing that caught it, and the width assertion that now sits beside that screenshot is what keeps it
+ * caught. `max-width` plus `margin: auto` has no such failure mode: the card is as wide as its container
+ * allows, up to 400px, whatever the layout above it does. */
+.signin { padding: 8vh 16px 40px; }
+.signin-card { max-width: 400px; margin: 0 auto; padding: 28px 26px; }
+.signin-card input { margin-bottom: 14px; }
+.signin-brand { display: flex; gap: 9px; align-items: center; color: var(--accent-mark); margin-bottom: 10px; }
+/* The sign-in card's own wordmark, a size up from the top bar's: the card has no breadcrumb beside it and
+   this is the only thing naming the product on the page. */
+.signin-brand .brand-name { display: inline; font-size: 20px; }
+.signin-card h1 { font-size: 28px; margin-bottom: 2px; }
+.signin-card .btn { width: 100%; justify-content: center; }
+.signin-foot { margin-top: 16px; padding-top: 12px; border-top: .5px solid var(--line-1); }
+
+/* ---------- home: service grid ---------- */
+/* M16 K-R2 §6 — HOME'S PLAIN ROWS. A list of doors is a LIST, not a grid of cards: five bordered
+   tiles for the create kinds and eleven more for every rail destination was the "identical rounded
+   cards" tell at its loudest, and a card whose whole body is a name and a hint says nothing a line
+   does not. A row is a hairline-separated line with the icon, the name and the hint on one baseline —
+   dsh's own list rows. `.create-card*` is deleted in the same round: it had no consumer left. */
+.rows { display: grid; grid-template-columns: 1fr; border-top: .5px solid var(--line-1); }
+/* A caller may widen the track (Home's attention strip draws its rows two-up); the ROW is the same
+   element either way, which is what keeps the hairline vocabulary from drifting between a list and a
+   grid of the same rows. */
+.row-action { margin-left: auto; color: var(--accent); }
+/* `gap: 4px 12px` and not one number: the row's line spacing is the small one and the space BETWEEN
+   the name, the figure and the hint is what makes a row scannable — 6px between them read as one
+   run-on line in the screenshot (`Approvals parked 1 a decision is the only thing that moves them`). */
+.row-link { display: flex; align-items: baseline; gap: 4px 12px; padding: 8px 2px; border-bottom: .5px solid var(--line-1); color: var(--text); }
+.row-link:hover { background: var(--hover); text-decoration: none; }
+.row-link .icon { color: var(--accent-mark); align-self: center; }
+.row-name { font-weight: 500; }
+.row-hint { color: var(--text-secondary); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+.rows-disabled { opacity: .55; cursor: not-allowed; }
+/* An attention row states its state with the SAME two tones the tiles used (`tile-warn`/`tile-bad`,
+   the builder's own claim): on a row the tone is a left edge, and the row keeps the hairline. */
+.row-link.tile-warn { box-shadow: inset 3px 0 0 var(--warn); }
+.row-link.tile-bad { box-shadow: inset 3px 0 0 var(--bad); }
+.row-value { font-weight: 500; }
+.create-rows { display: flex; flex-direction: column; }
+.services { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0 24px; align-items: start; }
+.service { display: flex; align-items: baseline; gap: 8px; padding: 7px 0; border-bottom: .5px solid var(--line-1); color: var(--text); }
+.service:hover { text-decoration: none; }
+.service:hover .service-name { text-decoration: underline; }
+.service-icon { display: inline-flex; color: var(--accent-mark); align-self: center; }
+.service-name { font-weight: 500; }
+.service-hint { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-secondary); }
+/* M13 R0 — F17. The detail header's action strip: the resource's declared acts beside its status. */
+.detail-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* M16 K-R2 — a job's action strip is the row it already declares, with the wrap the narrow cases need. */
+.job-acts { flex-wrap: wrap; }
+.input-narrow { max-width: 120px; }
+.recent { list-style: none; margin: 0; padding: 0; }
+.recent li { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 5px 0; border-bottom: .5px solid var(--line-1); }
+.recent li:last-child { border-bottom: 0; }
+.recent-when { color: var(--text-secondary); font-size: var(--fs-caption); line-height: var(--lh-caption); font-variant-numeric: tabular-nums; }
+
+/* ---------- not found ---------- */
+.notfound { padding: 8vh 0; max-width: 640px; }
+.notfound-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* ---------- create forms ---------- */
+/* A field group's action aligns to the BOTTOM of the row, so a "Remove" button lines up with the inputs
+   above it rather than with their labels. */
+.section-title { margin: 14px 0 2px; font-size: var(--fs-secondary); line-height: var(--lh-secondary); color: var(--text-secondary); font-weight: 500; }
+.form-row-action { display: flex; align-items: flex-end; }
+.form-row-action .btn { margin-bottom: 10px; }
+
+/* M15 M-R1 (item 3) — the page's SHAPE while its first read is in flight. Home was photographed three times
+   showing `○ resolving the tenancy…` on an otherwise blank surface; a skeleton is the form of the page the
+   reader is about to get. `data-loaded` on the page root is what replaces it. Shapes only — no animation, so
+   a reduced-motion reader is not the one who loses the signal, and no fake content. */
+/* M16 K-R2 — the wait state's own two classes had no rule either. A wait is a quiet line, not a spinner:
+   the mark is the idle dot every other state mark uses, and the sentence beside it is secondary text. */
+.loading { display: flex; gap: 8px; align-items: center; color: var(--text-secondary); padding: 14px; }
+.loading-mark { color: var(--idle); font-size: var(--fs-caption); line-height: var(--lh-caption); }
+.skeleton { display: block; }
+.skeleton-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.skeleton-tile { height: 72px; border: .5px solid var(--line-1); border-radius: var(--radius); background: var(--bg-sunken); }
+.skeleton-table { border: .5px solid var(--line-1); border-radius: var(--radius); overflow: hidden; }
+.skeleton-row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 12px; padding: 9px 12px; border-bottom: .5px solid var(--line-1); }
+.skeleton-row:last-child { border-bottom: 0; }
+.skeleton-cell { height: 12px; border-radius: 3px; background: var(--line-soft); }
+.skeleton-row-head .skeleton-cell { background: var(--line); }
+.skeleton-cards { display: grid; gap: 12px; }
+.skeleton-card { height: 96px; border: .5px solid var(--line-1); border-radius: var(--radius); background: var(--bg-sunken); }
+.skeleton-label { display: inline-block; color: var(--text-secondary); font-size: var(--fs-caption); line-height: var(--lh-caption); margin-top: 6px; }
+
+/* ---------- M15 M-R2 (item 7): the ladder as a STATE ---------- */
+/* The ladder says where the turn STANDS, not only which words apply. A reached rung is filled (a left edge
+   in the ok token), the FURTHEST reached rung is the position and says `actual` (accent edge plus
+   `aria-current="step"`), and rungs after it are dimmed. A rung the record did not reach — `no alcanzado` —
+   or does not model — `no modelado` — is never filled and never current: its pill word is the whole claim.
+   The base row reserves the edge in every state so the grid does not shift when a rung fills. */
+
+/* ---------- M15 M-R3 (item 10): Admisiones — one clause + a disclosure, and the band that paints a row ---------- */
+/* The Spanish reading is the visible clause (the `<summary>`) and the kernel's own sentence sits inside the
+   disclosure, labelled, so the gloss is never the only thing on screen. `risk-critical` is the ROW class for
+   the kernel's own CRITICAL band — a band, not a status — which is why it is a class here and the pill still
+   asks AkosStatus for its tone. */
+
+/* M15 M-R3 (item 15): Revisión — the relative instant stays tabular so two rows' ages line up, and the
+   absolute record instant lives on the cell's `title` rather than competing with it on the line. */
+
+/* ---------- M15 item 13: Sessions grouped by workspace ---------- */
+/* The group label is the WORKSPACE column's first row in each group: the rows are ordered by workspace, and
+   the label marks where a new one starts. It is deliberately NOT a heading `<tr>` — Sessions keeps exactly
+   one table and its row count is asserted — so the band is drawn on the cell and reaches only as far as the
+   column does. */
+.grid-group-label { font-weight: 600; color: var(--text); }
+.grid-group-label::before { content: "▸ "; color: var(--accent); }
+
+/* The filter box above the one list; it narrows by name, workspace or persona/turn label. */
+.sessions-filter { max-width: 360px; }
+
+/* The warning dot: the record itself says an interaction is pending (an approval id, an agent's inbox, or
+   the kernel's own `awaitingApproval`). Amber, and never green — a pending decision is not progress. */
+.warn-dot { color: var(--warn); margin-right: 6px; font-size: 11px; vertical-align: middle; }
+
+/* The AKOS persona/turn label, DERIVED FROM THE AGENT'S NAME until K-R2 records `AgentName`/`SessionId`.
+   Muted, so it reads as an annotation about the name rather than as a stored fact beside it. */
+.turn-label { color: var(--text-muted); font-size: var(--fs-caption); }
+
+/* ---------- M15 item 20: the turns search on the Search page ---------- */
+/* The AKOS-side box is its own card above the name search's matches; the label is the Spanish promise the
+   result set keeps (the MESSAGE, not the name), so it needs no adornment. */
+
+/* M15 M-UI (item 19) — under 620px the grid tables (Approvals, Turnos, and every other `.grid-scroll` grid)
+   stop being tables and become one CARD per row. The alternative is already on the page and it is worse than
+   it looks: `.grid-scroll` gives a wide table its own horizontal scroll, which keeps the SHELL at the
+   viewport width but hides every column past the first two behind a gesture nobody discovers on a record
+   they cannot see the whole of. A card cannot be scrolled sideways and has nowhere to hide: every cell the
+   record carries is on it, in the row's own order.
+ *
+ * A cell NAMES ITSELF from its `data-label`, read with `attr()`. A cell that has no `data-label` — a table
+ * whose round has not added them yet, or a column of buttons that already names itself — renders its value
+ * with no label at all: `attr()` on a missing attribute is the empty string, so the label is generated ONLY
+ * where there is a label to generate, rather than a bare label separator or a blank line. The attribute may
+ * sit on the `<td>` (a hand-written `.grid`/`.table`) or on the cell's own wrapper (a QuickGrid cell, which
+ * renders its `<td>` itself and exposes no per-cell data attribute), so both are matched. */
+@media (max-width: 620px) {
+    .grid-scroll .grid, .grid-scroll .table { display: block; width: 100%; }
+    .grid-scroll .grid thead, .grid-scroll .table thead { display: none; }
+    .grid-scroll .grid tbody, .grid-scroll .table tbody { display: block; }
+    .grid-scroll .grid tr, .grid-scroll .table tr {
+        display: block; margin: 0 0 10px; padding: 4px 0;
+        border: .5px solid var(--line-1); border-radius: var(--radius); background: var(--bg-raised);
+    }
+    .grid-scroll .grid td, .grid-scroll .table td {
+        display: block; padding: 4px 10px; border-bottom: 0; text-align: left; white-space: normal;
+    }
+    .grid-scroll .grid td[data-label]::before,
+    .grid-scroll .table td[data-label]::before,
+    .grid-scroll .grid td [data-label]::before,
+    .grid-scroll .table td [data-label]::before {
+        content: attr(data-label); display: block;
+        font-size: var(--fs-caption); line-height: var(--lh-caption);
+        color: var(--text-faint); font-weight: 500;
+    }
+
+    /* The brand WORDMARK stays on the phone. The ≤900px rule drops `.brand-name` to buy the top bar room;
+       under 620px the bar has given up the search box, the session chip, the rail toggle and every button
+       label, so the room is there again — and a phone showing only the bare mark is a screenshot of an
+       anonymous app with no name. This is the one rule here that must beat an earlier one at equal
+       specificity, which is why this block is appended last. */
+    .brand-name { display: inline; }
+}
+
+/* ---------- M15 M-R3 (item 18): the sign-in door — the motto and the host liveness pill ---------- */
+/* The card is the ONLY surface an anonymous caller reaches, so the host's state is read before any session
+   exists and the motto is the product's own. The pill keeps its shape in every state and takes its colour
+   from the state's token: `unknown` is the idle grey, `degraded` the warn amber, `unreachable` the bad red,
+   and green only the host's own `Healthy` word — a Degraded kernel answers 200, so a status code alone is
+   never drawn as health. */
+/* The motto reuses `.motto` (the product's own style, the same one `Home` and `AkosInicio` render), so the
+   words look the same wherever they appear; only the spacing is the card's. */
+.signin-live { margin: 0 0 14px; }
+/* The pill's dot comes from the pill's own tone now (`.pill::before`), so the three rules that used to
+   paint `.signin-live .pill-* .dot` element by element are DELETED — the state colour lives in one place
+   and a caller cannot get it wrong by forgetting a class.
+ *
+ * One consumer still ships the OLD shape: `HostLivenessPill` renders `<span class="pill …"><span
+ * class="dot dot-live"></span>word</span>`, written when a pill was a bordered capsule and its dot was a
+ * child element. With the dot on the pseudo-element that child is a SECOND dot, and the health pill is the
+ * one place a reader looks for a single mark. Hiding the child is the fix that needs no markup edit and
+ * cannot be forgotten: `.dot` stays the StateDot for every other caller, and the visible dot is the
+ * pill's own, so the tone and the dot cannot disagree. */
+.pill .dot { display: none; }
+
+/* ---------- M15 M-R3 (item 21): the consulta's raw PUT behind Técnico ---------- */
+/* The disclosure IS the grid item, so the card inside it keeps `.panels`' own spacing instead of fighting
+   the grid; the form and Enviar stay in the open beside it. The summary is muted and the marker keeps the
+   platform's own affordance, so "ask for the machinery" reads as an aside rather than as a second heading. */
+.panels > details.technical { min-width: 0; }
+details.technical > summary { cursor: pointer; color: var(--text-muted); font-size: var(--fs-caption); padding: 6px 2px; }
+details.technical[open] > summary { margin-bottom: 8px; }
+details.technical > .card { margin: 0; }
+
+/* The name the PUT will carry when the field is left empty: the message's first words, shown under the
+   field it comes from so the derivation is read where it is decided. */
+
+/* ---------- M15 M-R3 (item 12): the mandate's emergency stop ---------- */
+/* The two acts that need no approval, set apart from the ordinary transitions under Técnico: a stop is not
+   one of them, and a reader scanning for it should not have to read the resume/promote forms to find it. The
+   disabled state is the same `.btn-disabled` every other door in the console uses, so one affordance is
+   learned rather than two — and the `reason` sentence beneath it is `SubmitWhy`'s, not a second wording. */
+
+/* ---------- M15 (item 9): persona availability in Spanish, and the dossiers' forms as disclosures ---------- */
+/* The grid states the shared availability ONCE, above the cards. F4's finding was twelve copies of one English
+   sentence on a page whose whole purpose is comparison, and the fix has two halves: the pill's label is the
+   Spanish gloss (`AkosStatus.AvailabilityWord`), and this one line carries the meaning. It lives inside the
+   grid card's body, so it takes the grid's own bottom margin rather than the card's. */
+
+/* DISPONIBILIDAD lives BELOW the grid as a disclosure: a reader needs the three definitions once, and the
+   summary is the card head the panel used to have — same `h2`, same muted subtitle, same hairline — so
+   folding it away removes no label. `display:flex` from `.card-head` is what hides the platform marker; the
+   cursor and the open/closed border are the affordance that replaces it. */
+
+/* The dossier's two forms are disclosures for the same reason: the page answers "what is this lens", and the
+   machinery that ASKS belongs behind a summary. They open by default because the browser facts fill their
+   fields directly and a collapsed `details` hides its body from a real click; the reader's control is the
+   fold, and it is the same head-plus-body shape as the legend above. */
+
+/* ---------- M15 (item 8): the human's decision on the ACCIÓN card, and the visible disable reason ---------- */
+/* The decision block sits UNDER the ladder it moves, separated by the card's own hairline rather than by a new
+   surface: it is the same card's body, one step more specific — the ladder says where the action is, and this
+   says what may be done about it, so a reader never hunts for the control in a second panel. */
+/* The disabled reason is a LINE, not a `title`: a disabled button is not focusable, so a keyboard user could
+   never reach a hover-only sentence, and a screen reader announces a `title` inconsistently. It is the same
+   `.reason` the rest of the console prints, on its own line under the buttons it explains. */
+/* The header's advance reason: the action strip wraps, so a full-width basis puts the sentence on its own line
+   under the button instead of crowding the depth control beside it. */
+.detail-actions .reason { flex-basis: 100%; margin-top: 2px; }
+
+/* ---------- M15 lane M (item 11): the Inicio's Decisiones card ---------- */
+/* One pending approval per row. It is NOT a `ul.recent` row: that list is a two-column name/when grid, and an
+   approval carries a whole clause and two controls, which would land in the `when` column. The clause owns its
+   line and the controls sit under it, so the Autorizar/Rechazar pair is read beside the sentence it answers
+   rather than beside a timestamp. `.decisions-controls` wraps so a long disabled reason takes its own line
+   instead of pushing a button off the card. */
+
+
+/* M15 M-R3 — chip tones. `.chip-good/-warn/-bad` were used by the Soka page (S-R4) and the Memoria page
+   without a rule behind them; the tone is presentation over the record's word, and every colour is an
+   alias of the token file (the literal-colour fact walks this file).
+   M16 K-R1: the tone is a TAG TINT (the same three tints `.tag-*` uses) rather than a coloured ring —
+   with a chip that is already a filled capsule, a coloured border reads as a second fill. The filter
+   chip's pressed state is a white pill on the track, in the rail's own active-row vocabulary. */
+.chip-good { background: var(--tag-ok); color: var(--ok); }
+.chip-warn { background: var(--tag-wait); color: var(--warn); }
+.chip-bad { background: var(--tag-bad); color: var(--bad); }
+.filters { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 10px; }
+.filters .chip { background: transparent; cursor: pointer; font: inherit; font-size: var(--fs-caption); line-height: var(--lh-caption); }
+.filters .chip-selected { color: var(--text); background: var(--nav-active); box-shadow: inset 0 0 0 1px var(--line-4); font-weight: 500; }
+
+/* ---------- M16 K-R1: motion off, in one place ----------
+ * dsh's motion is `--dur`/`--ease` on a user action and nothing else (M16 §3.3 dropped the last two
+ * bare `.15s ease` rules). A reader who has asked their system for less motion gets NONE of it, and the
+ * rule is one blanket override rather than a list — a list is a rule that the next transition added
+ * somewhere else silently escapes. This block is LAST on purpose: it has to outrank every `transition`
+ * above it, at every specificity, and `*` with `!important` is the one form that does. */
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+}
+
+/* ---------- the circuit's reconnect notice (App.razor #components-reconnect-modal) ---------- */
+/* Hidden unless Blazor says the circuit is gone; a quiet strip at the foot, never a blocking white box. */
+.reconnect { display: none; }
+.reconnect.components-reconnect-show,
+.reconnect.components-reconnect-retrying,
+.reconnect.components-reconnect-paused,
+.reconnect.components-reconnect-failed,
+.reconnect.components-reconnect-rejected,
+.reconnect.components-reconnect-resume-failed {
+    display: flex; position: fixed; inset: auto 16px 16px 16px; z-index: 1000; justify-content: center; pointer-events: none;
+}
+.reconnect-card {
+    pointer-events: auto; max-width: 560px; width: 100%; padding: 16px 18px;
+    background: var(--bg-raised); color: var(--text); border: 1px solid var(--line);
+}
+.reconnect-title { margin: 0 0 4px; font-weight: 600; }
+.reconnect-sub { margin: 0 0 12px; color: var(--text-secondary); font-size: 14px; }

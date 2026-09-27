@@ -1,0 +1,17 @@
+{
+  "id": "Example.Workbench",
+  "name": "Example Workbench notes",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Example.Workbench.Plugin.dll",
+  "entry_type": "Example.Workbench.Plugin.WorkbenchPlugin",
+  "load": "dynamic",
+  "provides": ["Example.Workbench"],
+  "extension_points": [],
+  "requires": [],
+  "roles": ["all"],
+  "config_section": null,
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 900
+}

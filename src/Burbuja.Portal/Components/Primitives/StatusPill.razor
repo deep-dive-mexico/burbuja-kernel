@@ -1,0 +1,32 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+<span class="pill @Tone(Status)" title="@Title">@(Label ?? Status)</span>
+
+@code {
+    [Parameter, EditorRequired] public string Status { get; set; } = "";
+
+    [Parameter] public string? Label { get; set; }
+
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>
+    /// A stable tone per state word. Statuses are the kernel's own (queued, running, succeeded,
+    /// awaitingApproval, denied, …) plus the pomnibot executionStatus spellings, which separate
+    /// their words with an underscore (awaiting_approval, budget_exceeded); anything unknown is
+    /// neutral rather than alarming. Track 3a added the two plugin-health words: Degraded takes the
+    /// wait tone, Unhealthy is red like any failure.
+    /// </summary>
+    public static string Tone(string? status) => status?.ToLowerInvariant() switch
+    {
+        "succeeded" or "ok" or "settled" or "approved" or "healthy" or "live" or "delivered" or "answered" => "pill-ok",
+        "running" or "active" or "queued" or "planning" or "accepted" or "sending" or "resuming" or "starting" or "verifying" or "reviewing" or "finalizing" or "intake" => "pill-run",
+        "awaitingapproval" or "awaiting_approval" or "awaitingconfirm" or "awaiting_confirm" or "waiting" or "pending" or "parked" or "reconnecting" or "approval_pending" or "deferred" or "degraded" => "pill-wait",
+        // M10 H3: `blocked` reads BAD on purpose. It is the day's hard stop, and the one thing a reader must
+        // not do with it is wait — nothing will move until an operator raises the limit or the UTC day turns.
+        "failed" or "error" or "denied" or "cancelled" or "budgetexceeded" or "budget_exceeded" or "turnsexceeded" or "turns_exceeded" or "timeout" or "unhealthy" or "blocked" => "pill-bad",
+        "paused" or "idle" or "closed" => "pill-idle",
+        _ => "pill-neutral",
+    };
+
+    public static string Tag(string? status) => Tone(status).Replace("pill-", "tag-", StringComparison.Ordinal);
+}

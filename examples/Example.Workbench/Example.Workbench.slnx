@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Example.Workbench.Host/Example.Workbench.Host.csproj" />
+  <Project Path="Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" />
+</Solution>

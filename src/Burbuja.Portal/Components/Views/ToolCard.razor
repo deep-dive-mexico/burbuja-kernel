@@ -1,0 +1,42 @@
+@namespace Burbuja.Portal.Components.Views
+
+@* A tool call as one card: running / ok / error / denied, with its input and its result. *@
+<article class="tool tool-@Tone">
+    <header class="tool-head">
+        <span class="tool-dot"></span>
+        <span class="tool-name">@Row.Title</span>
+        <StatusPill Status="@Row.Status" />
+        <span class="muted small">#@Row.Seq, @TrajectoryView.Ms(Row.DurationMs)</span>
+    </header>
+    @if (Hint is not null)
+    {
+        <p class="muted small">hint: @Hint</p>
+    }
+    @if (Row.Payload is not null)
+    {
+        <details class="tool-part">
+            <summary>input</summary>
+            <JsonViewer Node="@Row.Payload" Limit="@Limit" />
+        </details>
+    }
+    @if (Row.Result is not null)
+    {
+        <details class="tool-part" open="@(Tone == "pill-bad")">
+            <summary>result</summary>
+            <JsonViewer Node="@Row.Result" Limit="@Limit" />
+        </details>
+    }
+</article>
+
+@code {
+    [Parameter, EditorRequired] public TrajectoryRow Row { get; set; } = null!;
+
+    [Parameter] public int Limit { get; set; } = 32 * 1024;
+
+    private string Tone => StatusPill.Tone(Row.Status);
+
+    private string? Hint =>
+        Row.Payload is JsonObject obj && obj["hint"] is JsonValue hint && hint.TryGetValue<string>(out var text)
+            ? text
+            : null;
+}

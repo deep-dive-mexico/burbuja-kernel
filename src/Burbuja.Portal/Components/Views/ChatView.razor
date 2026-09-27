@@ -1,0 +1,92 @@
+@namespace Burbuja.Portal.Components.Views
+
+@* What a human said, what the model said, what ran, what was asked — the chat ring. *@
+<div class="chat">
+    @if (Rows.Count == 0)
+    {
+        <EmptyState Text="No conversational records in this range." />
+    }
+    else
+    {
+        @foreach (var row in Rows)
+        {
+            switch (row.Kind)
+            {
+                case TrajectoryKind.User:
+                    <article class="msg msg-user">
+                        <header class="msg-head">
+                            <span class="msg-who">@row.Title</span>
+                            <span class="muted small">@TrajectoryView.Stamp(row.At)</span>
+                        </header>
+                        <p class="msg-text">@row.Text</p>
+                    </article>
+                    break;
+                case TrajectoryKind.Assistant:
+                    <article class="msg msg-assistant">
+                        <header class="msg-head">
+                            <span class="msg-who">assistant</span>
+                            <span class="muted small">#@row.Seq, @TrajectoryView.Stamp(row.At)</span>
+                        </header>
+                        <p class="msg-text">@(row.Text.Length > 0 ? row.Text : "(no text blocks)")</p>
+                    </article>
+                    break;
+                case TrajectoryKind.Tool:
+                    <ToolCard Row="row" />
+                    break;
+                case TrajectoryKind.Approval:
+                    <ApprovalCard Row="row" />
+                    break;
+            }
+        }
+    }
+</div>
+
+@if (ShowFooter)
+{
+    <footer class="chat-footer">
+        <span><span class="muted">records</span> @EventCount</span>
+        <span><span class="muted">tools</span> @ToolCount</span>
+        <span><span class="muted">errors</span> @ErrorCount</span>
+        <span><span class="muted">span</span> @Duration</span>
+        <span><span class="muted">cost</span> @(CostUsd is { } cost ? "$" + cost.ToString("0.0000", CultureInfo.InvariantCulture) : "—")</span>
+        @if (Tokens is { } tokens)
+        {
+            <span><span class="muted">tokens</span> @tokens</span>
+        }
+    </footer>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<LedgerEvent> Events { get; set; } = [];
+
+    [Parameter] public string? Prompt { get; set; }
+
+    [Parameter] public decimal? CostUsd { get; set; }
+
+    [Parameter] public long? Tokens { get; set; }
+
+    [Parameter] public bool ShowFooter { get; set; } = true;
+
+    private IReadOnlyList<TrajectoryRow> Rows { get; set; } = [];
+
+    private int EventCount => Events.Count;
+
+    private int ToolCount => Rows.Count(r => r.IsTool);
+
+    private int ErrorCount => Rows.Count(r => r.Status is "error" or "denied");
+
+    private string Duration
+    {
+        get
+        {
+            var times = Rows.Select(r => r.At).ToList();
+            if (times.Count < 2)
+                return "—";
+            var span = times.Max() - times.Min();
+            return TrajectoryView.Ms((long)span.TotalMilliseconds);
+        }
+    }
+
+    protected override void OnParametersSet() =>
+        Rows = TrajectoryBuilder.ChatRows(TrajectoryBuilder.Build(Events, Prompt));
+}

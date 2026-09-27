@@ -1,0 +1,28 @@
+{
+  "id": "throttle-storm",
+  "defaultUsage": { "inputTokens": 20, "outputTokens": 10, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "fault": { "throttling": 12 },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "recovered" }]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "done" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

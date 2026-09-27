@@ -1,0 +1,17 @@
+{
+  "id": "Llm.Scripted",
+  "name": "Scripted LLM",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Llm.Scripted.dll",
+  "entry_type": "Burbuja.Plugins.Llm.Scripted.ScriptedLlmPlugin",
+  "load": "static",
+  "provides": ["llm.provider"],
+  "extension_points": ["llm.provider"],
+  "requires": ["Network"],
+  "roles": ["all", "worker"],
+  "config_section": null,
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 300
+}

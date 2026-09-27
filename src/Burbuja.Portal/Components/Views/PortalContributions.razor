@@ -1,0 +1,15 @@
+@namespace Burbuja.Portal.Components.Views
+@inject IEnumerable<PortalComponentContribution> Contributions
+@inject IPortalArm Arm
+
+@foreach (var contribution in Contributions.Where(c => c.Slot == Slot && _session?.HasPortal(c.PortalId) == true))
+{
+    <DynamicComponent Type="contribution.Component" Parameters="Parameters" />
+}
+
+@code {
+    [Parameter, EditorRequired] public string Slot { get; set; } = "";
+    private PortalSession? _session;
+    private IDictionary<string, object> Parameters => new Dictionary<string, object> { ["Slot"] = Slot };
+    protected override async Task OnInitializedAsync() => _session = await Arm.SessionAsync();
+}

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Hosting</RootNamespace>
+    <Description>Reusable Burbuja HTTP and worker host composition.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <InternalsVisibleTo Include="Burbuja.Host" />
+    <InternalsVisibleTo Include="Burbuja.Host.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core/Burbuja.Core.csproj" />
+    <ProjectReference Include="../Burbuja.Agents/Burbuja.Agents.csproj" />
+    <ProjectReference Include="../Burbuja.Deployments/Burbuja.Deployments.csproj" />
+    <ProjectReference Include="../Burbuja.Compute/Burbuja.Compute.csproj" />
+    <ProjectReference Include="../Burbuja.Mcp/Burbuja.Mcp.csproj" />
+    <ProjectReference Include="../Burbuja.Integrations/Burbuja.Integrations.csproj" />
+    <ProjectReference Include="../Burbuja.Portal/Burbuja.Portal.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Policy.Core/Burbuja.Plugins.Policy.Core.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Llm.Scripted/Burbuja.Plugins.Llm.Scripted.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Supervisor/Burbuja.Plugins.Supervisor.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Tools.Workspace/Burbuja.Plugins.Tools.Workspace.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Tools.Http/Burbuja.Plugins.Tools.Http.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Tools.Agents/Burbuja.Plugins.Tools.Agents.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,48 @@
+{
+  "id": "fanout-plan-3",
+  "plan": {
+    "subtasks": [
+      { "id": "a", "title": "alpha", "brief": "write alpha.txt", "files": ["alpha.txt"], "dependsOn": [], "estimateUsd": 0.1 },
+      { "id": "b", "title": "beta", "brief": "write beta.txt", "files": ["beta.txt"], "dependsOn": [], "estimateUsd": 0.1 },
+      { "id": "c", "title": "gamma", "brief": "rm -rf /", "files": ["/"], "dependsOn": [], "estimateUsd": 0.1 }
+    ],
+    "mergeStrategy": "concat",
+    "risks": [],
+    "confidence": 0.8
+  },
+  "defaultUsage": { "inputTokens": 40, "outputTokens": 20, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "lastUserMessage": { "contains": "rm -rf" } },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_rm", "name": "bash", "input": { "command": "rm -rf /" } }
+          ]
+        }
+      },
+      {
+        "when": { "lastUserMessage": { "contains": "write" } },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_w", "name": "write_file", "input": { "path": "out.txt", "content": "ok" } }
+          ]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "merged" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

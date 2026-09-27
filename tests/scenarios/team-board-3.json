@@ -1,0 +1,83 @@
+{
+  "id": "team-board-3",
+  "bind": "firstCallOrder",
+  "defaultUsage": { "inputTokens": 45, "outputTokens": 22, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "team": {
+    "maxMembers": 3,
+    "tasks": [
+      { "id": "t-alpha", "title": "alpha", "files": ["alpha.txt"], "blockedBy": [] },
+      { "id": "t-beta", "title": "beta", "files": ["beta.txt"], "blockedBy": [] },
+      { "id": "t-gamma", "title": "gamma", "files": ["gamma.txt"], "blockedBy": ["t-alpha", "t-beta"] }
+    ]
+  },
+  "scripts": [
+    {
+      "label": "member-alpha",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_alpha", "name": "write_file", "input": { "path": "alpha.txt", "content": "alpha" } }
+            ]
+          }
+        },
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "alpha done" }]
+          }
+        }
+      ]
+    },
+    {
+      "label": "member-beta",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_beta", "name": "write_file", "input": { "path": "beta.txt", "content": "beta" } }
+            ]
+          }
+        },
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "beta done" }]
+          }
+        }
+      ]
+    },
+    {
+      "label": "member-gamma",
+      "turns": [
+        {
+          "when": { "firstTurn": true },
+          "emit": {
+            "stopReason": "tool_use",
+            "blocks": [
+              { "type": "tool_use", "id": "tu_gamma", "name": "write_file", "input": { "path": "gamma.txt", "content": "gamma" } }
+            ]
+          }
+        },
+        {
+          "when": { "any": true },
+          "emit": {
+            "stopReason": "end_turn",
+            "blocks": [{ "type": "text", "text": "gamma done" }]
+          }
+        }
+      ]
+    }
+  ],
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "team member", "confidence": 0.95 } }
+    ]
+  }
+}

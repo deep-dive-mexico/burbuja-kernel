@@ -1,0 +1,249 @@
+@page "/portal/integrations"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject PortalPermissions Permissions
+@inject IPortalArm Arm
+
+<PageTitle>Integrations</PageTitle>
+
+<PageHeader Eyebrow="Catalogue" Title="Integrations" Loaded="@(_loaded)">
+    <SubtitleContent>
+            The external tool surfaces this host serves — a mailbox, a browser, a Notion workspace, an MCP server.
+            <b>Tools</b> is what a human declared and therefore what may be called; <b>reported</b> is what the surface
+            last said it offers. The two are different on purpose, and the difference is the thing worth looking at.
+    </SubtitleContent>
+</PageHeader>
+
+<ErrorAlert Failure="_failure" />
+
+@if (_notice is { Length: > 0 })
+{
+    <div class="alert alert-info" role="status">@_notice</div>
+}
+
+@if (_failure is null && _rows.Count == 0)
+{
+    <Card Title="Integrations" Subtitle="@_scope">
+        <EmptyState Text="No integrations declared. An integration is a PUT of Burbuja.Integrations/integrations naming its kind, its transport and the tools it may call." />
+    </Card>
+}
+
+@foreach (var row in _rows)
+{
+    <Card Title="@row.Name" Subtitle="@($"{row.Kind}, {row.Transport}, {Text.Plural(row.Calls, "call", "calls")}")">
+        <dl class="kv kv-inline">
+            <dt>enabled</dt>
+            <dd>@(row.Enabled ? "yes" : "no")</dd>
+            <dt>state</dt>
+            <dd>@(row.State ?? "never probed")</dd>
+            <dt>probed</dt>
+            <dd>@(row.ProbedAt ?? "—")</dd>
+            <dt>secret</dt>
+            <dd><code>@(row.SecretRef is { Length: > 0 } reference ? reference : "—")</code></dd>
+        </dl>
+
+        <h3>Tools</h3>
+        @if (row.Tools.Count == 0)
+        {
+            <p class="muted small">None declared, so nothing may be called through this integration yet.</p>
+        }
+        else
+        {
+            <p>
+                @foreach (var tool in row.Tools)
+                {
+                    <span class="chip"><code>@tool</code></span>
+                }
+            </p>
+        }
+
+        @*
+            Only shown when a probe has run AND found something the declaration does not already cover: a list
+            that simply repeats the one above is noise, and the point of the panel is the DRIFT between the
+            two — a surface offering a tool nobody has allowed is the thing an operator opens this page for.
+        *@
+        @if (row.Undeclared.Count > 0)
+        {
+            <h3>Reported but not declared</h3>
+            <p class="small">
+                The surface offers these and nobody has allowed them:
+                @foreach (var tool in row.Undeclared)
+                {
+                    <span class="tag-wait"><code>@tool</code></span>
+                }
+            </p>
+        }
+
+        @if (CanAct)
+        {
+            <div class="row-actions">
+                @* M16 K-R2 — `probe` is the row's one act and it is outlined; enable/disable is the ghost
+                   beside it. They were two identical ghosts (and the drift chip above carried `chip warn`,
+                   a typo for the tone class, so the one thing this page exists to show painted as an
+                   ordinary chip — the new styled-class fact cannot see a typo'd class, which is why the
+                   vocabulary is a short list and is written down in docs/09-portal.md). *@
+                <button class="btn btn-outline btn-small" disabled="@_busy" @onclick="() => ProbeAsync(row)">probe</button>
+                <button class="btn btn-ghost btn-small" disabled="@_busy" @onclick="() => ToggleAsync(row)">
+                    @(row.Enabled ? "disable" : "enable")
+                </button>
+            </div>
+        }
+    </Card>
+}
+
+@code {
+    private PortalFailure? _failure;
+    private string _notice = "";
+    private string _scope = "";
+    private ArmScope? _scopeRef;
+    private List<IntegrationRow> _rows = [];
+    private IReadOnlyList<string> _roles = [];
+    private bool _busy;
+    private bool _loaded;
+
+    /// <summary>UX only: the kernel re-evaluates on the wire, and the refusal is what the fact asserts.</summary>
+    private bool CanAct => Permissions.Can(_roles, "Burbuja.Integrations/integrations/call/action");
+
+    protected override async Task OnInitializedAsync()
+    {
+        var session = await Arm.SessionAsync();
+        _roles = session?.Roles ?? [];
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _failure = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scopeRef = scope;
+            _scope = scope.Display;
+
+            _rows = [.. (await Data.IntegrationsAsync(scope, ct)).Select(i =>
+            {
+                var declared = i.Properties?.Tools ?? [];
+                var reported = i.Properties?.DiscoveredTools ?? [];
+                return new IntegrationRow(
+                    i.Name ?? "?",
+                    i.Properties?.Kind ?? "—",
+                    i.Properties?.Enabled == true,
+                    declared,
+                    [.. reported.Where(r => !declared.Contains(r, StringComparer.OrdinalIgnoreCase))],
+                    i.Properties?.State,
+                    i.Properties?.ProbedAt is { } at ? at.ToString("u") : null,
+                    i.Properties?.Calls ?? 0,
+                    Transport(i.Properties?.Transport),
+                    i.Properties?.Transport?.SecretRef,
+                    i.ETag);
+            })];
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            // M15 M-R2 — the marker is about the READ, not about the rows: a host with no integrations has
+            // finished reading too, and G43's `post-load` item reads `main.content[data-loaded='true']`.
+            _loaded = true;
+        }
+    }
+
+    /// <summary>
+    /// Ask the surface what it offers. This is the one action here that would reach outside the host, and a
+    /// host with no caller answers with a refusal naming the configuration — which is why the page renders
+    /// the refusal instead of an empty tool list that reads like "the surface has nothing".
+    /// </summary>
+    private async Task ProbeAsync(IntegrationRow row) => await ActAsync(
+        $"{_scopeRef!.RootPath}/providers/Burbuja.Integrations/integrations/{row.Name}/probe",
+        row,
+        new JsonObject(),
+        verb: "POST",
+        done: $"probed {row.Name}");
+
+    /// <summary>
+    /// Enable or disable by PATCH: <c>enabled</c> is the operator's switch, and the handler refuses a call on a
+    /// disabled integration before it consults anything else — so the switch needs no action of its own.
+    /// </summary>
+    private async Task ToggleAsync(IntegrationRow row) => await ActAsync(
+        $"{_scopeRef!.RootPath}/providers/Burbuja.Integrations/integrations/{row.Name}",
+        row,
+        new JsonObject { ["properties"] = new JsonObject { ["enabled"] = !row.Enabled } },
+        verb: "PATCH",
+        done: $"{(row.Enabled ? "disabled" : "enabled")} {row.Name}");
+
+    private async Task ActAsync(string path, IntegrationRow row, JsonObject body, string verb, string done)
+    {
+        if (_busy)
+            return;
+        _busy = true;
+        _notice = "";
+        _failure = null;
+        PortalFailure? failure = null;
+        string notice = "";
+        var ct = CancellationToken.None;
+        try
+        {
+            var client = await Data.ClientAsync(ct);
+            var response = verb == "POST"
+                ? await client.PostActionAsync(path, body, row.ETag, ct)
+                : await client.SendAsync(new ArmClientRequest("PATCH", path, Body: body), ct);
+
+            if (response.StatusCode == 412)
+            {
+                // Surfaced, never retried: this page's copy moved and a human has to look at what changed.
+                notice = $"'{row.Name}' changed since this page rendered it. Reload and act again.";
+            }
+            else if (response.StatusCode is < 200 or > 299)
+            {
+                failure = PortalFailure.Local(
+                    $"HTTP {response.StatusCode}",
+                    response.Error?.Message ?? $"The kernel refused to {verb.ToLowerInvariant()} '{row.Name}'.");
+            }
+            else
+            {
+                notice = done;
+            }
+        }
+        catch (ArmException ex)
+        {
+            failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+            // Reload FIRST and set the outcome after, because the reload clears the failure — the first
+            // version set it inside the try and the refresh in this finally wiped it, so a refusal the
+            // kernel had explained was never rendered. The fact that caught it asserts the kernel's own
+            // words reach the page.
+            await ReloadAsync();
+            _failure = failure;
+            _notice = notice;
+        }
+    }
+    private static string Transport(PortalIntegrationTransport? transport) => transport?.Mode switch
+    {
+        "http" => transport.Url ?? "http",
+        "stdio" => transport.Command ?? "stdio",
+        null => "—",
+        var other => other,
+    };
+
+    private sealed record IntegrationRow(
+        string Name,
+        string Kind,
+        bool Enabled,
+        IReadOnlyList<string> Tools,
+        IReadOnlyList<string> Undeclared,
+        string? State,
+        string? ProbedAt,
+        int Calls,
+        string Transport,
+        string? SecretRef,
+        string? ETag);
+}

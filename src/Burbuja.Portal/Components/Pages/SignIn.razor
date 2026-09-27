@@ -1,0 +1,94 @@
+@page "/portal/signin"
+@attribute [AllowAnonymous]
+@namespace Burbuja.Portal.Components.Pages
+@using Burbuja.Portal.Components.Primitives
+
+@* M12 R2 — the sign-in page. It used to ask for a raw API key and explain Auth:ApiKeys and fixed-time
+   comparison in the copy, which told a person arriving at the console that this page was not for them. A
+   human types a username and a password; a machine uses a key against the ARM API, and the muted line at
+   the bottom is the only mention of that.
+
+   The card is centred with the brand mark above it. It was a 175px card in the top-left corner, which
+   reads as a page that failed to load rather than as a door.
+
+   M15 M-R3 (item 18) made this the one page an ANONYMOUS caller gets, so it is where the host's own state
+   has to be readable and where the product has to name itself. M16 SPLIT the doors — this is the KERNEL
+   door and it names the kernel's own product again (it said AKOS, which was the M15 arrangement's one
+   console), and `/akos/signin` is the client portal's door, which is where the AKOS wordmark, the motto
+   and the Spanish copy live now. The liveness pill is the same component on both. *@
+
+<PageTitle>Sign in</PageTitle>
+
+<div class="signin">
+    <form method="post" action="/portal/signin" data-enhance="false" class="card signin-card">
+        <div class="signin-brand">
+            <Icon Name="logo" Size="30" />
+            <span class="brand-name">Burbuja</span>
+        </div>
+        <h1>Sign in</h1>
+        <p class="page-sub">Burbuja is the kernel console: what this host is running, what needs a decision, and the resources behind it.</p>
+
+        @* The host's liveness, in the states the read can actually produce. The read lives in the shared
+           primitive so both doors answer about the same host with the same words. *@
+        <HostLivenessPill Lang="en" />
+
+        @if (Error == "noaccess")
+        {
+            <div class="alert alert-warn" role="alert" data-error="noaccess">
+                <strong>This account cannot open the requested page.</strong>
+                <span>A valid session in another console is preserved.</span>
+            </div>
+        }
+        else if (Rejected)
+        {
+            <div class="alert alert-error" role="alert">
+                <strong>Sign-in failed</strong>
+                <span>The username or password was not accepted.</span>
+            </div>
+        }
+        else if (Expired)
+        {
+            <div class="alert alert-warn" role="alert">
+                <strong>Session ended</strong>
+                <span>Sign in again to continue.</span>
+            </div>
+        }
+
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none"
+               autocorrect="off" spellcheck="false" required autofocus />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+        @if (ReturnUrl is { Length: > 0 })
+        {
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+        }
+
+        <button class="btn btn-primary" type="submit">Sign in</button>
+
+        <p class="muted small signin-foot">
+            Machine access uses API keys against the ARM API — a key is never typed here.
+        </p>
+    </form>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    /// <summary>
+    /// A refused sign-in comes back as <c>?error=badcredentials</c>.
+    ///
+    /// <para>M12 R2 renamed this from <c>badkey</c>, and the rename is the round in one string: the old
+    /// value named the credential the form used to ask for. The page answers the same way for an unknown
+    /// username and a wrong password, because to somebody guessing they are the same fact.</para>
+    /// </summary>
+    private bool Rejected => Error is "badcredentials";
+
+    private bool Expired => Error is "expired";
+}

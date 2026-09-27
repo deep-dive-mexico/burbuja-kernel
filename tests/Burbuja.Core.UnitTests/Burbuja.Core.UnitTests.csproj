@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Burbuja.Core.UnitTests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Core.Sdk/Burbuja.Core.Sdk.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Agents.Abstractions/Burbuja.Agents.Abstractions.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Core/Burbuja.Core.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Policy.Core/Burbuja.Plugins.Policy.Core.csproj" />
+    <ProjectReference Include="../plugins/Burbuja.Plugins.Test.Ok/Burbuja.Plugins.Test.Ok.csproj" />
+    <ProjectReference Include="../plugins/Burbuja.Plugins.Test.CoreRef/Burbuja.Plugins.Test.CoreRef.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Policy\corpus\commands.jsonl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

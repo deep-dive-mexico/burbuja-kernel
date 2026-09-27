@@ -1,0 +1,39 @@
+@namespace Burbuja.Portal.Components.Views
+
+<div class="rail">
+    @foreach (var group in Groups)
+    {
+        <section class="rail-group">
+            <header class="rail-head">
+                <h3>@group.Title</h3>
+                <span class="muted small">@group.Subtitle</span>
+            </header>
+            @if (group.Items.Count == 0)
+            {
+                <EmptyState Text="No sessions in this group." />
+            }
+            else
+            {
+                <ul class="rail-list">
+                    @foreach (var item in group.Items)
+                    {
+                        <li class="rail-item">
+                            <a class="rail-link" href="@item.Href">
+                                <span class="rail-kind rail-kind-@item.Kind">@item.Kind</span>
+                                <span class="rail-name">@item.Name</span>
+                                <StatusPill Status="@item.Status" />
+                                <span class="rail-age muted small">@item.Age</span>
+                                <span class="rail-cost">@item.Cost</span>
+                            </a>
+                            <span class="rail-detail muted small">@item.Detail</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<PortalRailGroup> Groups { get; set; } = [];
+}

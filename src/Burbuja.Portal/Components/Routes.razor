@@ -1,0 +1,54 @@
+@namespace Burbuja.Portal.Components
+@implements IDisposable
+@inject NavigationManager Nav
+@inject PortalRegistry Portals
+
+@* The document supplies its portal id across the interactive serialization boundary. A different portal
+   needs a full document load: language, theme, assets and favicon belong to that document, not the circuit. *@
+<CascadingValue Value="Scope" IsFixed="true">
+    <Router AppAssembly="typeof(PortalMarker).Assembly" AdditionalAssemblies="Portals.AdditionalAssemblies">
+        <Found Context="routeData">
+            <FocusOnNavigate RouteData="routeData" Selector="h1" />
+            @if (Scope.IsSignIn(new Uri(Nav.Uri).AbsolutePath))
+            {
+                <PortalSignInRoute RouteData="routeData" Scope="Scope" />
+            }
+            else if (routeData.PageType.IsDefined(typeof(AllowAnonymousAttribute), true))
+            {
+                <RouteView RouteData="routeData" DefaultLayout="@Scope.Layout" />
+            }
+            else
+            {
+                @* Endpoint policies protect SSR. This check also protects navigation within a live circuit. *@
+                <AuthorizeView Policy="@Portals.Of(Nav.Uri).Policy">
+                    <Authorized>
+                        <PortalAccessNotice Scope="Scope" />
+                        <RouteView RouteData="routeData" DefaultLayout="@Scope.Layout" />
+                    </Authorized>
+                    <NotAuthorized>
+                        <p role="alert" data-session-ended>
+                            @(Scope.Lang == "es" ? "La sesión terminó o la cuenta no tiene acceso." : "Access denied.")
+                            <a href="@Scope.SignInPath" target="_top">@(Scope.Lang == "es" ? "Entrar" : "Sign in")</a>
+                        </p>
+                    </NotAuthorized>
+                </AuthorizeView>
+            }
+        </Found>
+        <NotFound>
+            @* Unmatched HTTP paths never reach Router; the registered not-found page is a real SSR endpoint. *@
+            <p class="muted">Not found. <a href="@Scope.NotFoundPath">What happened?</a></p>
+        </NotFound>
+    </Router>
+</CascadingValue>
+
+@code {
+    [Parameter] public string Portal { get; set; } = PortalScope.Kernel.Id;
+    private PortalScope Scope => Portals.ById(Portal) ?? PortalScope.Kernel;
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        if (Portals.Of(e.Location).Id != Scope.Id)
+            Nav.NavigateTo(e.Location, forceLoad: true);
+    }
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

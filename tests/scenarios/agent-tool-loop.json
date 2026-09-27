@@ -1,0 +1,29 @@
+{
+  "id": "agent-tool-loop",
+  "defaultUsage": { "inputTokens": 1000, "outputTokens": 500, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "turnIndex": 0 },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_write", "name": "write_file", "input": { "path": "note.txt", "content": "written by the agent" } }
+          ]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "the note is written" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

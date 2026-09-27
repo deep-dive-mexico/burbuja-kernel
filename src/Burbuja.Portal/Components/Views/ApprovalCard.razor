@@ -1,0 +1,25 @@
+@namespace Burbuja.Portal.Components.Views
+
+@* An approval as it happened in the stream. The decision itself is made in the inbox, never here. *@
+<article class="approval">
+    @* M16 K-R2 — the ✋ emoji is GONE. It was a picture standing in for a word the line already
+       carries (`approval`), which is the kind of decoration the frontend-design pass removes: it
+       reads as clip art at 14px, it renders differently on every platform, and a screen reader
+       announces "raised hand" before the state. The warn tint and the status pill are the signal. *@
+    <header class="approval-head">
+        <span class="approval-title">approval</span>
+        <StatusPill Status="@Row.Status" />
+        <span class="muted small">#@Row.Seq</span>
+    </header>
+    <p class="approval-id">
+        <code>@Row.Text</code>
+    </p>
+    @if (Row.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+    {
+        <a class="btn btn-small" href="/portal/approvals">Decide in the inbox</a>
+    }
+</article>
+
+@code {
+    [Parameter, EditorRequired] public TrajectoryRow Row { get; set; } = null!;
+}

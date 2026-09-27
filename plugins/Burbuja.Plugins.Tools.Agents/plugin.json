@@ -1,0 +1,17 @@
+{
+  "id": "Tools.Agents",
+  "name": "Agent context tools",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Tools.Agents.dll",
+  "entry_type": "Burbuja.Plugins.Tools.Agents.AgentToolsPlugin",
+  "load": "dynamic",
+  "provides": ["tools.agents"],
+  "extension_points": ["agents.tool"],
+  "requires": [],
+  "roles": ["all", "worker"],
+  "config_section": null,
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 340
+}

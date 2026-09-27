@@ -1,0 +1,331 @@
+@page "/portal/jobs/{Workspace}/{Name}"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject ExecutionView View
+@inject PortalOptions Options
+@inject IPortalArm Arm
+
+<PageTitle>@Name</PageTitle>
+
+<ExecutionDetail Title="@Title"
+                 Subtitle="@Subtitle"
+                 StatusWord="@(_job?.Properties?.Status ?? "unknown")"
+                 Events="@View.Events"
+                 Prompt="@_job?.Properties?.Spec.Brief"
+                 Artifacts="@_artifacts"
+                 ArtifactNote="Artifacts are the job's data-plane downloads: the patch and the transcript the run wrote."
+                 Stream="@View.Stream"
+                 StreamRefused="@View.StreamRefused"
+                 Failure="@(_failure ?? View.Failure)"
+                 Loading="@View.Loading"
+                 Truncated="@View.Truncated"
+                 CostUsd="@_job?.Properties?.Cost.TotalUsd"
+                 ApprovalId="@_job?.Properties?.PendingApprovalId"
+                 Query="@View.Query"
+                 SearchScanned="@View.SearchScanned"
+                 SearchComplete="@View.SearchComplete"
+                 SearchCapped="@View.SearchCapped"
+                 OnSearch="@OnSearch"
+                 OnSignal="@OnSignal"
+                  Loaded="@(_job is not null || _failure is not null)">
+    <Actions>
+        @*
+            M13 R0 — F17. The four actions the RP declares for `Burbuja.Agents/workspaces/jobs`
+            (`accept` · `steer` · `cancel` · `extendBudget`). Before this the page rendered NONE of them: a job
+            created from the console with auto-accept off is stored `Paused` and never enqueued, so its only
+            way out was the generic Explorer blade's Actions tab — which is not a console.
+
+            Accept is offered exactly while the job is Paused, because that is the state it moves. Steer, Cancel
+            and Extend budget are the three a RUNNING job needs. Each is gated on the same write the kernel will
+            check, and a refusal is rendered as the kernel's own envelope rather than retried.
+        *@
+        @if (_mayWrite && Paused)
+        {
+            <button class="btn btn-primary btn-small" type="button" data-action="accept-job"
+                    disabled="@_busy" @onclick="AcceptAsync">Accept</button>
+        }
+        @if (_mayWrite)
+        {
+            @* M14 R5d — the steer verb is disabled while the box is empty, and a disabled button cannot be
+               focused: the title (and the reason line below) is how a keyboard user learns what to type. Lane
+               S's per-route `disabled` item pinned exactly this. *@
+            <button class="btn btn-outline btn-small" type="button" data-action="steer-job"
+                    title="@(_steer.Length == 0 ? "Write the steer instruction: the act needs a message." : null)"
+                    aria-describedby="@(_steer.Length == 0 ? "steer-why" : null)"
+                    disabled="@(_busy || _steer.Length == 0)" @onclick="SteerAsync">Steer</button>
+            <button class="btn btn-danger btn-small" type="button" data-action="cancel-job"
+                    disabled="@_busy" @onclick="CancelAsync">Cancel</button>
+            <button class="btn btn-outline btn-small" type="button" data-action="extend-job"
+                    title="@(_extendUsd <= 0 ? "Write how much budget to extend: the act needs an amount." : null)"
+                    aria-describedby="@(_extendUsd <= 0 ? "steer-why" : null)"
+                    disabled="@(_busy || _extendUsd <= 0)" @onclick="ExtendAsync">Extend budget</button>
+            @if (_steer.Length == 0 || _extendUsd <= 0)
+            {
+                <p class="reason" id="steer-why">
+                    @(_steer.Length == 0 ? "Write the steer instruction to direct the job." : "")
+                    @(_extendUsd <= 0 ? " Write how much budget to extend to raise it." : "")
+                </p>
+            }
+        }
+        else
+        {
+            <span class="muted small" title="@_reason">actions need write</span>
+        }
+    </Actions>
+    <Extra>
+        <dl class="kv kv-inline">
+            <dt>workspace</dt><dd>@Workspace</dd>
+            <dt>run</dt><dd>@(_job?.Properties?.RunId ?? 0)</dd>
+            <dt>model</dt><dd>@(_job?.Properties?.ModelId ?? "host default")</dd>
+            <dt>agent</dt><dd>@(_job?.Properties?.AgentId ?? "—")</dd>
+            <dt>team</dt><dd>@(_job?.Properties?.TeamId ?? "—")</dd>
+            <dt>event stream</dt><dd><code>@_eventsPath</code></dd>
+        </dl>
+        @if (_mayWrite)
+        {
+            <div class="row row-wrap job-acts">
+                <input class="input" aria-label="steer text" placeholder="steer the run (text the agent will read)"
+                       @bind="_steer" @bind:event="oninput" />
+                <input class="input input-narrow" aria-label="extend budget usd" type="number" min="1" step="1"
+                       @bind="_extendUsd" />
+            </div>
+        }
+        @if (_notice is { Length: > 0 })
+        {
+            <p class="small" role="status">@_notice</p>
+        }
+        @if (_actFailure is not null)
+        {
+            <ErrorAlert Failure="_actFailure" />
+        }
+    </Extra>
+</ExecutionDetail>
+
+@code {
+    [Parameter] public string Workspace { get; set; } = "";
+
+    [Parameter] public string Name { get; set; } = "";
+
+    private PortalEnvelope<PortalJob>? _job;
+    private PortalFailure? _failure;
+    private PortalFailure? _actFailure;
+    private IReadOnlyList<PortalArtifact> _artifacts = [];
+    private string _eventsPath = "";
+    private bool _attached;
+    private bool _mayWrite;
+    private bool _busy;
+    private string _reason = "";
+    private string _notice = "";
+    private string _steer = "";
+    private decimal _extendUsd = 20m;
+    private ArmScope? _scope;
+
+    private string Title => _job?.Properties?.Spec.Title is { Length: > 0 } title ? title : Name;
+
+    private string Subtitle => $"{Workspace}/{Name}, {_job?.Properties?.Spec.Kind ?? "job"}, {_job?.Properties?.Spec.Strategy ?? "default strategy"}";
+
+    /// <summary>
+    /// M13 R0 — F17. `Paused` is the one state `accept` moves, so it is the one state that offers it. The
+    /// kernel writes the word; the page does not fold a second status model on top of it.
+    /// </summary>
+    private bool Paused =>
+        string.Equals(_job?.Properties?.Status, "paused", StringComparison.OrdinalIgnoreCase);
+
+    private string JobPath => $"{_scope?.AgentsRoot}/workspaces/{Workspace}/jobs/{Name}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        View.Changed += OnViewChanged;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+
+            var path = $"{scope.AgentsRoot}/workspaces/{Workspace}/jobs/{Name}";
+            _scope = scope;
+            _job = await Data.JobAsync(scope, Workspace, Name, ct);
+            _mayWrite = await Data.MayAsync("Burbuja.Agents/workspaces/jobs/write", ct);
+            if (!_mayWrite)
+                _reason = "Accepting, steering, cancelling and extending a job need Burbuja.Agents/workspaces/jobs/write, which your roles do not grant. The kernel would refuse the POST.";
+            _eventsPath = path + "/events";
+            await View.LoadAsync(_eventsPath, Options.EventPageSize * 8, ct);
+            _artifacts = await ProbeAsync(path, ct);
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Retried on every render, not once on `firstRender`: the page renders once while the range read is
+        // in flight, so the first render can arrive before the view knows which stream to attach. See
+        // `AgentDetail` for the measurement (G10's `no live stream` screenshot) — all three detail pages
+        // carried the same race.
+        var stream = View.Attach();
+        if (stream is null || _attached)
+            return;
+
+        _attached = true;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// T4: the search is the kernel's, over the whole stream — the page sends the words and shows what
+    /// came back. An empty query clears it and reloads the range.
+    /// </summary>
+    private async Task OnSearch(string query)
+    {
+        if (_eventsPath is { Length: > 0 })
+            await View.SearchAsync(_eventsPath, query, Options.EventPageSize * 8, ExecutionView.SearchMaxPages, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// The live signal only says "there is more": the records themselves come from the range read.
+    ///
+    /// <para>M13 R0 — it also re-reads the job. The stream carries the RUN's acts, while the status an Accept
+    /// moved lives on the envelope: a page that only caught the range up showed `Paused` over a job that had
+    /// been queued, and refused an Accept the kernel would have rejected as "already terminal".</para>
+    /// </summary>
+    private async Task OnSignal(long _)
+    {
+        await View.CatchUpAsync(CancellationToken.None);
+        if (_scope is not null)
+        {
+            var refreshed = await Data.JobAsync(_scope, Workspace, Name, CancellationToken.None);
+            if (refreshed is not null)
+                _job = refreshed;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ---------------------------------------------------------------- F17: the four declared acts
+
+    /// <summary>
+    /// Moves a `Paused` job to `Queued`. This is the control whose absence left a job created from the console
+    /// stuck: the kernel stores a job without auto-accept as `Paused` and never enqueues it, and nothing on
+    /// its own page could change that.
+    /// </summary>
+    private Task AcceptAsync() => ActAsync("accept", null, "accepted — the run is queued");
+
+    private Task SteerAsync()
+    {
+        var text = _steer.Trim();
+        if (text.Length == 0)
+            return Task.CompletedTask;
+        return ActAsync(
+            "steer",
+            new JsonObject { ["properties"] = new JsonObject { ["text"] = text } },
+            "steer queued — the run reads it on its next turn",
+            clear: () => _steer = "");
+    }
+
+    private Task CancelAsync() => ActAsync("cancel", null, "cancel requested — the kernel cancels the run");
+
+    private Task ExtendAsync() => ActAsync(
+        "extendBudget",
+        new JsonObject { ["properties"] = new JsonObject { ["usd"] = _extendUsd } },
+        $"budget extended by ${_extendUsd.ToString("0.##", CultureInfo.InvariantCulture)}");
+
+    /// <summary>
+    /// One act, one place: the `RunActionAsync` seam (so an `If-Match` from the envelope the page rendered is
+    /// sent and a 412 is reported rather than retried), the kernel's own envelope on a refusal, then a re-read
+    /// so the page describes the job as it stands NOW.
+    ///
+    /// <para><b>`followOperation: false` on purpose.</b> These four answer 202 with an operation that is the
+    /// RUN — `cancel`'s only reaches a terminal state when the run stops, and `accept`'s when the job finishes,
+    /// which may be minutes. Following it would hold the button's `_busy` for the whole poll and, on a job that
+    /// then parks on an approval, for the full timeout. The 202 is the answer; the page reloads and the live
+    /// stream carries the rest. Same lesson as `CreateJob` (F16).</para>
+    /// </summary>
+    private async Task ActAsync(string action, JsonObject? body, string done, Action? clear = null)
+    {
+        if (_busy || _scope is null)
+            return;
+        _busy = true;
+        _notice = "";
+        _actFailure = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var result = await Data.RunActionAsync(
+                JobPath,
+                action,
+                body?.ToJsonString(),
+                _job?.ETag is { Length: > 0 } etag ? etag : null,
+                ct: ct,
+                followOperation: false);
+
+            if (!result.Ok)
+            {
+                _actFailure = PortalFailure.Local(
+                    result.ErrorCode ?? $"HTTP {result.StatusCode}",
+                    result.ErrorMessage ?? $"The kernel refused '{action}' on {Name}.");
+                return;
+            }
+
+            clear?.Invoke();
+            // The 202 says the kernel ACCEPTED; nothing here says the work finished, because the operation is
+            // the run. A notice that claimed completion would be the page inventing a result.
+            _notice = result.Accepted
+                ? done + " (the kernel accepted; the operation is the run itself)"
+                : done;
+        }
+        catch (ArmException ex)
+        {
+            _actFailure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+            // Re-read FIRST and report after: the reload is what clears a stale failure, and the schedules
+            // page learned that the hard way.
+            if (_scope is not null)
+            {
+                var refreshed = await Data.JobAsync(_scope, Workspace, Name, ct);
+                if (refreshed is not null)
+                    _job = refreshed;
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// A job exposes two artifact routes (the patch and the transcript) plus one transcript per run.
+    /// Each is probed through the session, so an artifact the run never wrote is shown as absent
+    /// instead of as a link that 404s.
+    /// </summary>
+    private async Task<IReadOnlyList<PortalArtifact>> ProbeAsync(string jobPath, CancellationToken ct)
+    {
+        var candidates = new List<string>
+        {
+            jobPath + "/artifacts/patch.diff",
+            jobPath + "/artifacts/transcript.json",
+        };
+
+        var client = await Data.ClientAsync(ct);
+        var runs = new List<string>();
+        await foreach (var run in client.ListAsync<PortalEnvelope<JsonObject>>(jobPath + "/runs", ct: ct))
+        {
+            if (run.Name is { Length: > 0 })
+                runs.Add(run.Name);
+        }
+
+        foreach (var run in runs.Take(5))
+            candidates.Add($"{jobPath}/runs/{run}/transcript");
+
+        var artifacts = new List<PortalArtifact>();
+        foreach (var candidate in candidates)
+            artifacts.Add(await Arm.ProbeAsync(candidate, ct));
+        return artifacts;
+    }
+
+    private void OnViewChanged() => _ = InvokeAsync(StateHasChanged);
+}

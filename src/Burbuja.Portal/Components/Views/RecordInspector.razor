@@ -1,0 +1,110 @@
+@namespace Burbuja.Portal.Components.Views
+
+@if (Row is null)
+{
+    <EmptyState Text="Select a record to inspect it." />
+}
+else
+{
+    <div class="inspector">
+        <nav class="ring ring-small" role="tablist">
+            @foreach (var tab in Tabs)
+            {
+                <button type="button"
+                        role="tab"
+                        aria-selected="@(tab == _tab)"
+                        class="ring-tab @(tab == _tab ? "ring-tab-on" : "")"
+                        @onclick="() => _tab = tab">@tab</button>
+            }
+        </nav>
+        <div class="inspector-body">
+            @switch (_tab)
+            {
+                case "Summary":
+                    <dl class="kv">
+                        <dt>record</dt><dd>#@Row.Seq, @Row.Type</dd>
+                        <dt>kind</dt><dd>@Row.KindLabel@(Row.Step > 0 ? $", step {Row.Step}" : "")</dd>
+                        <dt>turn</dt><dd>@Row.Turn</dd>
+                        <dt>title</dt><dd>@Row.Title</dd>
+                        <dt>status</dt><dd><StatusPill Status="@Row.Status" /></dd>
+                        <dt>summary</dt><dd>@Row.Text</dd>
+                        <dt>value</dt><dd>@(Row.Value?.ToString("0.######", CultureInfo.InvariantCulture) ?? "—")</dd>
+                        <dt>at</dt><dd>@TrajectoryView.Stamp(Row.At)</dd>
+                    </dl>
+                    break;
+                case "Payload":
+                    <JsonViewer Node="@Row.Payload" Limit="@Limit" />
+                    break;
+                case "Result":
+                    @if (Row.Result is null)
+                    {
+                        <EmptyState Text="This record carries no result (a tool result pairs here by its sub-stream id)." />
+                    }
+                    else
+                    {
+                        <JsonViewer Node="@Row.Result" Limit="@Limit" />
+                    }
+                    break;
+                case "Timing":
+                    <dl class="kv">
+                        <dt>seq</dt><dd>#@Row.Seq</dd>
+                        <dt>recorded at</dt><dd>@TrajectoryView.Stamp(Row.At)</dd>
+                        <dt>step duration</dt><dd>@TrajectoryView.Ms(Row.DurationMs)</dd>
+                        <dt>turn</dt><dd>@Row.Turn</dd>
+                        <dt>step</dt><dd>@Row.Step</dd>
+                    </dl>
+                    break;
+                case "Tokens":
+                    @if (Tokens.Count == 0)
+                    {
+                        <EmptyState Text="This record carries no token counts; the budget ledger holds the money." />
+                    }
+                    else
+                    {
+                        <dl class="kv">
+                            @foreach (var (key, value) in Tokens)
+                            {
+                                <dt>@key</dt><dd>@value</dd>
+                            }
+                        </dl>
+                    }
+                    break;
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly string[] Tabs = ["Summary", "Payload", "Result", "Timing", "Tokens"];
+    private string _tab = "Summary";
+
+    [Parameter] public TrajectoryRow? Row { get; set; }
+
+    [Parameter] public int Limit { get; set; } = 128 * 1024;
+
+    private IReadOnlyList<(string Key, string Value)> Tokens => Find(Row?.Payload).Concat(Find(Row?.Result)).ToList();
+
+    /// <summary>
+    /// Token counts are whatever the payload actually carries — the portal never estimates them.
+    /// Both the job path and the session path name them <c>inputTokens</c>/<c>outputTokens</c> (or
+    /// nest a <c>usage</c> object), so the inspector walks the JSON instead of guessing a shape.
+    /// </summary>
+    private static IEnumerable<(string Key, string Value)> Find(JsonNode? node, string prefix = "")
+    {
+        if (node is not JsonObject obj)
+            yield break;
+        foreach (var (key, value) in obj)
+        {
+            if (value is null)
+                continue;
+            var path = prefix.Length == 0 ? key : $"{prefix}.{key}";
+            if (key.Contains("token", StringComparison.OrdinalIgnoreCase) && value is JsonValue scalar)
+                yield return (path, scalar.ToJsonString());
+            else
+            {
+                foreach (var nested in Find(value, path))
+                    yield return nested;
+            }
+        }
+    }
+}

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Mcp</RootNamespace>
+    <Description>Kernel MCP server: the kernel's own tool gate, exposed as MCP tools, resources and prompts.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Mcp.Abstractions/Burbuja.Mcp.Abstractions.csproj" />
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+    <ProjectReference Include="../Burbuja.Core/Burbuja.Core.csproj" />
+    <ProjectReference Include="../Burbuja.Core.Sdk/Burbuja.Core.Sdk.csproj" />
+    <ProjectReference Include="../Burbuja.Agents.Abstractions/Burbuja.Agents.Abstractions.csproj" />
+    <ProjectReference Include="../Burbuja.Agents/Burbuja.Agents.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,17 @@
+{
+  "id": "Tools.Http",
+  "name": "HTTP tools",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Tools.Http.dll",
+  "entry_type": "Burbuja.Plugins.Tools.Http.HttpToolsPlugin",
+  "load": "dynamic",
+  "provides": ["tools.http"],
+  "extension_points": ["agents.tool"],
+  "requires": ["Network"],
+  "roles": ["all", "worker"],
+  "config_section": null,
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 330
+}

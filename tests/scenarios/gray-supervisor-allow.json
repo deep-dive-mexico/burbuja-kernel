@@ -1,0 +1,29 @@
+{
+  "id": "gray-supervisor-allow",
+  "defaultUsage": { "inputTokens": 80, "outputTokens": 40, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_gray", "name": "bash", "input": { "command": "unknowncmd --gray" } }
+          ]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "ok" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "safe unknown", "confidence": 0.85 } }
+    ]
+  }
+}

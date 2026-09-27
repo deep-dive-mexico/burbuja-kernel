@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Burbuja.Mcp.UnitTests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Burbuja.Mcp.Abstractions/Burbuja.Mcp.Abstractions.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Mcp/Burbuja.Mcp.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Core/Burbuja.Core.csproj" />
+    <ProjectReference Include="../../src/Burbuja.Agents/Burbuja.Agents.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Policy.Core/Burbuja.Plugins.Policy.Core.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Supervisor/Burbuja.Plugins.Supervisor.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Llm.Scripted/Burbuja.Plugins.Llm.Scripted.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Tools.Workspace/Burbuja.Plugins.Tools.Workspace.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Tools.Agents/Burbuja.Plugins.Tools.Agents.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Tools.Http/Burbuja.Plugins.Tools.Http.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\scenarios\*.json" CopyToOutputDirectory="PreserveNewest" Link="scenarios\%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

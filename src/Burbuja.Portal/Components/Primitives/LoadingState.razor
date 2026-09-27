@@ -1,0 +1,18 @@
+@namespace Burbuja.Portal.Components.Primitives
+
+@*
+    The state that is NOT an empty state.
+
+    A page that renders "Nothing here." while its reads are still in flight is telling the reader
+    something false, and the two are indistinguishable on screen — measured in the Pi compose lane,
+    where `/portal/sessions` screenshotted `No jobs in this resource group.` with a succeeded job in
+    the store. `role="status"` makes it announce itself rather than look like an answer.
+*@
+<p class="muted loading" role="status">
+    <span class="loading-mark" aria-hidden="true">◌</span>
+    <span>@Text</span>
+</p>
+
+@code {
+    [Parameter] public string Text { get; set; } = "Loading…";
+}

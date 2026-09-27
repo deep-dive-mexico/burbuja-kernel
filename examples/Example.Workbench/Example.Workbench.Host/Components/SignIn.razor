@@ -1,0 +1,22 @@
+@page "/workbench/signin"
+@attribute [AllowAnonymous]
+
+<PageTitle>Workbench sign in</PageTitle>
+<h1>Workbench sign in</h1>
+@if (Error is not null)
+{
+    <p role="alert">Sign-in was not accepted. Check your credentials and portal access.</p>
+}
+<form method="post" action="/workbench/signin" data-enhance="false">
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" required />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+    <button type="submit">Sign in</button>
+</form>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")] public string? Error { get; set; }
+    [SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrl { get; set; }
+}

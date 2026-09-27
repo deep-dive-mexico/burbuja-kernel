@@ -1,0 +1,310 @@
+@page "/portal/workspaces/{Name}"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+
+<PageLoaded Loaded="@(_workspace is not null || _failure is not null)" />
+<PageTitle>@Name</PageTitle>
+
+<p class="small"><a href="/portal/workspaces">← all workspaces</a></p>
+
+<ErrorAlert Failure="_failure" />
+
+@if (_workspace is null)
+{
+    <Card Title="@Name" Subtitle="loading">
+        <EmptyState Text="Reading the workspace…" />
+    </Card>
+}
+else
+{
+    <h1>
+        @Name
+        <span class="chip">@(_workspace.DisplayName is { Length: > 0 } d ? d : "no display name")</span>
+        <span class="chip">@(_workspace.Profile is { Length: > 0 } p ? p : "—")</span>
+        <span class="chip">rev @_workspace.Revision</span>
+        @if (_workspace.Lifecycle is { Length: > 0 } lifecycle)
+        {
+            <span class="chip @(lifecycle == "Ready" ? "chip-good" : lifecycle == "Failed" ? "chip-bad" : "chip-warn")">@lifecycle</span>
+        }
+    </h1>
+
+    @*
+        M10 U7 — the lifecycle, on the page. `Lifecycle`, `Generation` and the bound compute workspace are what
+        an initialize PRODUCES, and a page that showed only the hub left the reader unable to tell a workspace
+        that had been provisioned from one that never was. **Initialize / Reconcile** is the declared action:
+        the same call is both, because the kernel reconciles by generation — a second run on an unchanged
+        workspace leaves the generation where it is and answers `reconciled: false`, which is asserted as a
+        browser fact rather than explained here.
+    *@
+    <Card Title="Lifecycle" Subtitle="what provisioning produced — and the action that runs it">
+        <dl class="kv kv-inline">
+            <dt>lifecycle</dt>
+            <dd>
+                @if (_workspace.Lifecycle is { Length: > 0 } state)
+                {
+                    <span class="chip @(state == "Ready" ? "chip-good" : state == "Failed" ? "chip-bad" : "chip-warn")">@state</span>
+                }
+                else
+                {
+                    <span class="muted small">never asked to initialize</span>
+                }
+            </dd>
+            <dt>generation</dt>
+            <dd>@(_workspace.Generation?.ToString(CultureInfo.InvariantCulture) ?? "—")</dd>
+            <dt>compute</dt>
+            <dd>
+                @if (!_computeVisible)
+                {
+                    <span class="muted small">compute: no access</span>
+                }
+                else if (_workspace.ComputeWorkspaceId is { Length: > 0 } compute)
+                {
+                    <a href="@ComputeHref(compute)"><code>@compute</code></a>
+                }
+                else
+                {
+                    <span class="muted small">not bound</span>
+                }
+            </dd>
+        </dl>
+
+        @if (_workspace.LifecycleError is { Length: > 0 } why)
+        {
+            <div class="alert alert-warn" role="alert">
+                <strong>Provisioning failed</strong>
+                <span>@why</span>
+            </div>
+        }
+
+        <div class="row">
+            <button class="btn btn-primary" type="button" @onclick="InitializeAsync" disabled="@_busy">
+                @(_busy ? "Working…" : _workspace.Lifecycle is { Length: > 0 } ? "Initialize / Reconcile" : "Initialize")
+            </button>
+            @if (_notice is { Length: > 0 })
+            {
+                <span class="muted small">@_notice</span>
+            }
+        </div>
+    </Card>
+
+    <Card Title="What this workspace holds" Subtitle="@Subtitle()">
+        @if (_hub is null)
+        {
+            <EmptyState Text="The kernel answered without a hub for this workspace. That is a defect rather than an empty workspace: the projection is filled on a single-resource read." />
+        }
+        else
+        {
+            @if (_hub.IsPartial)
+            {
+                <div class="alert alert-warn" role="status">
+                    The kernel stopped reading at @_hub.Scanned jobs, so these counts are a floor rather than a
+                    total. Nothing here is wrong; it is bounded.
+                </div>
+            }
+
+            <div class="tiles">
+                <div class="tile"><span class="tile-label">jobs</span><span class="tile-value">@_hub.Jobs</span></div>
+                <div class="tile"><span class="tile-label">spend</span><span class="tile-value">$@_hub.SpendUsd.ToString("0.####")</span></div>
+                <div class="tile"><span class="tile-label">schedules</span><span class="tile-value">@_hub.Schedules (@_hub.PausedSchedules paused)</span></div>
+                <div class="tile"><span class="tile-label">next run</span><span class="tile-value">@(_hub.NextScheduleRun?.ToString("u") ?? "—")</span></div>
+            </div>
+
+            <h3>By status</h3>
+            <div>
+                @foreach (var (group, count) in _hub.Groups())
+                {
+                    <span class="chip @ChipClass(group)">@group @count</span>
+                }
+            </div>
+
+            <h3>Recent jobs</h3>
+            @if (_hub.Recent.Count == 0)
+            {
+                <p class="muted small">No jobs yet. A job is a PUT of <code>workspaces/@Name/jobs</code>.</p>
+            }
+            else
+            {
+                <div class="grid-scroll"><QuickGrid Items="_hub.Recent.AsQueryable()" Class="grid">
+                    <TemplateColumn Title="job">
+                        <ChildContent Context="row">
+                            <a href="@JobHref(row.Name)">@row.Name</a>
+                        </ChildContent>
+                    </TemplateColumn>
+                    <PropertyColumn Property="r => r.Title" Title="title" />
+                    <TemplateColumn Title="status">
+                        <ChildContent Context="row">
+                            <span class="chip @ChipClass(row.Status)">@row.Status</span>
+                        </ChildContent>
+                    </TemplateColumn>
+                    <TemplateColumn Title="cost">
+                        <ChildContent Context="row">
+                            <span>$@row.Usd.ToString("0.####")</span>
+                        </ChildContent>
+                    </TemplateColumn>
+                    <PropertyColumn Property="r => r.UpdatedAt" Title="updated" />
+                    <TemplateColumn Title="">
+                        <ChildContent Context="row">
+                            @if (row.PendingApprovalId is { Length: > 0 } approval)
+                            {
+                                <a class="btn btn-small" href="@ApprovalHref(approval)">decide</a>
+                            }
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid></div>
+            }
+
+            <p class="muted small">Read at @_hub.GeneratedAt.ToString("u").</p>
+        }
+    </Card>
+
+    <Card Title="Configuration" Subtitle="@(_workspace.RepoId ?? "no repo")">
+        <div>
+            <span class="chip">branch @_workspace.BaseBranch</span>
+            <span class="chip">strategy @_workspace.DefaultStrategy</span>
+            <span class="chip">@(_workspace.DefaultMaxUsd is { } usd ? $"${usd:0.##}/job" : "no default budget")</span>
+            @if (_workspace.Remote is { Length: > 0 } remote)
+            {
+                <span class="chip">@remote</span>
+            }
+        </div>
+    </Card>
+}
+
+@code {
+    private bool _busy;
+    private string _notice = "";
+    private PortalEnvelope<PortalWorkspace>? _envelope;
+
+    /// <summary>
+    /// Where a bound compute workspace is readable. `Burbuja.Compute/workspaces` has a registered view, so the
+    /// generic explorer answers for it at the type's scope — with the resource's own name in the query, which
+    /// is how the blade identifies the row it is showing. Built from the id ARM returned rather than guessed:
+    /// the two segments the explorer needs are its type and its name.
+    /// </summary>
+    /// <summary>
+    /// M11 S2 — whether this caller may read Burbuja.Compute at all. A lifecycle card that linked to a compute
+    /// workspace the role is denied would be a link to a refusal; "compute: no access" says the true thing.
+    /// </summary>
+    private bool _computeVisible = true;
+
+    private static string ComputeHref(string computeId) =>
+        // M15 M-R1 (review defect D2) — the old form pointed at a `/portal/resources` route this portal does
+        // not have; the blade that reads one resource by its full id is
+        // `/portal/explore/resource?id=…`, which is the link every other page in the console already builds
+        // (`WorkspaceDetail`'s own job and approval links, `Schedules`, `Search`, `Explore`). The old form was
+        // a dead link — the exact bug class `PortalBrowserE2ETests` G17 documents.
+        $"/portal/explore/resource?id={Uri.EscapeDataString(computeId)}";
+
+    /// <summary>
+    /// Initialize, or reconcile — one action, because the kernel decides which by generation.
+    ///
+    /// <para>The call is a POST of the declared `initialize` with this page's `If-Match`, and it follows
+    /// `Azure-AsyncOperation` when the kernel accepts: an initialize that provisions answers 202, and by the
+    /// time this returns the lifecycle is `Ready` or `Failed`. The page is then re-read, so every field above
+    /// describes what the operation actually did rather than what the click hoped for.</para>
+    /// </summary>
+    private async Task InitializeAsync()
+    {
+        if (_busy || _scopeRef is null)
+            return;
+        _busy = true;
+        _notice = "";
+        var ct = CancellationToken.None;
+        try
+        {
+            var result = await Data.RunActionAsync(
+                $"{_scopeRef.AgentsRoot}/workspaces/{Name}", "initialize", "{}", _envelope?.ETag,
+                TimeSpan.FromMinutes(2), ct);
+
+            if (!result.Ok)
+            {
+                _notice = $"the host refused initialize: {result.ErrorCode} — {result.ErrorMessage}";
+                return;
+            }
+
+            var reconciled = result.Body?["reconciled"]?.GetValue<bool>();
+            var generation = result.Body?["generation"]?.GetValue<int?>();
+            _notice = reconciled is null
+                ? "initialize accepted"
+                : reconciled == true
+                    ? $"reconciled: true — generation {generation}"
+                    : $"reconciled: false — nothing moved; generation {generation}";
+
+            await ReloadAsync();
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    [Parameter]
+    public string Name { get; set; } = "";
+
+    private PortalFailure? _failure;
+    private PortalWorkspace? _workspace;
+    private PortalWorkspaceHub? _hub;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _computeVisible = await Data.MayAsync("Burbuja.Compute/workspaces/read", CancellationToken.None);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _failure = null;
+        _workspace = null;
+        _hub = null;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scopeRef = scope;
+
+            var envelope = await Data.WorkspaceAsync(scope, Name, ct);
+            _envelope = envelope;
+            _workspace = envelope?.Properties;
+            _hub = envelope?.Properties?.Hub;
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    private string Subtitle() =>
+        _hub is null ? Name : $"{_hub.Jobs} jobs, ${_hub.SpendUsd:0.####} booked";
+
+    private ArmScope? _scopeRef;
+
+    /// <summary>A job is a resource, so the explorer renders it by its own id — the same choice the mandate
+    /// blade makes for an approval, and the reason neither page needs a bespoke job view.</summary>
+    private string JobHref(string job) =>
+        $"/portal/explore/resource?id={Uri.EscapeDataString($"{_scopeRef?.AgentsRoot}/workspaces/{Name}/jobs/{job}")}";
+
+    private string ApprovalHref(string approvalId) =>
+        $"/portal/explore/resource?id={Uri.EscapeDataString($"/subscriptions/{_scopeRef?.SubscriptionId}/providers/Burbuja.Resources/approvals/{approvalId}")}";
+
+    /// <summary>
+    /// The kernel's group names colour the chip: a status that waits for a person is not the same as one
+    /// that is running, and a page that painted them the same would hide the one case an operator must act
+    /// on. Unknown words fall through to the neutral chip rather than guessing.
+    /// </summary>
+    private static string ChipClass(string status) => status.ToLowerInvariant() switch
+    {
+        "succeeded" => "chip-good",
+        // M10 H3: the day's hard stop reads as a failure, not as a wait — nothing moves until an operator acts.
+        "failed" or "budgetexceeded" or "turnsexceeded" or "cancelled" or "blocked" => "chip-bad",
+        "parked" or "awaitingapproval" => "chip-warn",
+        _ => "",
+    };
+}

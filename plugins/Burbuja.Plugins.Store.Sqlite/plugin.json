@@ -1,0 +1,17 @@
+{
+  "id": "Store.Sqlite",
+  "name": "SQLite Stores",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Store.Sqlite.dll",
+  "entry_type": "Burbuja.Plugins.Store.Sqlite.StoreSqlitePlugin",
+  "load": "dynamic",
+  "provides": ["store.sqlite"],
+  "extension_points": [],
+  "requires": ["FilesystemWrite"],
+  "roles": ["all", "control-plane", "worker"],
+  "config_section": "Sqlite",
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 100
+}

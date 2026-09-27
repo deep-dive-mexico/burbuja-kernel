@@ -1,0 +1,29 @@
+{
+  "id": "redaction",
+  "defaultUsage": { "inputTokens": 40, "outputTokens": 20, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "tu_secret", "name": "write_file", "input": { "path": "leak.txt", "content": "AKIAIOSFODNN7EXAMPLE" } }
+          ]
+        }
+      },
+      {
+        "when": { "any": true },
+        "emit": {
+          "stopReason": "end_turn",
+          "blocks": [{ "type": "text", "text": "AKIAIOSFODNN7EXAMPLE should not leak" }]
+        }
+      }
+    ]
+  },
+  "supervisor": {
+    "decisions": [
+      { "when": { "any": true }, "emit": { "decision": "allow", "reason": "ok", "confidence": 0.9 } }
+    ]
+  }
+}

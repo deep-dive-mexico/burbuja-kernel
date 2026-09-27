@@ -1,0 +1,116 @@
+@namespace Burbuja.Portal.Components.Views
+@implements IDisposable
+
+@*
+    The live signal bar. It renders the state of the circuit's stream (bounded channel, 100 ms
+    flush, Last-Event-ID resume, paused while the circuit is down) and tells its parent when to
+    catch the range read up — the frames themselves are never rendered from the raw stream.
+
+    M15 M-R1 (item 6) — `Chrome` lets a page hide the bar's CONTROLS while keeping the stream. The
+    turn page's Normal depth is the message, the progress rail and the result; the chip, `applied /
+    reconnects` and the Pause button are Técnico's machinery. Hiding the markup must NOT detach the
+    stream: the subscription lives in `OnParametersSet`, which runs whether this file renders a bar
+    or nothing, so the parent still receives the signal that makes the trace fill in (G30 is the fact
+    that would otherwise go red on a page that simply stopped updating).
+*@
+@if (Chrome)
+{
+    <div class="stream-bar">
+        @if (Stream is null)
+        {
+            @if (ShowPill)
+            {
+                <StatusPill Status="idle" Label="no live stream" />
+            }
+        }
+        else
+        {
+            @if (ShowPill)
+            {
+                <StatusPill Status="@Stream.Status" Label="@($"stream · {Stream.Status}")" />
+            }
+            <span class="muted small">
+                applied @Stream.Applied · reconnects @Stream.Reconnects
+                @if (Stream.Lagged > 0)
+                {
+                    <span class="warn"> · kernel lag @Stream.Lagged</span>
+                }
+                @if (Stream.Overflowed > 0)
+                {
+                    <span class="warn"> · renderer overflow @Stream.Overflowed</span>
+                }
+                @if (Stream.LastResumeFrom is { Length: > 0 } resume)
+                {
+                    <span> · resumed from #@resume</span>
+                }
+            </span>
+            <button type="button" class="btn btn-ghost btn-small" @onclick="ToggleAsync">
+                @(Stream.Paused ? "Resume" : "Pause")
+            </button>
+        }
+        @if (StreamRefused is not null)
+        {
+            <span class="warn small">@StreamRefused</span>
+        }
+    </div>
+}
+
+@code {
+    private PortalStream? _subscribed;
+
+    [Parameter] public PortalStream? Stream { get; set; }
+
+    [Parameter] public string? StreamRefused { get; set; }
+
+    /// <summary>Whether to render the bar's own controls. False keeps the SUBSCRIPTION (below) and renders
+    /// nothing — the page still catches up on every signal, it just does not show the machinery. Default
+    /// true, so every existing caller is unchanged.</summary>
+    [Parameter] public bool Chrome { get; set; } = true;
+
+    /// <summary>
+    /// X51 (M16 M-R3) — whether the bar renders its OWN status pill. A page whose header already carries the
+    /// one live signal (§5.3) sets false so the claim is not duplicated while the machinery stays. Default
+    /// true, so every existing caller is unchanged.
+    /// </summary>
+    [Parameter] public bool ShowPill { get; set; } = true;
+
+    [Parameter] public EventCallback<long> OnSignal { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_subscribed, Stream))
+            return;
+        Unsubscribe();
+        if (Stream is not null)
+        {
+            Stream.Changed += Handle;
+            _subscribed = Stream;
+        }
+    }
+
+    private void Handle() => _ = InvokeAsync(async () =>
+    {
+        await OnSignal.InvokeAsync(Stream?.LastSeq ?? 0);
+        StateHasChanged();
+    });
+
+    private Task ToggleAsync()
+    {
+        if (Stream is null)
+            return Task.CompletedTask;
+        if (Stream.Paused)
+            Stream.Resume();
+        else
+            Stream.Pause();
+        return Task.CompletedTask;
+    }
+
+    private void Unsubscribe()
+    {
+        if (_subscribed is not null)
+            _subscribed.Changed -= Handle;
+        _subscribed = null;
+    }
+
+    public void Dispose() => Unsubscribe();
+}

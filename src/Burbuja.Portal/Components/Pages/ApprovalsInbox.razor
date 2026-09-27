@@ -1,0 +1,490 @@
+@page "/portal/approvals"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+@inject PortalPermissions Permissions
+@inject IEnumerable<IPortalApprovalContribution> Contributions
+@* M15 (item 11) — the AGE column is relative, and the console's one relative formatter (`PortalData.Age`)
+   takes a `now`. Injected rather than read from the clock directly so a fact can pin the instant. *@
+@inject TimeProvider Clock
+
+<PageTitle>Approvals</PageTitle>
+
+<PageHeader Eyebrow="Operate" Title="Approvals" Loaded="@(_loaded)">
+    <SubtitleContent>
+            One inbox for every application. A decision carries <code>If-Match</code>: a stale view is a
+            visible conflict, never a silent retry.
+    </SubtitleContent>
+</PageHeader>
+
+@if (_conflict is not null)
+{
+    <div class="alert alert-warn" role="alert">
+        <strong>Conflict — nothing was sent</strong>
+        <span>@_conflict</span>
+        @* M16 K-R2 — the act inside the conflict banner is the page's "do the thing again", so it is
+               bordered; the ordinary reload in the toolbar stays a ghost. *@
+            <button class="btn btn-outline btn-small" type="button" @onclick="ReloadAsync">Reload the inbox</button>
+    </div>
+}
+
+@if (_notice is not null)
+{
+    <div class="alert alert-ok" role="status">@_notice</div>
+}
+
+<ErrorAlert Failure="_failure" />
+
+<label class="check">
+    <input type="checkbox" checked="@_pendingOnly" @onchange="TogglePendingAsync" />
+    pending only
+</label>
+
+@if (HiddenCount > 0)
+{
+    @* M13 R0 — F21. This shell page is English, and it said its one sentence in Spanish: a leak the M12 plan
+       said R1/R3 had closed. The reason sentence below went with it. The write rule it names is a MIRROR —
+       the kernel re-evaluates every action on the wire, so a hidden button is never the protection. *@
+    <div class="alert alert-info" role="status">
+        @Text.Plural(HiddenCount, "approval waits", "approvals wait") for a decision that is not yours: shown, without buttons. @_undecidableWhy
+    </div>
+}
+
+@if (_rows.Count == 0 && _failure is null)
+{
+    <EmptyState Text="Nothing is waiting for a human." />
+}
+else
+{
+    <div class="grid-scroll"><QuickGrid Items="_rows.AsQueryable()" Class="grid">
+        @* M15 M-UI (item 19) — each data cell carries `data-label`, which is what the ≤620px card fallback
+           reads with `attr(data-label)` to name the cell it is showing. QuickGrid renders the `<td>` itself
+           and exposes no per-cell data attribute (only `ColumnBase.Class`), so the label rides the cell's own
+           wrapper and the stylesheet matches it inside the cell; a hand-written `.grid` table can put it on
+           the `<td>` instead and the same rule labels it. `SortBy` is the `GridSort<T>.ByAscending` the
+           `PropertyColumn` built internally, so the two sortable headers keep sorting through the template. *@
+        <TemplateColumn Title="risk">
+            <ChildContent Context="row">
+                @* M16 K-R2 §6 — the risk is a TAG, not a pill: a pill names a STATE and this column names
+                   the KIND of band the kernel wrote, which is exactly the distinction the vocabulary draws.
+                   `StatusPill.Tone` is the generic word→tone source and its tone classes are the tag
+                   vocabulary now, so a band it does not carry (`material`, `paper_fill`, `fs.write`) comes
+                   back neutral and NEVER green — a colour that rounds a risk up is a lie in 11px. *@
+                <span data-label="risk"><span class="tag @StatusPill.Tag(row.Risk)">@row.Risk</span></span>
+            </ChildContent>
+        </TemplateColumn>
+        <TemplateColumn Title="subject">
+            <ChildContent Context="row">
+                <span data-label="subject">@row.Subject</span>
+            </ChildContent>
+        </TemplateColumn>
+        <TemplateColumn Title="job">
+            <ChildContent Context="row">
+                <span data-label="job">
+                    @if (row.JobHref is { Length: > 0 } href)
+                    {
+                        <a class="btn btn-small" href="@href">open job</a>
+                    }
+                    else
+                    {
+                        <span class="muted small">—</span>
+                    }
+                </span>
+            </ChildContent>
+        </TemplateColumn>
+        <TemplateColumn Title="preview">
+            <ChildContent Context="row">
+                @* M15 (item 11) — the column used to print `request.preview`, which the kernel sometimes fills
+                   with a RAW JSON blob (a redacted order, an integration's input). What a reader needs is the
+                   one consequence clause; the record itself rides the disclosure beside it, labelled with the
+                   console's own word for the technical depth (`DepthLinks`). The label stays `preview` because
+                   that is the name the ≤620px card fallback reads. *@
+                <span data-label="preview">@row.Consequence</span>
+                @* The same `Técnico` disclosure Create consulta uses, and the console's own `JsonViewer`:
+                   the record is asked for rather than printed, and it is never hidden. *@
+                <details class="technical">
+                    <summary>Technical record</summary>
+                    <JsonViewer Node="row.Record" />
+                </details>
+            </ChildContent>
+        </TemplateColumn>
+        <TemplateColumn Title="opened" Sortable="true" SortBy="@(GridSort<ApprovalRow>.ByAscending(r => r.OpenedAt))">
+            <ChildContent Context="row">
+                @* M15 (item 11) — relative age on the surface, the absolute instant in the `title`, through the
+                   console's shared `PortalData.Age`. The absolute instant is omitted (not faked) when the
+                   record carries no `openedAt`. *@
+                <span data-label="opened" title="@(row.OpenedAt == default ? null : row.OpenedAt.ToString("u"))">@row.Age</span>
+            </ChildContent>
+        </TemplateColumn>
+        <TemplateColumn Title="expires">
+            <ChildContent Context="row">
+                <span data-label="expires">@row.Expires</span>
+            </ChildContent>
+        </TemplateColumn>
+        <TemplateColumn Title="status" Sortable="true" SortBy="@(GridSort<ApprovalRow>.ByAscending(r => r.Status))">
+            <ChildContent Context="row">
+                @* M16 K-R2 — the decision's state is a STATUS, so it is a dot and a word through the one
+                   tone source, exactly as the rest of the console states it. It printed a bare word. *@
+                <span data-label="status"><StatusPill Status="@row.Status" /></span>
+            </ChildContent>
+        </TemplateColumn>
+        @if (CanDecide)
+        {
+            <TemplateColumn Title="decide" Align="Align.Right">
+                <ChildContent Context="row">
+                    @* M11 S1 — a card the kernel would refuse gets no button. The old condition was the
+                       caller's role alone, so a user could be offered decisions on another owner's
+                       resources and learn by 403. *@
+                    @if (row.Pending && !row.Decidable)
+                    {
+                        <span class="muted small" title="@_undecidableWhy">not decidable with your role</span>
+                    }
+                    else if (row.Pending)
+                    {
+                        <button class="btn btn-small btn-ok" type="button" @onclick='() => Begin(row, "approve")'>approve</button>
+                        @if (row.Grantable)
+                        {
+                            <button class="btn btn-small" type="button" @onclick='() => Begin(row, "grant")'>grant</button>
+                        }
+                        <button class="btn btn-small btn-bad" type="button" @onclick='() => Begin(row, "deny")'>deny</button>
+                        @if (row.Answerable)
+                        {
+                            <button class="btn btn-small" type="button" @onclick='() => Begin(row, "answer")'>answer</button>
+                        }
+                    }
+                </ChildContent>
+            </TemplateColumn>
+        }
+    </QuickGrid></div>
+}
+
+@if (_deciding is not null)
+{
+    <Card Title="@($"{_action}, {_deciding.Subject}")" Subtitle="@_deciding.Id">
+        @* The same consequence clause the row shows, so the confirmation names the act the button sends. *@
+        <p class="muted small">@_deciding.Consequence</p>
+        @if (_action is "answer")
+        {
+            <label for="answer">answer</label>
+            <textarea id="answer" rows="3" @bind="_answer"></textarea>
+        }
+        else
+        {
+            <label for="note">note (optional)</label>
+            <input id="note" @bind="_note" />
+        }
+
+        @if (_action is "grant")
+        {
+            <label for="scope">grant scope</label>
+            <input id="scope" @bind="_grantScope" placeholder="/subscriptions/local/resourceGroups/dev" />
+            <label for="hours">grant hours</label>
+            <input id="hours" type="number" step="0.5" @bind="_grantHours" />
+        }
+
+        <div class="row">
+            <button class="btn btn-primary" type="button" @onclick="ConfirmAsync" disabled="@(_busy)">Confirm</button>
+            <button class="btn btn-ghost" type="button" @onclick="Cancel">Cancel</button>
+        </div>
+    </Card>
+}
+
+@code {
+    private sealed record ApprovalRow(
+        string Id,
+        string Risk,
+        string Subject,
+        /// <summary>M15 (item 11) — WHAT APPROVING DOES, one clause, from the record's own fields. The raw
+        /// record is the next field and rides the `Técnico` disclosure.</summary>
+        string Consequence,
+        /// <summary>M15 (item 11) — the relative age, from <see cref="PortalData.Age"/>.</summary>
+        string Age,
+        /// <summary>The absolute `openedAt`, for the age cell's `title` and the column's sort. `default`
+        /// when the record holds none, which the markup renders as no title at all.</summary>
+        DateTimeOffset OpenedAt,
+        string Expires,
+        string Status,
+        /// <summary>M15 (item 11) — the record as JSON, reachable behind the disclosure. The page never
+        /// prints it as the primary content, but it is never hidden either.</summary>
+        JsonNode? Record,
+        bool Pending,
+        bool Grantable,
+        bool Answerable,
+        /// <summary>M11 S1 — the KERNEL said this card is this caller's to decide.</summary>
+        bool Decidable,
+        string? ETag,
+        string? JobHref);
+
+    private PortalFailure? _failure;
+    private List<ApprovalRow> _rows = [];
+    private bool _loaded;
+    private ArmScope? _scope;
+    private IReadOnlyList<string> _roles = [];
+    private ApprovalRow? _deciding;
+    private string _action = "approve";
+    private string? _note;
+    private string? _answer;
+    private string? _grantScope;
+    private double? _grantHours;
+    private string? _conflict;
+    private string? _notice;
+    private bool _busy;
+    private bool _pendingOnly = true;
+
+    /// <summary>
+    /// UX only: the kernel re-evaluates the action on the wire, so a hidden button is never a
+    /// protection — a Reader that crafts the POST still gets the 403 envelope.
+    /// </summary>
+    private bool CanDecide { get; set; }
+
+    /// <summary>
+    /// The reason a card is not this caller's, said once on the page. M11 S1's rule: a card is decidable by
+    /// whoever could have opened the thing it is about.
+    /// </summary>
+    private const string _undecidableWhy =
+        "A card is decided with the permission that would have opened the thing it is about: write on the subject's resource.";
+
+    /// <summary>How many pending cards the kernel says this caller may not decide. Said, not hidden: an inbox
+    /// that silently dropped them would look complete.</summary>
+    private int HiddenCount => _rows.Count(r => r.Pending && !r.Decidable);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var session = await Arm.SessionAsync();
+        _roles = session?.Roles ?? [];
+        CanDecide = await Data.MayAsync("Burbuja.Resources/approvals/approve/action", CancellationToken.None);
+        await ReloadAsync();
+    }
+
+    private async Task TogglePendingAsync(ChangeEventArgs args)
+    {
+        _pendingOnly = args.Value is true;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _conflict = null;
+        _failure = null;
+        var ct = CancellationToken.None;
+        try
+        {            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scope = scope;
+
+            var approvals = await Data.ApprovalsAsync(scope, _pendingOnly, ct);
+            var now = Clock.GetUtcNow();
+            _rows = approvals.Select(a =>
+            {
+                var request = a.Properties?.Request;
+                var status = a.Properties?.Outcome is { } outcome
+                    ? outcome["status"]?.GetValue<string>() ?? "decided"
+                    : "pending";
+                return new ApprovalRow(
+                    a.Name ?? "?",
+                    request?.RiskClass ?? "—",
+                    Short(request?.SubjectId) ?? "—",
+                    Consequence(a.Properties),
+                    PortalData.Age(a.Properties?.OpenedAt, now),
+                    a.Properties?.OpenedAt ?? default,
+                    Stamp(a.Properties?.ExpiresAt),
+                    status,
+                    // The record, verbatim, behind the disclosure: the page stops printing the raw preview
+                    // but never hides the thing the decision is about.
+                    JsonSerializer.SerializeToNode(a, Burbuja.Core.Abstractions.Json.JsonWire.Options),
+                    string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase),
+                    request?.Grantable ?? false,
+                    request?.Options?.Contains("answer", StringComparer.OrdinalIgnoreCase) ?? false,
+                    a.Properties?.Decidable ?? false,
+                    a.ETag,
+                    // The inbox is namespace-agnostic, so the subject (a pomnibot job or an agents
+                    // job) decides where "open job" points — never a hard-coded Agents path.
+                    PortalData.JobLink(request?.SubjectId, request?.StreamId));
+            }).ToList();
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            // M15 M-R2 — the marker is about the READ, not about the rows. Tying `Loaded` to `_rows.Count > 0`
+            // made an inbox with nothing pending claim it had not finished reading, which is the opposite of
+            // what an empty inbox means; G43's `post-load` item is the fact that says so.
+            _loaded = true;
+        }
+    }
+
+    private void Begin(ApprovalRow row, string action)
+    {
+        _deciding = row;
+        _action = action;
+        _note = null;
+        _answer = null;
+        _grantScope = null;
+        _grantHours = null;
+        _conflict = null;
+        _notice = null;
+    }
+
+    private void Cancel() => _deciding = null;
+
+    private async Task ConfirmAsync()
+    {
+        if (_deciding is null || _scope is null || _busy)
+            return;
+        var ct = CancellationToken.None;
+        _busy = true;
+        var row = _deciding;
+        try
+        {
+            // Optimistic concurrency: re-read the approval and refuse to act on a view that moved.
+            var (fresh, etag) = await Data.ApprovalWithTagAsync(_scope, row.Id, ct);
+            if (fresh is null)
+            {
+                _conflict = $"Approval '{row.Id}' no longer exists.";
+                _deciding = null;
+                return;
+            }
+
+            if (row.ETag is { Length: > 0 } shown && etag is { Length: > 0 } current && !string.Equals(shown, current, StringComparison.Ordinal))
+            {
+                _conflict = $"Approval '{row.Id}' changed since this page rendered it (ETag moved). Reload and decide again.";
+                _deciding = null;
+                return;
+            }
+
+            var client = await Data.ClientAsync(ct);
+
+            // A subject may own its decision verb. The approval was re-read above before consulting it;
+            // its ETag is not an ETag for the contributed target resource.
+            ArmClientResponse response;
+            var contribution = fresh.Properties is { } properties
+                ? Contributions.Select(c => c.Decision(_scope, properties, row.Id, _action, _note)).FirstOrDefault(c => c is not null)
+                : null;
+            if (contribution is { } decision)
+            {
+                response = await client.PostActionAsync(decision.Target, decision.Body, ifMatch: null, ct: ct);
+            }
+            else
+            {
+                // Everything else keeps the generic decision it has always used: the approval's own
+                // approve/deny/answer, with the If-Match the re-read returned.
+                var body = new JsonObject();
+                if (_action is "answer")
+                    body["answer"] = _answer ?? "";
+                else if (_note is { Length: > 0 })
+                    body["note"] = _note;
+                if (_action is "grant")
+                {
+                    if (_grantScope is { Length: > 0 })
+                        body["grantScope"] = _grantScope;
+                    if (_grantHours is { } hours)
+                        body["grantHours"] = hours;
+                }
+
+                var verb = _action is "grant" ? "approve" : _action;
+                response = await client.PostActionAsync($"{_scope.ResourcesRoot}/approvals/{row.Id}/{verb}", body, etag, ct);
+            }
+
+            if (response.StatusCode == 412)
+            {
+                // A 412 is surfaced, never retried: the caller's copy of the approval is stale and a
+                // human has to look at what changed.
+                _conflict = $"The kernel refused the decision with HTTP 412 PreconditionFailed: {response.Error?.Message ?? "the ETag is stale"}.";
+                _deciding = null;
+                return;
+            }
+
+            if (response.StatusCode >= 400)
+            {
+                _failure = response.Error is { } error
+                    ? new PortalFailure(error.Code, error.Message, error.Target, error.HttpStatus)
+                    : PortalFailure.Local("ActionFailed", $"HTTP {response.StatusCode}");
+                return;
+            }
+
+            _notice = $"{_action} sent for {row.Id}.";
+            _deciding = null;
+            await ReloadAsync();
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string Stamp(DateTimeOffset? at) =>
+        at?.UtcDateTime.ToString("MM-dd HH:mm:ss'Z'", CultureInfo.InvariantCulture) ?? "—";
+
+    private static string Short(string? id) => Leaf(id) is { Length: > 0 } leaf ? leaf : "—";
+
+    /// <summary>The last path segment of an id, or the value itself when it carries no slash. Shared by the
+    /// subject column and the turn derivation so the two cannot disagree about what a name is.</summary>
+    private static string Leaf(string? id) =>
+        id is null ? "" : id.Split('/').LastOrDefault(s => s.Length > 0) ?? "";
+
+    /// <summary>
+    /// M15 (item 11) — WHAT APPROVING DOES, in one clause, from the fields the record holds and nothing else.
+    ///
+    /// <para><b>It never invents a consequence.</b> A card with no action and no transition cannot say what
+    /// approving would do, and says exactly that rather than dressing its preview up as one. The kernel's
+    /// preview is used only when it is human words: a preview that is raw JSON (a redacted order, an
+    /// integration's input) is what the disclosure is for, so the clause falls back to the action's own
+    /// name.</para>
+    ///
+    /// <para>Subject-specific consequences are supplied by the product that owns the decision.</para>
+    /// </summary>
+    private string Consequence(PortalApproval? approval)
+    {
+        if (approval is null)
+            return "The record does not say what approving would do: it carries no request.";
+        var request = approval.Request;
+        if (request is null)
+            return "The record does not say what approving would do: it carries no request.";
+
+        // A card the kernel has already settled has no "if I approve" left to describe. The `pending only`
+        // filter is on by default, but turning it off must not leave a decided card reading as if the
+        // decision were still open — the page says which state the record is in instead.
+        if (approval.Outcome is { } outcome)
+        {
+            var decided = outcome["status"]?.GetValue<string>();
+            return decided is { Length: > 0 }
+                ? $"Already decided: {decided}."
+                : "Already decided; the record does not name the outcome status.";
+        }
+
+        var act = request.Action is { Length: > 0 } action ? action
+            : request.Transition is { Length: > 0 } transition ? transition
+            : "";
+        if (act.Length == 0)
+            return "The record does not say what approving would do: it names no action or transition.";
+
+        var contributed = Contributions.Select(c => c.Consequence(approval)).FirstOrDefault(c => c is not null);
+        if (contributed is not null)
+            return contributed;
+
+        var subject = Leaf(request.SubjectId);
+        if (subject.Length == 0)
+            subject = Leaf(request.SubjectType);
+        if (subject.Length == 0)
+            subject = "the subject the record names";
+
+        var what = request.Preview is { Length: > 0 } preview && !LooksJson(preview) ? preview : act;
+        return $"Approving lets {what} proceed on '{subject}'.";
+    }
+
+    /// <summary>Whether a preview is a raw JSON blob rather than the human words the kernel sometimes writes
+    /// there. A blob is not a sentence and must not be spliced into one.</summary>
+    private static bool LooksJson(string preview)
+    {
+        var trimmed = preview.TrimStart();
+        return trimmed.StartsWith('{') || trimmed.StartsWith('[');
+    }
+}

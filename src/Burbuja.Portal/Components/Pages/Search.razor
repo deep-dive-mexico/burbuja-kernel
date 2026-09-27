@@ -1,0 +1,316 @@
+@page "/portal/search"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalData Data
+@inject IPortalArm Arm
+@inject NavigationManager Nav
+
+<PageTitle>Search</PageTitle>
+
+<PageHeader Eyebrow="Search" Title="Search" Loaded="@(_ready)">
+    <SubtitleContent>
+            Matches resource NAMES across the types this host lists, and requests in the activity ring by path,
+            principal or request id. It is a NAME search: the kernel has no index, so this asks each listable type at
+            this scope and says exactly how many it asked and how many it skipped.
+    </SubtitleContent>
+</PageHeader>
+
+<Card Title="Query" Subtitle="@_scope">
+    <form method="get" action="/portal/search">
+        <input class="input" name="q" value="@Query" placeholder="a resource name, a path fragment, a principal, a request id" />
+        <button class="btn btn-primary" type="submit">search</button>
+    </form>
+</Card>
+
+<ErrorAlert Failure="_failure" />
+
+<PortalContributions Slot="search" />
+
+@if (Query is { Length: > 0 } && _searched)
+{
+    <Card Title="Matches" Subtitle="@_summary">
+        @if (_matches.Count == 0)
+        {
+            <EmptyState Text="Nothing matched. Names are matched case-insensitively as a substring; a resource whose type only lists at another scope is not searched and is named above." />
+        }
+        else
+        {
+            <div class="grid-scroll"><QuickGrid Items="_matches.AsQueryable()" Class="grid">
+                <PropertyColumn Property="r => r.Kind" Title="kind" Sortable="true" />
+                <PropertyColumn Property="r => r.Name" Title="name" Sortable="true" />
+                <PropertyColumn Property="r => r.Type" Title="type" Sortable="true" />
+                <PropertyColumn Property="r => r.Detail" Title="detail" />
+                <TemplateColumn Title="" Align="Align.Right">
+                    <ChildContent Context="row">
+                        <a class="btn btn-small" href="@row.Href">open</a>
+                    </ChildContent>
+                </TemplateColumn>
+            </QuickGrid></div>
+        }
+    </Card>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "q")] public string? Query { get; set; }
+
+    /// <summary>
+    /// The page's bounds, all three named on the page: an unbounded search over every resource of every type
+    /// is a full scan of the store behind a text box, and a page that silently stopped at some number would
+    /// report "no match" for a resource that exists.
+    ///
+    /// <para><b>The caps are per TYPE and per ANSWER, not on the number of types.</b> The first version
+    /// capped the types at twelve and the browser fact failed for a reason worth keeping: on a host with
+    /// thirty-odd types the twelfth is reached somewhere in the second namespace, so a resource under
+    /// <c>Burbuja.Integrations</c> was never looked at and the page said "no match". Truncating each list is
+    /// what actually bounds the cost — a list is a page of a store, not a scan of it — and the number of
+    /// types is already bounded by what the host declares. <see cref="MaxTypes"/> is only a safety net
+    /// against a host that declares thousands.</para>
+    ///
+    /// <para><b>E2E (2026-09-26) — 64 became the twelve again.</b> Wave 2 took <c>Burbuja.Akos</c> alone past
+    /// thirty types (predictions, relations, vaccines, genome, organism, ledgers…), and the namespaces are walked
+    /// in order, so the 64th listable type was reached before <c>Burbuja.Integrations</c> and G17's integration
+    /// was "not searched here" — the exact failure the paragraph above describes. The net is 256: still a bound
+    /// against a pathological host, and well above what this host declares.</para>
+    /// </summary>
+    private const int MaxTypes = 256;
+
+    private const int MaxRowsPerType = 200;
+
+    /// <summary>How many matches the page will keep before it says it stopped.</summary>
+    private const int MaxMatches = 200;
+
+    /// <summary>How many parent instances a child type is searched under. A child collection is per parent,
+    /// so this is the one dimension where the search walks a tree rather than a list.</summary>
+    private const int MaxParents = 25;
+
+    private PortalFailure? _failure;
+    private string _scope = "";
+    private string _summary = "";
+    private bool _searched;
+    private List<Match> _matches = [];
+
+    /// <summary>True once every read this page owes the current query has landed — the `Loaded` claim.</summary>
+    private bool _ready;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _ = await Arm.SessionAsync();
+            if (Query is { Length: > 0 })
+                await RunAsync();
+        }
+        finally
+        {
+            _ready = true;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        _failure = null;
+        _searched = true;
+        var ct = CancellationToken.None;
+        try
+        {
+            var (scope, failure) = await Data.ResolveScopeAsync(ct);
+            _failure = failure;
+            if (scope is null)
+                return;
+            _scope = scope.Display;
+
+            var needle = Query!.Trim();
+            var matches = new List<Match>();
+            var searched = 0;
+            var skipped = new List<string>();
+            var truncated = new List<string>();
+            var refused = new List<string>();
+
+            var providers = await Data.ProvidersAsync(ct);
+            foreach (var provider in providers)
+            {
+                foreach (var type in provider.ResourceTypes)
+                {
+                    if (type.ListRoot(scope) is null)
+                    {
+                        if (type.IsChildType)
+                        {
+                            // A CHILD type lists under each of its parents, so the search walks the parents
+                            // and lists the child under each. Before this it asked for the child collection at
+                            // the resource-group root and collected a 404 for a type that is perfectly
+                            // listable one segment deeper — and the page called that "refused to list".
+                            // E2E (2026-09-26) — and one child type refusing is not the whole search failing,
+                            // the same rule the root types below already keep. `graph/provenance` (wave 2) is a
+                            // QUERY view — it answers 400 InvalidRequestContent without `?node=` — and its
+                            // exception used to escape to the page's catch, so the search ended with no summary
+                            // and no matches at all. A view that needs a query parameter is "not searched here"
+                            // (it cannot be enumerated by name); any other refusal is named as one.
+                            try
+                            {
+                                foreach (var row in await ChildMatchesAsync(scope, provider, type, needle, ct))
+                                    Add(matches, row, truncated);
+                                searched++;
+                            }
+                            catch (ArmException ex) when (ex.Error.HttpStatus == 400 && ex.Error.Code == "InvalidRequestContent")
+                            {
+                                skipped.Add(type.ResourceType);
+                            }
+                            catch (ArmException ex)
+                            {
+                                searched++;
+                                refused.Add($"{provider.DisplayNamespace}/{type.ResourceType} ({ex.Error.Code})");
+                            }
+                            continue;
+                        }
+
+                        // Readable by name, not enumerable at all: named rather than silently skipped,
+                        // because "no match" and "never looked" are different answers.
+                        skipped.Add(type.ResourceType);
+                        continue;
+                    }
+
+                    if (searched >= MaxTypes)
+                    {
+                        skipped.Add(type.ResourceType);
+                        continue;
+                    }
+
+                    searched++;
+                    var rows = 0;
+                    try
+                    {
+                        await foreach (var row in Data.ResourcesAsync(scope, provider, type, ct))
+                        {
+                            if (rows++ >= MaxRowsPerType)
+                            {
+                                truncated.Add($"{provider.DisplayNamespace}/{type.ResourceType}");
+                                break;
+                            }
+
+                            if (matches.Count >= MaxMatches)
+                            {
+                                truncated.Add("(match limit reached)");
+                                break;
+                            }
+
+                            if (row.Name?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                matches.Add(new Match(
+                                    "resource",
+                                    row.Name!,
+                                    row.Type ?? type.ResourceType,
+                                    row.Id ?? "",
+                                    $"/portal/explore/resource?id={Uri.EscapeDataString(row.Id ?? "")}"));
+                            }
+                        }
+                    }
+                    catch (ArmException ex)
+                    {
+                        // One type refusing to list is not the whole search failing. The first version let the
+                        // exception out, so a single unlistable type replaced every match with an error
+                        // banner — which reads as "nothing matched" for a resource that is right there.
+                        refused.Add($"{provider.DisplayNamespace}/{type.ResourceType} ({ex.Error.Code})");
+                    }
+                }
+            }
+
+            // The ring, matched on the three fields a request is identifiable by.
+            var (activity, _) = await Data.ActivityAsync(scope, 200, null, null, ct);
+            foreach (var row in activity)
+            {
+                var p = row.Properties;
+                if (p is null)
+                    continue;
+                if (p.Path.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || (p.PrincipalId?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (p.RequestId?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+                {
+                    matches.Add(new Match(
+                        "request",
+                        p.RequestId ?? p.Path,
+                        $"{p.Method} {p.Status}",
+                        $"{p.Path}, {p.PrincipalId}, {p.DurationMs:0.#} ms",
+                        "/portal/activity"));
+                }
+            }
+
+            _matches = matches;
+
+            void Add(List<Match> into, PortalEnvelope<JsonNode> row, List<string> cuts)
+            {
+                if (into.Count >= MaxMatches)
+                {
+                    cuts.Add("(match limit reached)");
+                    return;
+                }
+
+                if (row.Name?.Contains(needle, StringComparison.OrdinalIgnoreCase) != true)
+                    return;
+
+                into.Add(new Match(
+                    "resource",
+                    row.Name!,
+                    row.Type ?? "",
+                    row.Id ?? "",
+                    $"/portal/explore/resource?id={Uri.EscapeDataString(row.Id ?? "")}"));
+            }
+            _summary = $"{Text.Plural(matches.Count, "match", "matches")}, {Text.Plural(searched, "type", "types")} searched, at most {MaxRowsPerType} rows each"
+                       + (skipped.Count > 0 ? $", not searched here: {string.Join(", ", skipped.Take(6))}{(skipped.Count > 6 ? "…" : "")}" : "")
+                       + (truncated.Count > 0
+                           ? $", truncated: {string.Join(", ", truncated.Distinct().Take(4))}"
+                           : "")
+                       + (refused.Count > 0
+                           ? $", refused to list: {string.Join(", ", refused.Take(4))}"
+                           : "");
+        }
+        catch (ArmException ex)
+        {
+            _failure = PortalFailure.From(ex);
+        }
+    }
+
+    /// <summary>
+    /// The resources of a CHILD type whose name matches, gathered by walking its parents. Bounded by
+    /// <see cref="MaxParents"/> parent instances, and every parent is listed through the same helper the
+    /// explorer uses, so a parent the caller cannot read simply contributes nothing.
+    /// </summary>
+    private async Task<List<PortalEnvelope<JsonNode>>> ChildMatchesAsync(
+        ArmScope scope,
+        PortalProvider provider,
+        PortalProviderType child,
+        string needle,
+        CancellationToken ct)
+    {
+        var parent = provider.ResourceTypes.FirstOrDefault(t =>
+            string.Equals(t.ResourceType, child.ParentType, StringComparison.OrdinalIgnoreCase));
+        if (parent is null || parent.ListRoot(scope) is not { } parentRoot)
+            return [];
+
+        var client = await Data.ClientAsync(ct);
+        var parents = new List<PortalEnvelope<JsonNode>>();
+        await foreach (var row in client.ListAsync<PortalEnvelope<JsonNode>>(
+                           $"{parentRoot}/providers/{provider.DisplayNamespace}/{parent.ResourceType}", ct: ct))
+        {
+            parents.Add(row);
+            if (parents.Count >= MaxParents)
+                break;
+        }
+
+        var found = new List<PortalEnvelope<JsonNode>>();
+        foreach (var instance in parents)
+        {
+            if (instance.Id is not { Length: > 0 } id)
+                continue;
+            await foreach (var row in client.ListAsync<PortalEnvelope<JsonNode>>(
+                               $"{id}/{child.LeafType}", ct: ct))
+            {
+                if (row.Name?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true)
+                    found.Add(row);
+            }
+        }
+
+        return found;
+    }
+
+    private sealed record Match(string Kind, string Name, string Type, string Detail, string Href);
+
+}

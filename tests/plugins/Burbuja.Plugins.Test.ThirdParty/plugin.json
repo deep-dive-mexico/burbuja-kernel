@@ -1,0 +1,17 @@
+{
+  "id": "Test.ThirdParty",
+  "name": "Test ThirdParty",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Test.ThirdParty.dll",
+  "entry_type": "Burbuja.Plugins.Test.ThirdParty.ThirdPartyPlugin",
+  "load": "dynamic",
+  "provides": [],
+  "extension_points": [],
+  "requires": [],
+  "roles": ["all"],
+  "config_section": null,
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 50
+}

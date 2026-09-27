@@ -1,0 +1,49 @@
+@page "/portal/not-found"
+@page "/portal/not-found/{**Path}"
+@namespace Burbuja.Portal.Components.Pages
+@inject PortalRegistry Portals
+@inject IPortalArm Arm
+
+@* M12 R1 — the 404, as a PAGE rather than as the Router's <NotFound> fragment.
+
+   Why it has to be a page: see the note in Routes.razor. An unmatched URL is answered by ASP.NET Core's
+   endpoint routing before any component of ours runs, so a fragment can never be rendered for it — the
+   response is a 404 with an empty body, which is exactly the "unstyled 404" F9 named. A page with a route
+   is a real endpoint: it has a status code, it renders the shell, it carries a screenshot, and G43's
+   every-page walk can open it like any other surface.
+
+   The path is shown so the page can say WHICH link was stale. It is rendered as text, never as a link and
+   never as markup — it is attacker-controlled input, and a 404 page is the classic place that is
+   forgotten.
+
+   This is the kernel's English 404. Other registered portals own their own language and 404 routes. *@
+<PageTitle>Not found</PageTitle>
+
+<div class="notfound">
+    <PageHeader Eyebrow="404" Title="That page is not here"
+                Subtitle="The address is valid for this host but no page claims it. Nothing is broken — the link is stale, or the resource it named has been removed."
+                Loaded="@(true)"/>
+
+    @if (Path is { Length: > 0 } path)
+    {
+        <p class="muted small">Asked for <code>/@path</code></p>
+    }
+
+    <div class="notfound-links">
+        <a class="btn btn-primary" href="/portal">Back to home</a>
+        <a class="btn" href="/portal/sessions">Sessions</a>
+        <a class="btn" href="/portal/explore">Explore</a>
+        @foreach (var portal in Portals.All.Where(p => p.Id != PortalScope.Kernel.Id && _session?.HasPortal(p.Id) == true))
+        {
+            <a class="btn" href="@portal.Home">@portal.Title</a>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The unmatched tail, when a person arrived through the catch-all rather than directly.</summary>
+    [Parameter]
+    public string? Path { get; set; }
+    private PortalSession? _session;
+    protected override async Task OnInitializedAsync() => _session = await Arm.SessionAsync();
+}

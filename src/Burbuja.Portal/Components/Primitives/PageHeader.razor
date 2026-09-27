@@ -1,0 +1,82 @@
+@namespace Burbuja.Portal.Components.Primitives
+@inject Burbuja.Portal.Services.PageLoadState Loads
+
+@* M12 R1 — the page header. Every page opens with the same three things: an eyebrow (where am I), a
+ * display-face h1 (what is this) and a subtitle (the one sentence that stops the page being a puzzle).
+ *
+ * It exists so those three are decided once. Before it, each page chose its own heading level, wrote its
+ * own <h1>, and several had no heading at all — which is why the console read as a set of unrelated
+ * screens rather than one application, and why a screen-reader user navigating by heading landed
+ * nowhere. The action slot is the page's primary verb, on the right, where a console puts it.
+ *@
+@* M14 R5e (request row X7), moved in M14 R9 — `Loaded` is the page's claim that its reads have landed; the
+   `data-loaded` ATTRIBUTE it produces is written on the page root by `PageRoot`, not here. R5e wrote it on this
+   header, and lane S's G43 refused every route whose reads had landed: the header renders during prerender,
+   before any read, so a marker standing on it claims "loaded" about a page that has read nothing — which is
+   also what the plan says in both places it describes the marker ("on the page root", "never the header").
+
+   `bool?` and not `bool`, deliberately: null reports nothing, which means "this page does not declare itself
+   loaded" — the honest state for a page that has not been wired yet, and the reason the attribute can be
+   trusted where it exists. A default of `true` would mark a page loaded the moment its header rendered, which
+   is exactly the lie the marker exists to prevent. *@
+<div class="page-head">
+    <div class="page-head-text">
+        @if (Eyebrow is { Length: > 0 })
+        {
+            <p class="eyebrow">@Eyebrow</p>
+        }
+        <h1>@Title</h1>
+        @* M14 R6 — a page whose intro carries markup (`<code>`, `<b>`) passes it here instead of as a string:
+           the alternative was either a subtitle with the tags shown literally or a second paragraph under the
+           header that repeats what the header already says. *@
+        @if (SubtitleContent is not null)
+        {
+            <p class="page-sub">@SubtitleContent</p>
+        }
+        else if (Subtitle is { Length: > 0 })
+        {
+            <p class="page-sub">@Subtitle</p>
+        }
+    </div>
+    @if (Actions is not null)
+    {
+        <div class="page-actions">@Actions</div>
+    }
+</div>
+
+@code {
+    /// <summary>The small uppercase line above the title — usually the rail group this page lives in.</summary>
+    [Parameter]
+    public string? Eyebrow { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    /// <summary>One sentence. Not a paragraph: a paragraph belongs in the body.</summary>
+    [Parameter]
+    public string? Subtitle { get; set; }
+
+    /// <summary>The subtitle as markup, for a page whose intro names a type or a command. Takes precedence over
+    /// <see cref="Subtitle"/> when both are set.</summary>
+    [Parameter]
+    public RenderFragment? SubtitleContent { get; set; }
+
+    /// <summary>The page's primary action, rendered on the right.</summary>
+    [Parameter]
+    public RenderFragment? Actions { get; set; }
+
+    /// <summary>
+    /// Whether the page's own reads have landed. The page reports it here and it becomes the
+    /// <c>data-loaded</c> attribute on the page ROOT (<c>PageRoot</c>) — the single wait target for the browser
+    /// facts (request X7); null or false reports nothing, because a page that does not declare itself loaded
+    /// must not be waited on as if it had.
+    /// </summary>
+    [Parameter]
+    public bool? Loaded { get; set; }
+
+    /// <summary>
+    /// The report, on every render: a page that goes back to reading (Sessions while it refreshes, Activity on
+    /// its 3 s tick) takes the marker away with the same call that puts it there.
+    /// </summary>
+    protected override void OnParametersSet() => Loads.Report(Loaded == true);
+}

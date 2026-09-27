@@ -1,0 +1,37 @@
+# Generated output and local state
+**/bin/
+**/obj/
+/artifacts/
+TestResults/
+**/__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.vs/
+.vscode/
+*.user
+*.suo
+# Local configuration, credentials, recordings and databases
+.env
+.env.*
+!.env.example
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+*.pem
+*.key
+*.pfx
+*.p12
+*.db
+*.db-*
+*.sqlite*
+# On a case-insensitive filesystem *.sqlite* also matches this source directory.
+!/plugins/Burbuja.Plugins.Store.Sqlite/
+!/plugins/Burbuja.Plugins.Store.Sqlite/Burbuja.Plugins.Store.Sqlite.csproj
+/data/
+/state/
+/recordings/
+/backups/
+/akos-source/
+/personal-data/
+# Immutable source dependency: fetched/verified locally; never copied into a commit.
+/vendor/
