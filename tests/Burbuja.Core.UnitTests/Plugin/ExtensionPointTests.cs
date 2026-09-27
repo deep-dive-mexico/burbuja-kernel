@@ -137,10 +137,8 @@ public sealed class ExtensionPointTests
             type.ShouldNotBeNull($"{disk.EntryType} not found in {dll}");
             var plugin = (IBurbujaPlugin)Activator.CreateInstance(type!)!;
 
-            plugin.Manifest.Id.ShouldBe(disk.Id);
-            plugin.Manifest.Provides.ShouldBe(disk.Provides);
-            plugin.Manifest.ExtensionPoints.ShouldBe(disk.ExtensionPoints);
-            plugin.Manifest.Requires.ShouldBe(disk.Requires);
+            PluginHost.ManifestDiff(disk, plugin.Manifest).ShouldBeEmpty(
+                $"installed {disk.Id} must pass the same full manifest check as production boot");
         }
     }
 

@@ -10,7 +10,7 @@
   "extension_points": ["policy.rules"],
   "requires": [],
   "roles": ["all"],
-  "config_section": null,
+  "config_section": "Plugins:Policy.Core",
   "trusted": true,
   "depends_on": [],
   "load_order": 100

@@ -11,6 +11,11 @@ Review of generic plugin loader and authenticated transport contracts.
   unhelpful duplicate-ID exception. Installed manifests now claim their identity; damaged
   installs fail through `PluginBootException`, with the manifest and missing assembly named.
 - Duplicate installs now report both locations before topological sorting.
+- An independent consuming E2E host exposed an existing `Policy.Core` disk/code disagreement:
+  `config_section` was null on disk and `Plugins:Policy.Core` in code. The disk manifest is
+  corrected, and the all-shipped-plugins test now calls the same complete comparison as boot,
+  instead of checking only four fields. Its pre-fix failure and the subsequent full kernel
+  gate were observed; the consuming application must use the corrected follow-up commit.
 - `/portal/download` is intentionally shared authenticated transport, not a kernel-console
   page. A consumer-only session can read only what its ARM key permits. Tests cover anonymous,
   authorized, denied and external-path requests; the public developer guide states the contract.

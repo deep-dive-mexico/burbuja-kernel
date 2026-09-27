@@ -472,7 +472,7 @@ public sealed class PluginHost
         return services.Count(d => d.ServiceType == contract);
     }
 
-    private static string ManifestDiff(PluginManifest disk, PluginManifest code)
+    internal static string ManifestDiff(PluginManifest disk, PluginManifest code)
     {
         var diffs = new List<string>();
         if (!string.Equals(disk.Id, code.Id, StringComparison.Ordinal))
