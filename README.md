@@ -8,6 +8,7 @@ every normal release. The host accepts consumer contributions and does not refer
 
 The [plugin portability review](docs/plugin-review-2026-09-27.md) records the installed-manifest,
 failure-diagnostic and authenticated-transport regressions exercised in the official kernel.
+For new work, start at the [kernel knowledge map](docs/wiki/OVERVIEW.md) and [agent router](AGENTS.md).
 
 ```sh
 dotnet build Burbuja.slnx -c Release -m:1
