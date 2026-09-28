@@ -31,3 +31,12 @@ The independent developer example and its runtime remain in this repository. AKO
 an immutable commit of this source; it does not need the historical integration tree or a
 private client assembly in the kernel. Hosting is currently distributed as pinned source,
 not a claimed published NuGet package. See [the developer guide](developer-workbench.md).
+
+## Consumer fixture deadlock found during final browser verification
+
+`HostPublisher.EnsurePublished` synchronously waits for `ProcessRunner.RunAsync`. The latter
+captured a single-threaded fixture synchronization context, so an exited child process could
+leave the fixture waiting forever for its own blocked continuation. Process completion and
+stdout/stderr reads now resume independently of that context. The focused regression failed
+at its 10-second deadline before the fix and passed in 91 ms afterward. The subsequent full
+`make test` passed **1,316 tests**, zero failures/skips, with a 0-warning/0-error build.

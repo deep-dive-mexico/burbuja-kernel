@@ -239,8 +239,11 @@ public static class ProcessRunner
         using var process = Process.Start(info) ?? throw new InvalidOperationException($"could not start {fileName}");
         var stdout = process.StandardOutput.ReadToEndAsync(ct);
         var stderr = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        return new ProcessResult(process.ExitCode, await stdout, await stderr);
+        // HostPublisher is intentionally synchronous and may run inside a fixture's
+        // single-threaded context. Process completion must never need that blocked thread.
+        await process.WaitForExitAsync(ct).ConfigureAwait(false);
+        return new ProcessResult(process.ExitCode,
+            await stdout.ConfigureAwait(false), await stderr.ConfigureAwait(false));
     }
 }
 
