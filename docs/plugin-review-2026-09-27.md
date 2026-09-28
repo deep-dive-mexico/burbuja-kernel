@@ -40,3 +40,9 @@ leave the fixture waiting forever for its own blocked continuation. Process comp
 stdout/stderr reads now resume independently of that context. The focused regression failed
 at its 10-second deadline before the fix and passed in 91 ms afterward. The subsequent full
 `make test` passed **1,316 tests**, zero failures/skips, with a 0-warning/0-error build.
+
+The actual xUnit child-process stack also exposed a separate captured-pipe lifetime issue:
+reused MSBuild workers could keep a fixture publish's redirected output open. Disabling node
+reuse allowed the previously stalled browser fixture to start in seconds. TestKit publishing
+now uses one MSBuild node and `--disable-build-servers`; consumer test runners can additionally
+set `MSBUILDDISABLENODEREUSE=1` for their outer build invocation.

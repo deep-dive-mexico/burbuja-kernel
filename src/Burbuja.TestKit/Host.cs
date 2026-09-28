@@ -66,7 +66,7 @@ public static class HostPublisher
             File.Delete(dll);
             var result = ProcessRunner.RunAsync(
                 "dotnet",
-                ["publish", project, "-c", configuration, "-o", target],
+                ["publish", project, "-c", configuration, "-o", target, "-m:1", "--disable-build-servers"],
                 root,
                 null,
                 ct).GetAwaiter().GetResult();
