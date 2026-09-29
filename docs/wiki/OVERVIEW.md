@@ -5,6 +5,7 @@ The **generic runtime** is the source of truth for reusable mechanisms. `src/Bur
 | Change concerns | Open |
 |---|---|
 | Build, test selection, packaging/export boundary | [README](../../README.md), `export-manifest.json`, `Makefile` |
+| Locating an existing runtime mechanism (jobs, stateful agents, tools, integrations, MCP, trace) or an expansion gap | [Runtime capabilities](../runtime-capabilities.md) |
 | Independent consuming host, plugin and auth | [Developer workbench](../developer-workbench.md), [example README](../../examples/Example.Workbench/README.md) |
 | Plugin manifest, dependency closure and failure diagnostics | [Plugin portability review](../plugin-review-2026-09-27.md), affected `plugins/*/plugin.json` |
 | Product behavior requested by the AKOS client | The separate private `akos-server/docs/wiki/OVERVIEW.md` and `akos-docs/docs/wiki/source/requirements.md` when working from the shared workspace |

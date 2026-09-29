@@ -9,6 +9,8 @@ every normal release. The host accepts consumer contributions and does not refer
 The [plugin portability review](docs/plugin-review-2026-09-27.md) records the installed-manifest,
 failure-diagnostic and authenticated-transport regressions exercised in the official kernel.
 For new work, start at the [kernel knowledge map](docs/wiki/OVERVIEW.md) and [agent router](AGENTS.md).
+The [runtime capability map](docs/runtime-capabilities.md) locates existing orchestration,
+agent, tool, integration and trace mechanisms, and distinguishes expansion gaps from migrated functionality.
 
 ```sh
 dotnet build Burbuja.slnx -c Release -m:1
@@ -29,7 +31,9 @@ Hosting test projects are selected explicitly, together with their test plugin/t
 
 The historical mixed Host, Portal and E2E suites belong to the private product export until they are
 split by ownership. They are **not** claimed as retained generic regression coverage. The old packaging
-test names a private contract and is omitted. Product scenarios are omitted from the public tree.
+test named a private contract and was omitted during migration. Its public-only opt-in packing
+gate is now restored as `PackagingTests` ([receipt](docs/runtime-capabilities.md#recovered-packaging-gate)).
+Product scenarios are omitted from the public tree.
 
 The HostFacts fixture set is generated from `distribution/kernel/fixtures/hostfacts.json` in the
 integration checkout, not copied from captured device output. It uses invented node/account labels,
