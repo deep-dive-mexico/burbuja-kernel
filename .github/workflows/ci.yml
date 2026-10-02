@@ -2,19 +2,52 @@ name: Kernel source validation
 on:
   push:
   pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: kernel-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build-and-unit:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","linux","x64","dive-kernel"]') || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    env:
+      DOTNET_INSTALL_DIR: /home/runner/.dotnet-kernel
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.400
       - name: Check official committed source boundary
         run: python3 scripts/release-source.py --check
+      - name: Check release boundary regressions
+        run: python3 -m unittest discover -s tests/deployment
       - name: Build source and Workbench example
         run: |
           dotnet build Burbuja.slnx -c Release -m:1
           dotnet build examples/Example.Workbench/Example.Workbench.slnx -c Release -m:1
       - name: Run generic unit projects
         run: python3 scripts/test-kernel.py
+  deploy:
+    needs: build-and-unit
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-kernel"]') }}
+    timeout-minutes: 40
+    environment:
+      name: production
+      url: https://kernel.dive.ai/portal
+    env:
+      AWS_REGION: us-west-2
+      AWS_APPLICATION: kernel
+      AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
+      AWS_RELEASE_BUCKET: ${{ vars.AWS_RELEASE_BUCKET }}
+      AWS_DEPLOY_INSTANCE: ${{ vars.AWS_DEPLOY_INSTANCE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build, publish and deploy immutable image
+        run: /opt/dive/venv/bin/python scripts/aws-release.py

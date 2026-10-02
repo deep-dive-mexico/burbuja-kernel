@@ -51,7 +51,8 @@ def allowed(path: str) -> bool:
     if (relative.is_absolute() or ".." in relative.parts or "\\" in path or ":" in path
             or not relative.parts or relative.name.endswith((".bak", ".orig", ".tmp", "~"))):
         return False
-    if path in {".gitignore", ".github/workflows/ci.yml", "nuget.config", "LICENSE", "Makefile"}:
+    if path in {".gitignore", ".github/workflows/ci.yml", "nuget.config", "LICENSE", "Makefile",
+                ".dockerignore", "deploy/Dockerfile"}:
         return True
     if any(part.lower() in BLOCKED or part.startswith(".") or part.lower().startswith(("backup-", "secrets."))
            for part in relative.parts):
@@ -87,6 +88,10 @@ def read_tracked(source: Path, relative: str) -> bytes:
     if not allowed(relative):
         raise ReleaseError(f"tracked path outside release source boundary: {relative}")
     path = source / relative
+    # The router alias is the sole supported source symlink. Export its actual
+    # tracked instructions as a regular file; all other symlinks remain refused.
+    if relative == "CLAUDE.md" and path.is_symlink() and path.readlink() == Path("AGENTS.md"):
+        return read_tracked(source, "AGENTS.md")
     for candidate in (path, *path.parents):
         if candidate == source:
             break
