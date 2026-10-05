@@ -23,6 +23,8 @@ jobs:
           dotnet-version: 10.0.400
       - name: Check official committed source boundary
         run: python3 scripts/release-source.py --check
+      - name: Check declared version against the release line
+        run: python3 scripts/kernel-version.py check
       - name: Check release boundary regressions
         run: python3 -m unittest discover -s tests/deployment
       - name: Build source and Workbench example

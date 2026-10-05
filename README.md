@@ -47,7 +47,7 @@ changing a raw string or rendered text.
 
 After main's final source/license review and publication, the authoritative generic source lives in
 `deep-dive-mexico/burbuja-kernel`; new generic changes go there. The private product consumes a
-**clean checkout pinned to a full commit**, not an imagined Hosting NuGet package. The original
+**clean checkout pinned to a released tag's full commit** ([releases](docs/releases.md)), not an imagined Hosting NuGet package. The original
 integration repository and its Git history remain historical/private. Do not change its visibility
 as a substitute for exporting. The exporter neither commits nor publishes.
 
