@@ -12,7 +12,7 @@ concurrency:
 jobs:
   prepare-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
     timeout-minutes: 5
     permissions:
       contents: write
@@ -32,7 +32,8 @@ jobs:
   build-and-unit:
     needs: prepare-release
     if: ${{ !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
-    runs-on: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","linux","x64","dive-kernel"]') || 'ubuntu-latest' }}
+    # Code under test runs on the CI runner, which has no AWS authority; only deploy uses dive-kernel.
+    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
     timeout-minutes: 45
     env:
       DOTNET_INSTALL_DIR: /home/runner/.dotnet-kernel
@@ -67,7 +68,7 @@ jobs:
   release:
     needs: [prepare-release, build-and-unit]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
     timeout-minutes: 5
     permissions:
       contents: write
