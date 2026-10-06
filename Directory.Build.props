@@ -10,7 +10,7 @@
     <UseMicrosoftTestingPlatformRunner>false</UseMicrosoftTestingPlatformRunner>
     <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
     <IsPackable>false</IsPackable>
-    <Version>0.6.0-dev</Version>
+    <Version>0.6.0</Version>
     <Authors>deep-dive-mexico</Authors>
     <RepositoryUrl>https://github.com/deep-dive-mexico/burbuja-kernel.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
