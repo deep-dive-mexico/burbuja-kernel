@@ -348,6 +348,18 @@ public sealed class ToolBatchExecutor(
                 var text = DenyText.Format(subject.Language, rec.Request.RiskClass);
                 return new OneResult(new ToolResultBlock(call.Id, JsonValue.Create(text)!, true), null);
             }
+            if (bound && rec!.Outcome is null or Deferred)
+            {
+                var outcome = await subject.OnEscalatedAsync(rid, ct);
+                if (outcome == EscalationOutcome.Pending)
+                    return new OneResult(PendingResult(call.Id, rid), null);
+                if (outcome == EscalationOutcome.Park)
+                    return new OneResult(null, new ParkInfo(rid, subject.Canonical));
+                if (outcome == EscalationOutcome.Approved)
+                    return await RunToolAsync(subject, streamId, runId, call, context, tool, ct);
+                return new OneResult(new ToolResultBlock(call.Id,
+                    JsonValue.Create(DenyText.Format(subject.Language, rec.Request.RiskClass))!, true), null);
+            }
         }
         var hint = tool?.Descriptor.RiskHint ?? call.Name;
         var decision = await gate.DecideAsync(new GateRequest(

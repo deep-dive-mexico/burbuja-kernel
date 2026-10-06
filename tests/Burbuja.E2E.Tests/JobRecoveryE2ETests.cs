@@ -10,6 +10,37 @@ namespace Burbuja.E2E.Tests;
 public sealed class JobRecoveryE2ETests
 {
     [Fact]
+    public async Task Accepted_cancellation_is_durable_and_an_old_approval_cannot_restart_the_job()
+    {
+        await using var host = new KernelTestHost();
+        await host.StartAsync();
+        var path = Workspace + "/jobs/cancel";
+        string id;
+        using (var before = host.Client())
+        {
+            await ExpectAsync(await before.PutAsJsonAsync(path + Api, new
+            {
+                tags = new Dictionary<string, string> { ["burbuja.io/scenario"] = "gray-supervisor-escalate-approved" },
+                properties = new { spec = new { kind = "implement", title = "Cancel", slug = "cancel", brief = "guarded action" } },
+            }, Ct), HttpStatusCode.Accepted);
+            var pending = await WaitAsync(before, path, row => row["properties"]?["status"]?.GetValue<string>() == "awaitingApproval");
+            id = pending["properties"]!["pendingApprovalId"]!.GetValue<string>();
+            await ExpectAsync(await before.PostAsJsonAsync(path + "/cancel" + Api, new { }, Ct), HttpStatusCode.Accepted);
+        }
+        await host.KillAsync();
+        await host.StartAsync(bootstrap: false);
+        using var after = host.Client();
+        await ExpectAsync(await after.PostAsJsonAsync("/providers/Burbuja.Resources/approvals/" + id + "/approve" + Api,
+            new { }, Ct), HttpStatusCode.OK);
+        var job = await GetAsync(after, path);
+        Assert.Equal("cancelled", job["properties"]!["status"]!.GetValue<string>());
+        using var request = new HttpRequestMessage(HttpMethod.Get, path + "/events" + Api);
+        request.Headers.Accept.ParseAdd("application/json");
+        var events = (await ExpectAsync(await after.SendAsync(request, Ct), HttpStatusCode.OK))["value"]!.AsArray();
+        Assert.DoesNotContain(events, evt => evt!["type"]!.GetValue<string>() == "agents.tool.call");
+    }
+
+    [Fact]
     public async Task Fan_out_recovery_preserves_finished_workers_and_stable_run_ids_before_merging_once()
     {
         await using var host = new KernelTestHost();

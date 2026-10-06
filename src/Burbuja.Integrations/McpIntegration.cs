@@ -49,13 +49,15 @@ public sealed class McpIntegrationCaller(
         {
             try
             {
-                await using var client = await HttpClientAsync(transport, deadline.Token);
+                var connection = await HttpClientAsync(transport, deadline.Token);
+                await using var client = connection.Client;
                 var names = new List<string>();
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 string? cursor = null;
+                var pages = 0;
                 do
                 {
-                    if (seen.Count >= options.Value.MaxListPages || (cursor is not null && !seen.Add(cursor)))
+                    if (++pages > options.Value.MaxListPages || (cursor is not null && !seen.Add(cursor)))
                         throw new McpTransportException("MCP discovery exceeded its pagination bound or repeated a cursor.");
                     var page = await client.ListToolsAsync(new ListToolsRequestParams { Cursor = cursor }, deadline.Token);
                     names.AddRange(page.Tools.Select(tool => tool.Name));
@@ -100,14 +102,18 @@ public sealed class McpIntegrationCaller(
             }
             else
             {
-                await using var client = await HttpClientAsync(transport, deadline.Token);
+                var connection = await HttpClientAsync(transport, deadline.Token);
+                await using var client = connection.Client;
                 var response = await client.CallToolAsync(new CallToolRequestParams
                 {
                     Name = tool[prefix.Length..],
                     Arguments = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(input.ToJsonString()),
                 }, deadline.Token);
+                var serialized = JsonSerializer.Serialize(response, McpJsonUtilities.DefaultOptions);
+                if (!string.IsNullOrEmpty(connection.Secret))
+                    serialized = serialized.Replace(connection.Secret, "[redacted]", StringComparison.Ordinal);
                 result = new(response.IsError != true,
-                    JsonSerializer.SerializeToNode(response, McpJsonUtilities.DefaultOptions),
+                    JsonNode.Parse(serialized),
                     response.IsError == true ? "The MCP server reported a tool execution error." : null);
             }
             return result with
@@ -163,15 +169,17 @@ public sealed class McpIntegrationCaller(
         return deadline;
     }
 
-    private async Task<McpClient> HttpClientAsync(IntegrationTransport transport, CancellationToken ct)
+    private async Task<(McpClient Client, string? Secret)> HttpClientAsync(IntegrationTransport transport, CancellationToken ct)
     {
         var headers = new Dictionary<string, string>();
+        string? resolvedSecret = null;
         if (transport.SecretRef is { Length: > 0 } reference)
         {
             var token = secrets is null ? null : await secrets.ResolveAsync(reference, ct);
             if (string.IsNullOrWhiteSpace(token))
                 throw new McpTransportException($"MCP secret reference '{reference}' could not be resolved; no request was sent.");
             headers["Authorization"] = new AuthenticationHeaderValue("Bearer", token).ToString();
+            resolvedSecret = token;
         }
         var http = new HttpClient(new McpResponseLimitHandler(options.Value.MaxLineChars))
         { Timeout = Timeout.InfiniteTimeSpan };
@@ -185,11 +193,12 @@ public sealed class McpIntegrationCaller(
         }, http, loggerFactory: null, ownsHttpClient: true);
         try
         {
-            return await McpClient.CreateAsync(wire, new ModelContextProtocol.Client.McpClientOptions
+            var client = await McpClient.CreateAsync(wire, new ModelContextProtocol.Client.McpClientOptions
             {
                 ProtocolVersion = "2025-06-18",
                 InitializationTimeout = options.Value.Timeout,
             }, cancellationToken: ct);
+            return (client, resolvedSecret);
         }
         catch
         {

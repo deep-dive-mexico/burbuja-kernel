@@ -11,6 +11,7 @@ public sealed class JobStateStore(IResourceStore store)
 {
     public async ValueTask<ResourceEnvelope<JobProperties>?> GetAsync(string key, CancellationToken ct)
     {
+        await JobExecutionScope.ValidateLeaseAsync(ct);
         var env = await store.GetAsync(key, ct);
         return env is null ? null : View(Map(env));
     }
@@ -25,12 +26,16 @@ public sealed class JobStateStore(IResourceStore store)
         string key,
         Action<JobProperties> mutate,
         CancellationToken ct,
-        ProvisioningState? provisioningState = null)
+        ProvisioningState? provisioningState = null,
+        Func<CancellationToken, ValueTask>? validateLease = null)
     {
         ArmException? last = null;
         for (var attempt = 0; attempt < 8; attempt++)
         {
             var raw = await store.GetAsync(key, ct) ?? throw new InvalidOperationException(key);
+            await JobExecutionScope.ValidateLeaseAsync(ct);
+            if (validateLease is not null)
+                await validateLease(ct);
             var env = Map(raw);
             JobExecutionScope.EnsureOwned(key, env.Properties);
             var originalState = env.Properties.State;

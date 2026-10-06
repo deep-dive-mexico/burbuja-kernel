@@ -8,7 +8,8 @@ internal static class JobExecutionScope
 {
     private static readonly AsyncLocal<Ownership?> Ambient = new();
     public static Ownership? Current => Ambient.Value;
-    public sealed record Ownership(string JobKey, string FenceToken, Guid? RunId = null, bool OwnsTerminal = true);
+    public sealed record Ownership(string JobKey, string FenceToken, Guid? RunId = null, bool OwnsTerminal = true,
+        Func<CancellationToken, ValueTask>? ValidateLease = null);
 
     public static IDisposable Enter(Ownership? value)
     {
@@ -31,10 +32,15 @@ internal static class JobExecutionScope
     {
         if (Current is not { } owner)
             return;
+        if (owner.ValidateLease is not null)
+            await owner.ValidateLease(ct);
         var job = await store.GetAsync(owner.JobKey, ct);
         if (job?.Properties["recovery"]?["fenceToken"]?.GetValue<string>() != owner.FenceToken)
             throw new OperationCanceledException("Job execution ownership changed.");
     }
+
+    public static ValueTask ValidateLeaseAsync(CancellationToken ct) =>
+        Current?.ValidateLease?.Invoke(ct) ?? ValueTask.CompletedTask;
 
     private sealed class Restore(Ownership? previous) : IDisposable
     {

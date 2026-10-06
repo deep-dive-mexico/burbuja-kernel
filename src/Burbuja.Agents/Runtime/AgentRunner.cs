@@ -281,6 +281,8 @@ public sealed class AgentRunner(
                             run.ModelInFlight = true;
                             run.ModelStartedAt = time.GetUtcNow();
                             run.ResponseBooked = false;
+                            if (run.PendingResponse is null && run.LastStopReason is not null)
+                                run.InterruptedModelCalls = 0;
                             run.LastStopReason = null;
                         }
                     }, ct);

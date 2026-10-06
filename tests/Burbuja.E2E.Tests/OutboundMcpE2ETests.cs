@@ -2,6 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Xunit;
+using Burbuja.Core.Abstractions.Secrets;
+using Burbuja.Core.Redaction;
+using Burbuja.Integrations;
+using Microsoft.Extensions.Options;
 using static Burbuja.E2E.Tests.KernelTestHost;
 
 namespace Burbuja.E2E.Tests;
@@ -9,6 +13,40 @@ namespace Burbuja.E2E.Tests;
 [Trait("Category", "E2E")]
 public sealed class OutboundMcpE2ETests
 {
+    [Fact]
+    public async Task Resolved_HTTP_credentials_are_redacted_even_when_the_server_echoes_an_opaque_token()
+    {
+        const string token = "fixtureCredential42";
+        await using var surface = new McpHttpSurface(token);
+        await surface.StartAsync();
+        var caller = new McpIntegrationCaller(new McpStdioClient(), new CaptureGroupRedactor(),
+            Options.Create(new McpClientOptions()), new FixtureSecret(token));
+        var integration = new IntegrationProperties(ServerName: "http", Enabled: true,
+            Transport: new IntegrationTransport(Mode: "http", Url: surface.Endpoint, SecretRef: "test-token"));
+        var result = await caller.CallAsync(integration, "mcp__http__echo", new JsonObject(), Ct);
+        Assert.True(result.Ok, result.Error);
+        Assert.DoesNotContain(token, result.Output!.ToJsonString());
+        Assert.Contains("[redacted]", result.Output.ToJsonString());
+    }
+
+    [Fact]
+    public async Task HTTP_discovery_refuses_a_second_page_when_the_configured_bound_is_one()
+    {
+        await using var surface = new McpHttpSurface(paginated: true);
+        await surface.StartAsync();
+        var caller = new McpIntegrationCaller(new McpStdioClient(), new CaptureGroupRedactor(),
+            Options.Create(new McpClientOptions { MaxListPages = 1 }));
+        var integration = new IntegrationProperties(ServerName: "http", Enabled: true,
+            Transport: new IntegrationTransport(Mode: "http", Url: surface.Endpoint));
+        var error = await Assert.ThrowsAsync<McpTransportException>(async () => await caller.ListToolsAsync(integration, Ct));
+        Assert.Contains("pagination", error.Message);
+    }
+
+    private sealed class FixtureSecret(string value) : ISecretResolver
+    {
+        public ValueTask<string?> ResolveAsync(string name, CancellationToken ct) => ValueTask.FromResult<string?>(value);
+    }
+
     [Fact]
     public async Task A_paginated_stdio_catalogue_is_read_within_the_same_owned_connection()
     {

@@ -31,12 +31,23 @@ public sealed class JobToolJournal(IResourceStore store, IClock clock)
             throw new InterruptedToolExecutionException(call.Id, "the previous execution has no durable result");
         }
         var now = clock.UtcNow;
-        await store.UpsertAsync(new ResourceEnvelope<JsonObject>(key, call.Id,
+        try
+        {
+        await store.CreateAsync(new ResourceEnvelope<JsonObject>(key, call.Id,
             $"{AgentsConstants.Namespace}/workspaces/jobs/runs/effects", "local",
             new Dictionary<string, string>(),
             new JsonObject { ["state"] = "started", ["fingerprint"] = fingerprint, ["tool"] = call.Name },
             ProvisioningState.Updating,
-            new SystemData(now, "runtime", "System", now, "runtime", "System"), ""), null, ct);
+            new SystemData(now, "runtime", "System", now, "runtime", "System"), ""), ct);
+        }
+        catch (Burbuja.Core.Arm.ArmException ex) when (ex.Error.HttpStatus == 412)
+        {
+            return await BeginAsync(subject, runId, call, workRoot, ct);
+        }
+        catch (NotSupportedException)
+        {
+            throw new InterruptedToolExecutionException(call.Id, "the adapter cannot atomically create execution receipts");
+        }
         return null;
     }
 
@@ -46,10 +57,11 @@ public sealed class JobToolJournal(IResourceStore store, IClock clock)
         await JobExecutionScope.EnsureOwnedAsync(store, ct);
         var previous = await store.GetAsync(Key(subject, runId, call), ct)
             ?? throw new InterruptedToolExecutionException(call.Id, "the durable intent disappeared");
-        previous.Properties["state"] = "completed";
-        previous.Properties["content"] = result.Content.DeepClone();
-        previous.Properties["isError"] = result.IsError;
-        await store.UpsertAsync(previous with { ProvisioningState = ProvisioningState.Succeeded }, previous.ETag, ct);
+        var properties = previous.Properties.DeepClone().AsObject();
+        properties["state"] = "completed";
+        properties["content"] = result.Content.DeepClone();
+        properties["isError"] = result.IsError;
+        await store.UpsertAsync(previous with { Properties = properties, ProvisioningState = ProvisioningState.Succeeded }, previous.ETag, ct);
     }
 }
 

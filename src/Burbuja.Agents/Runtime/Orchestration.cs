@@ -77,15 +77,17 @@ public sealed class JobOrchestrator(
                 }
                 p.Recovery ??= new JobRecoveryState();
                 p.Recovery.FenceToken = lease.FencingToken;
-            }, ct);
-            using var scope = JobExecutionScope.Enter(new(jobKey, lease.FencingToken));
+            }, execution.Token, validateLease: ValidateLeaseAsync);
+            using var scope = JobExecutionScope.Enter(new(jobKey, lease.FencingToken, ValidateLease: ValidateLeaseAsync));
             if (JobExecution.IsTerminal(job.Properties.Status))
             {
                 await runner.SettleAsync(jobKey, job.Properties.Status, job.Properties.Error, execution.Token);
                 return;
             }
         var scenario = job.Tags.TryGetValue(AgentsConstants.ScenarioTag, out var tag) ? tag : "";
-        var id = StrategyIds.Normalize(job.Properties.Spec.Strategy, scenario);
+        var id = !string.IsNullOrWhiteSpace(job.Properties.Recovery?.Strategy)
+            ? job.Properties.Recovery.Strategy
+            : StrategyIds.Normalize(job.Properties.Spec.Strategy, scenario);
         if (!strategies.TryGet(id, out var strategy))
         {
             // An unknown id is rejected at PUT time; reaching here means a job written by an older
@@ -96,7 +98,7 @@ public sealed class JobOrchestrator(
 
             await strategy.StartAsync(new OrchestrationContext(job.Id, jobKey, id, job.Properties.Spec), execution.Token);
         }
-        catch (OperationCanceledException) when (execution.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             // Shutdown/lost ownership leaves durable continuation intact; user cancellation is settled by the runner.
         }
@@ -118,6 +120,14 @@ public sealed class JobOrchestrator(
                     return;
                 }
             }
+        }
+
+        async ValueTask ValidateLeaseAsync(CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            var current = await leases.GetAsync(LeaseKey(jobKey), token);
+            if (current is null || current.Owner != owner || current.FencingToken != lease.FencingToken || current.ExpiresAt <= time.GetUtcNow())
+                throw new OperationCanceledException("Job lease ownership expired or changed.");
         }
     }
 }
