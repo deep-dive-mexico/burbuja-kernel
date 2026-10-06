@@ -25,12 +25,19 @@ nuget.org, not a developer's local package feed.
 
 ## Test coverage boundary
 
+The public `tests/Burbuja.E2E.Tests` now owns neutral HTTP, owned-process restart and Chromium
+journeys. `make verify` runs generic units/Workbench plus all three E2E lanes; each lane refuses
+skipped or empty results. Its fixtures publish `Burbuja.Host`, use isolated SQLite state and
+scripted models, and reference no private product executable or assembly. See
+[MCP and job recovery](docs/mcp-job-recovery.md) for the new runtime contract and proof.
+
 The generic Core, Agents, Compute, Deployments, DeepSeek, Store, HostFacts, Integrations, MCP and
 Hosting test projects are selected explicitly, together with their test plugin/tool sources.
 `export-manifest.json` lists the exact project/file inventory and exclusions.
 
-The historical mixed Host, Portal and E2E suites belong to the private product export until they are
-split by ownership. They are **not** claimed as retained generic regression coverage. The old packaging
+The historical mixed Host and Portal unit suites remain in the private product export.
+Generic HTTP/agent/compute/MCP/durability journeys have been adapted into the public E2E suite;
+the original mixed E2E project and product/browser scenarios are not copied wholesale. The old packaging
 test named a private contract and was omitted during migration. Its public-only opt-in packing
 gate is now restored as `PackagingTests` ([receipt](docs/runtime-capabilities.md#recovered-packaging-gate)).
 Product scenarios are omitted from the public tree.

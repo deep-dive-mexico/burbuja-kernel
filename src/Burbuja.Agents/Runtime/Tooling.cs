@@ -12,6 +12,7 @@ using Burbuja.Core.Abstractions.Process;
 using Burbuja.Core.Abstractions.Redaction;
 using Burbuja.Core.Abstractions.Store;
 using Microsoft.Extensions.Configuration;
+using Burbuja.Core.Sdk.Policy;
 
 namespace Burbuja.Agents.Runtime;
 
@@ -183,7 +184,7 @@ public sealed class ToolGate(
             ApprovalKind.Permission,
             "tool",
             request.JobCanonical,
-            request.ToolName + ":" + verdict.Finding.Class,
+            ActionIdentity.Fingerprint(request.ToolName, request.Input, request.Context.WorkRoot),
             verdict.Finding.Class,
             verdict.Finding.Class,
             request.ToolName,
@@ -258,7 +259,8 @@ public sealed class ToolBatchExecutor(
     IEventLog events,
     ICache cache,
     IRedactor redactor,
-    TimeProvider clock)
+    TimeProvider clock,
+    JobToolJournal journal)
 {
     private readonly Dictionary<string, IAgentTool> _tools = tools.ToDictionary(t => t.Descriptor.Name, t => t, StringComparer.OrdinalIgnoreCase);
 
@@ -279,7 +281,7 @@ public sealed class ToolBatchExecutor(
         var results = new List<ToolResultBlock>();
         foreach (var call in calls)
         {
-            var replayKey = $"tool_exec:{runId}:{call.Id}";
+            var replayKey = $"tool_exec:{runId}:{call.Id}:{ActionIdentity.Fingerprint(call.Name, call.Input, context.WorkRoot)}";
             var replayed = await cache.GetAsync<ToolResultBlock>(replayKey, ct);
             if (replayed is not null)
             {
@@ -322,8 +324,9 @@ public sealed class ToolBatchExecutor(
             var bound = rec is not null
                         && rec.Request.StreamId.Equals(streamId, StringComparison.Ordinal)
                         && rec.Request.SubjectId.Equals(subject.Canonical, StringComparison.OrdinalIgnoreCase)
-                        && rec.Request.Action.Equals(call.Name, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(rec.Request.Preview, ToolGate.Preview(call.Name, call.Input), StringComparison.Ordinal);
+                         && rec.Request.Action.Equals(call.Name, StringComparison.OrdinalIgnoreCase)
+                         && string.Equals(rec.Request.DecisionKey,
+                             ActionIdentity.Fingerprint(call.Name, call.Input, context.WorkRoot), StringComparison.Ordinal);
 
             if (bound && rec!.Outcome is Approved)
             {
@@ -465,6 +468,13 @@ public sealed class ToolBatchExecutor(
             return new OneResult(missing, null);
         }
 
+        if (subject is JobGateSubject)
+        {
+            var previous = await journal.BeginAsync(subject, runId, call, context.WorkRoot, ct);
+            if (previous is not null)
+                return new OneResult(previous, null);
+        }
+
         var grant = grants.Mint(runId, call.Name + ":" + call.Id, context.Timeout);
         var pass = new GatePass(call.Id, call.Name, call.Name + ":" + call.Id, grant);
         await events.AppendAsync(new EventAppend(
@@ -498,6 +508,8 @@ public sealed class ToolBatchExecutor(
         var durationMs = (int)clock.GetElapsedTime(started).TotalMilliseconds;
         var content = JsonNode.Parse(redactor.Redact(executed.Content.ToJsonString())) ?? executed.Content;
         var result = new ToolResultBlock(call.Id, content, executed.IsError);
+        if (subject is JobGateSubject)
+            await journal.CompleteAsync(subject, runId, call, result, ct);
         await events.AppendAsync(new EventAppend(
             streamId,
             call.Id,

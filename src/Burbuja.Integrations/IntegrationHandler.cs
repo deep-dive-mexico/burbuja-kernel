@@ -7,6 +7,9 @@ using Burbuja.Core.Abstractions.Policy;
 using Burbuja.Core.Abstractions.Redaction;
 using Burbuja.Core.Arm;
 using Microsoft.Extensions.Configuration;
+using Burbuja.Core.Sdk.Policy;
+using Burbuja.Core.Abstractions.Json;
+using System.Text.Json;
 
 namespace Burbuja.Integrations;
 
@@ -208,7 +211,7 @@ public sealed class IntegrationHandler(
         if (verdict.Tier is RiskTier.Gray or RiskTier.Escalate)
         {
             var approvalId = body?["approvalId"]?.GetValue<string>() ?? "";
-            if (!await IsApprovedAsync(approvalId, verdict.Finding.Class, req, tool, input, ct).ConfigureAwait(false))
+            if (!await IsApprovedAsync(approvalId, verdict.Finding.Class, req, tool, input, properties, ct).ConfigureAwait(false))
             {
                 var opened = await approvals.OpenAsync(new ApprovalRequest(
                     StreamId: streamId,
@@ -216,7 +219,7 @@ public sealed class IntegrationHandler(
                     Kind: ApprovalKind.Permission,
                     SubjectType: "integration",
                     SubjectId: req.Id.Canonical,
-                    DecisionKey: DecisionKey(req, tool, input),
+                    DecisionKey: DecisionKey(req, tool, input, properties),
                     ShapeKey: verdict.Finding.Fingerprint,
                     RiskClass: verdict.Finding.Class,
                     Action: tool,
@@ -266,15 +269,15 @@ public sealed class IntegrationHandler(
     /// arguments are part of it on purpose — an approval for sending one email is not an approval for
     /// sending another, and a key that ignored them would make every call of a tool one decision.
     /// </summary>
-    internal static string DecisionKey(ResourceActionRequest req, string tool, JsonNode input) =>
-        $"integration:call:{StoreKey(req.Id)}:{tool}:{Hash(input)}";
-
-    private static string Hash(JsonNode input)
-    {
-        var bytes = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(input.ToJsonString()));
-        return Convert.ToHexStringLower(bytes)[..16];
-    }
+    internal static string DecisionKey(ResourceActionRequest req, string tool, JsonNode input, IntegrationProperties? properties = null) =>
+        $"integration:call:{StoreKey(req.Id)}:{tool}:" + ActionIdentity.Fingerprint(tool, new JsonObject
+        {
+            ["input"] = input.DeepClone(),
+            ["kind"] = properties?.Kind,
+            ["serverName"] = properties?.ServerName,
+            ["transport"] = JsonSerializer.SerializeToNode(properties?.Transport, JsonWire.Options),
+            ["devHosts"] = JsonSerializer.SerializeToNode(properties?.DevHosts, JsonWire.Options),
+        });
 
     /// <summary>
     /// Whether the caller handed back an approval that authorises THIS call: approved, the same risk class,
@@ -287,6 +290,7 @@ public sealed class IntegrationHandler(
         ResourceActionRequest req,
         string tool,
         JsonNode input,
+        IntegrationProperties properties,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(approvalId))
@@ -297,7 +301,7 @@ public sealed class IntegrationHandler(
             return false;
         if (!string.Equals(record.Request.RiskClass, riskClass, StringComparison.Ordinal))
             return false;
-        return string.Equals(record.Request.DecisionKey, DecisionKey(req, tool, input), StringComparison.Ordinal);
+        return string.Equals(record.Request.DecisionKey, DecisionKey(req, tool, input, properties), StringComparison.Ordinal);
     }
 
     /// <summary>

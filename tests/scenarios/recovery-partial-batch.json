@@ -1,0 +1,22 @@
+{
+  "id": "recovery-partial-batch",
+  "defaultUsage": { "inputTokens": 80, "outputTokens": 40 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "firstTurn": true },
+        "emit": {
+          "stopReason": "tool_use",
+          "blocks": [
+            { "type": "tool_use", "id": "append-once", "name": "bash", "input": { "command": "printf x >> counter.txt" } },
+            { "type": "tool_use", "id": "interrupted", "name": "bash", "input": { "command": "sleep 10; printf y >> counter.txt" } }
+          ]
+        }
+      },
+      { "when": { "any": true }, "emit": { "stopReason": "end_turn", "blocks": [{ "type": "text", "text": "finished" }] } }
+    ]
+  },
+  "supervisor": {
+    "decisions": [{ "when": { "any": true }, "emit": { "decision": "allow", "reason": "test-owned workspace", "confidence": 0.99 } }]
+  }
+}

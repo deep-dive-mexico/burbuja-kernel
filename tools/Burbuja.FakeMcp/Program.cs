@@ -35,6 +35,7 @@ public static class Program
         var hang = false;
         var delayMs = 0;
         var stderrText = "";
+        var pageSize = int.MaxValue;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -60,6 +61,9 @@ public static class Program
                     break;
                 case "--delay-ms" when i + 1 < args.Length:
                     delayMs = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case "--page-size" when i + 1 < args.Length:
+                    pageSize = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
                     break;
                 default:
                     break;
@@ -113,6 +117,7 @@ public static class Program
 
             if (delayMs > 0)
                 await Task.Delay(delayMs).ConfigureAwait(false);
+            var offset = int.TryParse(request?["params"]?["cursor"]?.GetValue<string>(), out var parsed) ? parsed : 0;
 
             var result = method switch
             {
@@ -124,12 +129,13 @@ public static class Program
                 },
                 "tools/list" => new JsonObject
                 {
-                    ["tools"] = new JsonArray([.. tools.Select(t => (JsonNode)new JsonObject
+                    ["tools"] = new JsonArray([.. tools.Skip(offset).Take(pageSize).Select(t => (JsonNode)new JsonObject
                     {
                         ["name"] = t,
                         ["description"] = $"The fake '{t}' tool.",
                         ["inputSchema"] = new JsonObject { ["type"] = "object" },
                     })]),
+                    ["nextCursor"] = pageSize < tools.Count - offset ? (offset + pageSize).ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
                 },
                 "tools/call" => new JsonObject
                 {

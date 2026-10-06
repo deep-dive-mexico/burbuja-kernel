@@ -27,6 +27,9 @@ public sealed class McpClientOptions
     /// <summary>How much of the child's stderr is quoted back in an error. Enough to name the cause, never
     /// enough to become a channel of its own.</summary>
     public int MaxStderrChars { get; set; } = 2_000;
+
+    public int MaxTools { get; set; } = 512;
+    public int MaxListPages { get; set; } = 32;
 }
 
 /// <summary>
@@ -66,9 +69,10 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
     public async Task<IReadOnlyList<string>> ListToolsAsync(
         IntegrationTransport transport,
         IReadOnlyDictionary<string, string>? environment,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isolateEnvironment = false)
     {
-        var result = await ExchangeAsync(transport, environment, "tools/list", null, ct).ConfigureAwait(false);
+        var result = await ExchangeAsync(transport, environment, "tools/list", null, ct, isolateEnvironment).ConfigureAwait(false);
         var tools = result?["tools"] as JsonArray;
         if (tools is null)
             throw new McpTransportException($"{Describe(transport)} answered tools/list without a 'tools' array.");
@@ -77,6 +81,32 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
             .Select(t => t?["name"]?.GetValue<string>())
             .Where(n => !string.IsNullOrEmpty(n))
             .Select(n => n!)];
+    }
+
+    /// <summary>Preserves all MCP content and structured content for a generic caller.</summary>
+    public async Task<IntegrationCallResult> CallRawAsync(
+        IntegrationTransport transport,
+        IReadOnlyDictionary<string, string>? environment,
+        string tool,
+        JsonNode input,
+        CancellationToken ct,
+        bool isolateEnvironment = false)
+    {
+        try
+        {
+            var result = await ExchangeAsync(transport, environment, "tools/call",
+                new JsonObject { ["name"] = tool, ["arguments"] = input.DeepClone() },
+                ct, isolateEnvironment).ConfigureAwait(false);
+            if (result is not JsonObject answer || answer["content"] is not JsonArray)
+                return new IntegrationCallResult(false, null, "The MCP server answered tools/call without content.");
+            var failed = answer["isError"]?.GetValue<bool>() ?? false;
+            return new IntegrationCallResult(!failed, answer,
+                failed ? "The MCP server reported a tool execution error." : null);
+        }
+        catch (McpTransportException ex)
+        {
+            return new IntegrationCallResult(false, null, ex.Message);
+        }
     }
 
     /// <summary>
@@ -142,7 +172,8 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
         IReadOnlyDictionary<string, string>? environment,
         string method,
         JsonNode? parameters,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isolateEnvironment = false)
     {
         var command = transport.Command;
         if (string.IsNullOrWhiteSpace(command))
@@ -166,6 +197,8 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
         };
         foreach (var arg in transport.Args ?? [])
             start.ArgumentList.Add(arg);
+        if (isolateEnvironment)
+            start.Environment.Clear();
         foreach (var pair in environment ?? new Dictionary<string, string>())
             start.Environment[pair.Key] = pair.Value;
 
@@ -207,7 +240,30 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
             await WriteAsync(process, null, "notifications/initialized", null, transport, stderr, token).ConfigureAwait(false);
 
             await WriteAsync(process, 2, method, parameters, transport, stderr, token).ConfigureAwait(false);
-            return await ReadAsync(process, 2, method, transport, stderr, pump, ct, token).ConfigureAwait(false);
+            var result = await ReadAsync(process, 2, method, transport, stderr, pump, ct, token).ConfigureAwait(false);
+            if (method != "tools/list")
+                return result;
+            var collected = new JsonArray();
+            var cursors = new HashSet<string>(StringComparer.Ordinal);
+            var pages = 0;
+            while (true)
+            {
+                if (++pages > _options.MaxListPages || result?["tools"] is not JsonArray tools)
+                    throw new McpTransportException("MCP discovery exceeded its pagination bound or returned no tools array.");
+                foreach (var tool in tools)
+                    collected.Add(tool?.DeepClone());
+                if (collected.Count > _options.MaxTools)
+                    throw new McpTransportException("MCP discovery exceeded its tool count bound.");
+                var cursor = result?["nextCursor"]?.GetValue<string>();
+                if (cursor is null)
+                    return new JsonObject { ["tools"] = collected };
+                if (!cursors.Add(cursor))
+                    throw new McpTransportException("MCP discovery repeated a pagination cursor.");
+                var requestId = 2 + pages;
+                await WriteAsync(process, requestId, method, new JsonObject { ["cursor"] = cursor },
+                    transport, stderr, token).ConfigureAwait(false);
+                result = await ReadAsync(process, requestId, method, transport, stderr, pump, ct, token).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -267,7 +323,7 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
             string? line;
             try
             {
-                line = await process.StandardOutput.ReadLineAsync(ct).ConfigureAwait(false);
+                line = await ReadBoundedLineAsync(process.StandardOutput, ct).ConfigureAwait(false);
             }
             // The deadline is a transport failure with a sentence; a CALLER's cancellation is the caller's
             // business and must travel as a cancellation, or a job that was stopped would be recorded as a
@@ -333,6 +389,21 @@ public sealed class McpStdioClient(IOptions<McpClientOptions>? options = null)
 
             return answer["result"];
         }
+    }
+
+    private async Task<string?> ReadBoundedLineAsync(StreamReader reader, CancellationToken ct)
+    {
+        var line = new StringBuilder();
+        var one = new char[1];
+        while (await reader.ReadAsync(one.AsMemory(), ct).ConfigureAwait(false) > 0)
+        {
+            if (one[0] == '\n')
+                return line.ToString().TrimEnd('\r');
+            if (line.Length >= _options.MaxLineChars)
+                throw new McpTransportException($"The MCP response exceeded the {_options.MaxLineChars}-character ceiling.");
+            line.Append(one[0]);
+        }
+        return line.Length == 0 ? null : line.ToString();
     }
 
     /// <summary>

@@ -75,6 +75,11 @@ public sealed class JobHandler(
         desired.StartedAt = null;
         desired.EndedAt = null;
         desired.RunAttempts = 0;
+        desired.Recovery = null;
+        desired.State = null;
+        desired.ActiveRunId = null;
+        desired.GroupId = null;
+        desired.CostIsPartial = false;
         desired.Budgets ??= new JobBudgets(
             desired.Spec.MaxBudgetUsd ?? ReadDecimal(configuration, "Budget:DefaultJobUsd", 5m),
             desired.Spec.MaxTurns ?? 80,

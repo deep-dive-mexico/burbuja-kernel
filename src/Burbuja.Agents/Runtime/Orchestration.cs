@@ -8,6 +8,11 @@ using Burbuja.Agents.Abstractions.Orchestration;
 using Burbuja.Agents.Abstractions.Registry;
 using Burbuja.Core.Abstractions.Json;
 using Microsoft.Extensions.Logging;
+using Burbuja.Agents.Model;
+using Burbuja.Core.Abstractions.Approvals;
+using Burbuja.Core.Abstractions.Leases;
+using Burbuja.Core.Abstractions.Outbox;
+using Burbuja.Core.Abstractions.Recovery;
 
 namespace Burbuja.Agents.Runtime;
 
@@ -40,13 +45,45 @@ public sealed class RunGroupJoiner
     }
 }
 
-public sealed class JobOrchestrator(StrategyRegistry strategies, JobStateStore states)
+public sealed class JobOrchestrator(
+    StrategyRegistry strategies, JobStateStore states, ILeaseStore leases,
+    Microsoft.Extensions.Configuration.IConfiguration configuration, TimeProvider time, AgentRunner runner)
 {
+    internal static string LeaseKey(string jobKey) => "job-orchestration/" + jobKey.ToLowerInvariant();
+
     public async Task StartAsync(string jobKey, CancellationToken ct)
     {
         var job = await states.GetAsync(jobKey, ct);
-        if (job is null)
+        if (job is null || (JobExecution.IsTerminal(job.Properties.Status) && job.ProvisioningState != Burbuja.Core.Abstractions.Arm.ProvisioningState.Updating)
+            || job.Properties.Status == Abstractions.Domain.JobExecutionStatus.Paused)
             return;
+        var ttl = TimeSpan.TryParse(configuration["Runtime:LeaseTtl"], out var configured) && configured > TimeSpan.Zero
+            ? configured : TimeSpan.FromSeconds(45);
+        var owner = Guid.NewGuid().ToString("N");
+        var lease = await leases.AcquireAsync(LeaseKey(jobKey), owner, ttl, ct);
+        if (lease is null)
+            return;
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var heartbeatStop = new CancellationTokenSource();
+        var heartbeat = RenewAsync(heartbeatStop.Token);
+        try
+        {
+            job = await states.MutateAsync(jobKey, p =>
+            {
+                if (p.Recovery is null && p.RunAttempts > 0 && !JobExecution.IsTerminal(p.Status))
+                {
+                    p.Status = Abstractions.Domain.JobExecutionStatus.Blocked;
+                    p.Error = "LegacyJobCheckpointMissing: this interrupted job predates durable recovery; review its effects before starting new work.";
+                }
+                p.Recovery ??= new JobRecoveryState();
+                p.Recovery.FenceToken = lease.FencingToken;
+            }, ct);
+            using var scope = JobExecutionScope.Enter(new(jobKey, lease.FencingToken));
+            if (JobExecution.IsTerminal(job.Properties.Status))
+            {
+                await runner.SettleAsync(jobKey, job.Properties.Status, job.Properties.Error, execution.Token);
+                return;
+            }
         var scenario = job.Tags.TryGetValue(AgentsConstants.ScenarioTag, out var tag) ? tag : "";
         var id = StrategyIds.Normalize(job.Properties.Spec.Strategy, scenario);
         if (!strategies.TryGet(id, out var strategy))
@@ -57,7 +94,31 @@ public sealed class JobOrchestrator(StrategyRegistry strategies, JobStateStore s
                 return;
         }
 
-        await strategy.StartAsync(new OrchestrationContext(job.Id, jobKey, id, job.Properties.Spec), ct);
+            await strategy.StartAsync(new OrchestrationContext(job.Id, jobKey, id, job.Properties.Spec), execution.Token);
+        }
+        catch (OperationCanceledException) when (execution.IsCancellationRequested)
+        {
+            // Shutdown/lost ownership leaves durable continuation intact; user cancellation is settled by the runner.
+        }
+        finally
+        {
+            await heartbeatStop.CancelAsync();
+            try { await heartbeat; } catch (OperationCanceledException) { }
+            await leases.ReleaseAsync(LeaseKey(jobKey), owner, lease.FencingToken, CancellationToken.None);
+        }
+
+        async Task RenewAsync(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromTicks(Math.Max(TimeSpan.FromMilliseconds(50).Ticks, ttl.Ticks / 3)), time, token);
+                if (!await leases.RenewAsync(LeaseKey(jobKey), owner, lease.FencingToken, ttl, token))
+                {
+                    await execution.CancelAsync();
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -119,14 +180,45 @@ public sealed class IntakeService(LlmProviderRouter llmRouter, IIntakeStrategy f
     }
 }
 
-public sealed class JobRecoveryHandler : Burbuja.Core.Abstractions.Recovery.IStreamRecoveryHandler
+public sealed class JobRecoveryHandler(
+    JobStateStore states, ILeaseStore leases, IApprovalService approvals, IOutbox outbox, TimeProvider time) : IStreamRecoveryHandler
 {
     public string StreamType => AgentsConstants.StreamType;
 
-    public ValueTask RecoverAsync(string streamId, CancellationToken ct)
+    public RecoveryQuery? Query => new(AgentsConstants.Namespace, "workspaces/jobs", ["Accepted", "Updating"]);
+
+    public async ValueTask RecoverAsync(string streamId, CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
-        return default;
+        var job = await states.GetAsync(streamId.ToLowerInvariant(), ct);
+        if (job is null || (JobExecution.IsTerminal(job.Properties.Status) && job.ProvisioningState != Burbuja.Core.Abstractions.Arm.ProvisioningState.Updating)
+            || job.Properties.Status == Abstractions.Domain.JobExecutionStatus.Paused)
+            return;
+        var orchestration = await leases.GetAsync(JobOrchestrator.LeaseKey(job.Id), ct);
+        if (orchestration is not null && orchestration.ExpiresAt > time.GetUtcNow())
+            return;
+        if (job.Properties.ActiveRunId is { } runId)
+        {
+            var lease = await leases.GetAsync(AgentsConstants.LeaseId(job.Id.ToLowerInvariant() + "/" + runId.ToString("N")), ct);
+            if (lease is not null && lease.ExpiresAt > time.GetUtcNow())
+                return;
+        }
+        if (job.Properties.Status == Abstractions.Domain.JobExecutionStatus.AwaitingApproval)
+        {
+            var ids = job.Properties.Recovery?.Runs
+                .Where(run => run.Status == Abstractions.Domain.JobExecutionStatus.AwaitingApproval)
+                .Select(run => run.PendingApprovalId ?? run.State?.AwaitingApprovalId).Where(id => id is not null).ToList()
+                ?? [];
+            if (ids.Count == 0)
+                ids.Add(job.Properties.PendingApprovalId ?? job.Properties.State?.AwaitingApprovalId);
+            var decided = false;
+            foreach (var id in ids)
+                if (id is not null && (await approvals.GetAsync(id, ct))?.Outcome is Approved or Denied or Cancelled)
+                    decided = true;
+            if (!decided)
+                return;
+        }
+        await outbox.EnqueueAsync(new OutboxMessage(Guid.NewGuid(), Guid.NewGuid(), AgentsConstants.TopicRun,
+            new JsonObject { ["jobKey"] = job.Id.ToLowerInvariant() }), ct);
     }
 }
 

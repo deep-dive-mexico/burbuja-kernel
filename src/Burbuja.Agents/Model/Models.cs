@@ -93,6 +93,8 @@ public sealed class JobProperties
     public List<string> Notes { get; set; } = [];
     public Guid? ActiveRunId { get; set; }
     public Guid? GroupId { get; set; }
+    public JobRecoveryState? Recovery { get; set; }
+    public bool CostIsPartial { get; set; }
 
     /// <summary>
     /// The stateful agent this job runs as, and its team. Both feed the adjacency facts of
@@ -111,6 +113,36 @@ public sealed class JobProperties
 
     /// <summary>The compute workspace the job is bound to, when a compute plugin supplied one.</summary>
     public string? ComputeWorkspaceId { get; set; }
+}
+
+/// <summary>One durable plan per job generation; run identity and completed workers survive process loss.</summary>
+public sealed class JobRecoveryState
+{
+    public string Strategy { get; set; } = "";
+    public string? FenceToken { get; set; }
+    public Guid? GroupId { get; set; }
+    public FanOutPlan? Plan { get; set; }
+    public List<JobRunCheckpoint> Runs { get; set; } = [];
+}
+
+public sealed class JobRunCheckpoint
+{
+    public Guid RunId { get; set; }
+    public string Label { get; set; } = "";
+    public AgentRunRole Role { get; set; } = AgentRunRole.Worker;
+    public string? Brief { get; set; }
+    public AgentRunState? State { get; set; }
+    public JobExecutionStatus Status { get; set; } = JobExecutionStatus.Queued;
+    public string? PendingApprovalId { get; set; }
+    public string? Error { get; set; }
+    public bool ModelInFlight { get; set; }
+    public int InterruptedModelCalls { get; set; }
+    public DateTimeOffset? ModelStartedAt { get; set; }
+    public LlmResponse? PendingResponse { get; set; }
+    public bool ResponseBooked { get; set; }
+    public int LlmMs { get; set; }
+    public decimal CostUsd { get; set; }
+    public LlmStopReason? LastStopReason { get; set; }
 }
 
 /// <summary>`ledgers`: one read-only day of the runtime's durable budget ledger (M5.1).</summary>
