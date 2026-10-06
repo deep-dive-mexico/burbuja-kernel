@@ -1,5 +1,8 @@
 # Burbuja — reusable kernel source
 
+[Curated release notes](CHANGELOG.md) describe each shipped version;
+[the notes workflow](docs/release-notes.md) defines promotion and publication.
+
 The initial history-free tree is a **one-time migration** of the generic source: Core and SDK,
 resource-provider libraries, reusable Hosting, generic Host and Portal, independent plugins,
 public TestKit, and the standalone Workbench example. After the official repository's first
