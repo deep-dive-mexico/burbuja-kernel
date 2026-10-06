@@ -69,7 +69,10 @@ public sealed class JobRecoveryE2ETests
         await host.KillAsync();
         await host.StartAsync(bootstrap: false);
         using var after = host.Client();
-        var finished = await WaitAsync(after, path, body => body["properties"]?["status"]?.GetValue<string>() == "succeeded");
+        // Terminal job status precedes result-event and run-receipt persistence.
+        var finished = await WaitAsync(after, path, body =>
+            body["properties"]?["status"]?.GetValue<string>() == "succeeded" &&
+            body["provisioningState"]?.GetValue<string>() == "succeeded");
         Assert.Equal(runIds, finished["properties"]!["recovery"]!["runs"]!.AsArray()
             .Select(run => run!["runId"]!.GetValue<string>()));
         using var request = new HttpRequestMessage(HttpMethod.Get, path + "/events" + Api);
@@ -78,7 +81,7 @@ public sealed class JobRecoveryE2ETests
         Assert.Equal(2, events.Count(evt => evt!["type"]!.GetValue<string>() == "agents.turn.started"
             && evt["payload"]?["runId"]?.GetValue<string>() == Guid.Parse(fastRunId).ToString("N")));
         Assert.Single(events, evt => evt!["type"]!.GetValue<string>() == "agents.result");
-        Assert.Equal(3, (await GetAsync(after, path + "/runs"))["value"]!.AsArray().Count);
+        await WaitAsync(after, path + "/runs", body => body["value"]!.AsArray().Count == 3);
     }
 
     [Fact]
@@ -154,14 +157,15 @@ public sealed class JobRecoveryE2ETests
         await ExpectAsync(await after.PostAsJsonAsync(
             "/providers/Burbuja.Resources/approvals/" + approvalId + "/approve" + Api,
             new { note = "approve this same action after restart" }, Ct), HttpStatusCode.OK);
-        await WaitAsync(after, path,
-            body => body["properties"]?["status"]?.GetValue<string>() == "succeeded");
+        await WaitAsync(after, path, body =>
+            body["properties"]?["status"]?.GetValue<string>() == "succeeded" &&
+            body["provisioningState"]?.GetValue<string>() == "succeeded");
         using var request = new HttpRequestMessage(HttpMethod.Get, path + "/events" + Api);
         request.Headers.Accept.ParseAdd("application/json");
         var events = await ExpectAsync(await after.SendAsync(request, Ct), HttpStatusCode.OK);
         Assert.Single(events["value"]!.AsArray(), x => x!["type"]!.GetValue<string>() == "agents.result");
         Assert.Single(events["value"]!.AsArray(), x => x!["type"]!.GetValue<string>() == "agents.tool.call");
-        var runs = await GetAsync(after, path + "/runs");
+        var runs = await WaitAsync(after, path + "/runs", body => body["value"]!.AsArray().Count == 1);
         Assert.Single(runs["value"]!.AsArray());
     }
 }
