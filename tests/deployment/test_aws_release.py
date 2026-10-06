@@ -37,6 +37,18 @@ class TenantDeployTests(unittest.TestCase):
         self.assertEqual(commands[0], "set -eu")
         self.assertEqual(shlex.split(commands[-1]), ["/opt/dive/host.py", "install", "releases/x/y/release.tgz"])
 
+    def test_each_job_uses_its_own_runner(self):
+        import re
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        jobs = re.split(r"(?m)^  (?=[a-z-]+:\n)", workflow.split("\njobs:\n", 1)[1])
+        for job in filter(None, jobs):
+            name = job.split(":", 1)[0]
+            runner = re.search(r"(?m)^    runs-on: (.+)$", job).group(1)
+            self.assertNotIn("ubuntu-latest", runner, name)
+            expected = {"deploy": "dive-kernel", "prepare-release": "dive-release",
+                        "release": "dive-release"}.get(name, "dive-ci")
+            self.assertIn('"' + expected + '"', runner, name)
+
     def test_compose_volume_is_named_by_the_installer(self):
         self.assertIn("name: ${APP_STATE_VOLUME:-", (ROOT / "deploy/aws/compose.yaml").read_text())
 
