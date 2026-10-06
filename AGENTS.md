@@ -4,6 +4,7 @@ This repo owns **reusable** contracts, SDK, Core/Agents/Compute, Hosting, generi
 
 | Task | Read first | Update when proven |
 |---|---|---|
+| Release notes or promotion | `CHANGELOG.md`, `docs/release-notes.md`, `docs/aws-deployment.md` | Curated candidate summary before promotion; versioned notes and installed-release evidence after proof |
 | Core/SDK/ARM/agent or resource contract, plugin loader | `docs/wiki/OVERVIEW.md`, affected `src/` contract and tests | That wiki topic and affected tests |
 | Generic Host/Portal/Hosting or external consumer | `docs/developer-workbench.md` and `examples/Example.Workbench/README.md` | The owning guide and consumer tests |
 | Plugin install, manifest, auth or porting | `docs/plugin-review-2026-09-27.md`, affected plugin manifest and tests | Plugin guide/README and regression witness |
