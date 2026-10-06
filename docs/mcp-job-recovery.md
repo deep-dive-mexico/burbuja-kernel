@@ -72,4 +72,18 @@ make verify              # unit and all E2E lanes
 
 The independent AKOS repository keeps its normal full gates against its unchanged release pin. Its candidate-compatibility harness additionally tests a clean committed kernel candidate using a disposable product source snapshot that refuses production-host publication. That evidence is distinct from released-product validation and manual acceptance.
 
-Proof receipts and final counts are recorded after running the complete gates; no live-model, real third-party delivery, production rollback or human acceptance is implied by scripted fixtures.
+### Evidence at the reviewed runtime revision
+
+On 2026-10-06, clean kernel `914d719b30e17ff88feb3149e6bcc8c3f6beb8b9` passed:
+
+| Gate | Passed | Failed / skipped |
+|---|---:|---:|
+| Generic units, including Hosting/Workbench consumption | 1,325 | 0 / 0 |
+| Independent public HTTP | 47 | 0 / 0 |
+| Owned-process SQLite/recovery restarts | 7 | 0 / 0 |
+| Chromium console journeys | 20 | 0 / 0 |
+| Release/source/deployment contracts | 29 | 0 / 0 |
+
+The complete E2E receipt is `artifacts/e2e-runs/9a4f6ba8deb4/receipt.json`; unit TRX files are under `artifacts/test-results/`. Both push and PR validation passed on that revision ([PR #9](https://github.com/deep-dive-mexico/burbuja-kernel/pull/9)). A subsequent documentation-only commit records this proof; the runtime and tests above were committed together at the stated SHA.
+
+Scripted fixtures do not establish live-model behavior, real third-party delivery, production rollback or human acceptance. Persistent MCP sessions, automatic agent-tool import and custom orchestration strategies remain outside this contract.
