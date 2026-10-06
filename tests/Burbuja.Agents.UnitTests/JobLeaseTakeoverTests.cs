@@ -12,6 +12,35 @@ namespace Burbuja.Agents.UnitTests;
 public sealed class JobLeaseTakeoverTests
 {
     [Fact]
+    public async Task Accepted_cancellation_cannot_be_overwritten_by_a_runner_paused_before_startup()
+    {
+        PausingLeaseStore? pause = null;
+        using var host = Harness.CreateHost(extra: services =>
+        {
+            var original = services.Single(descriptor => descriptor.ServiceType == typeof(ILeaseStore));
+            services.Remove(original);
+            services.AddSingleton<ILeaseStore>(provider =>
+            {
+                var real = original.ImplementationFactory is not null
+                    ? (ILeaseStore)original.ImplementationFactory(provider)
+                    : (ILeaseStore)ActivatorUtilities.CreateInstance(provider, original.ImplementationType!);
+                return pause = new PausingLeaseStore(real, pauseOrchestration: false);
+            });
+        });
+        await Harness.SeedAsync(host);
+        await Harness.Send(host, "PUT", Harness.JobPath, Harness.JobBody("happy-path"));
+        var running = host.GetRequiredService<JobOrchestrator>().StartAsync(
+            Harness.JobPath.ToLowerInvariant(), TestContext.Current.CancellationToken);
+        await pause!.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var cancel = await Harness.Send(host, "POST", Harness.JobPath + "/cancel", "{}");
+        Assert.Equal(202, cancel.StatusCode);
+        pause.Resume.TrySetResult();
+        await running;
+        var final = await Harness.Send(host, "GET", Harness.JobPath);
+        Assert.Equal("cancelled", JsonSerializer.SerializeToNode(final.Result, JsonWire.Options)!["properties"]!["status"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task An_expired_claimant_cannot_replace_a_successors_persisted_execution_fence()
     {
         var clock = new FakeTimeProvider();
@@ -45,7 +74,7 @@ public sealed class JobLeaseTakeoverTests
         Assert.Equal(fence, JsonSerializer.SerializeToNode(after.Result, JsonWire.Options)!["properties"]!["recovery"]!["fenceToken"]!.GetValue<string>());
     }
 
-    private sealed class PausingLeaseStore(ILeaseStore inner) : ILeaseStore
+    private sealed class PausingLeaseStore(ILeaseStore inner, bool pauseOrchestration = true) : ILeaseStore
     {
         private int _claims;
         public TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -53,7 +82,7 @@ public sealed class JobLeaseTakeoverTests
         public async ValueTask<LeaseAcquisition?> AcquireAsync(string resource, string owner, TimeSpan ttl, CancellationToken ct)
         {
             var lease = await inner.AcquireAsync(resource, owner, ttl, ct);
-            if (lease is not null && resource.StartsWith("job-orchestration/", StringComparison.Ordinal)
+            if (lease is not null && resource.StartsWith("job-orchestration/", StringComparison.Ordinal) == pauseOrchestration
                 && Interlocked.Increment(ref _claims) == 1)
             {
                 Paused.TrySetResult();

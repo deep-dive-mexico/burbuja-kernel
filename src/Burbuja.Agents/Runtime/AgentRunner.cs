@@ -82,6 +82,8 @@ public sealed class AgentRunner(
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, cancel.TokenFor(jobKey));
             job = await states.MutateAsync(jobKey, p =>
             {
+                if (JobExecution.IsTerminal(p.Status))
+                    throw new OperationCanceledException("A terminal job generation cannot be reopened.");
                 p.Status = JobExecutionStatus.Running;
                 p.RunAttempts++;
                 p.WorkerNodeId = nodeId;
@@ -281,8 +283,6 @@ public sealed class AgentRunner(
                             run.ModelInFlight = true;
                             run.ModelStartedAt = time.GetUtcNow();
                             run.ResponseBooked = false;
-                            if (run.PendingResponse is null && run.LastStopReason is not null)
-                                run.InterruptedModelCalls = 0;
                             run.LastStopReason = null;
                         }
                     }, ct);
@@ -307,6 +307,7 @@ public sealed class AgentRunner(
                         {
                             run.PendingResponse = response;
                             run.ModelInFlight = false;
+                            run.InterruptedModelCalls = 0;
                             run.LlmMs = llmMs;
                         }
                     }, ct);
@@ -531,6 +532,8 @@ public sealed class AgentRunner(
         {
             var worker = await states.MutateAsync(jobKey, p =>
             {
+                if (p.Status == JobExecutionStatus.Cancelled && status != JobExecutionStatus.Cancelled)
+                    throw new OperationCanceledException("Accepted cancellation is final.");
                 p.Status = status;
                 p.Error = error;
                 p.PendingApprovalId = null;
@@ -556,6 +559,8 @@ public sealed class AgentRunner(
 
         var env = await states.MutateAsync(jobKey, p =>
         {
+            if (p.Status == JobExecutionStatus.Cancelled && status != JobExecutionStatus.Cancelled)
+                throw new OperationCanceledException("Accepted cancellation is final.");
             p.Status = status;
             p.Error = error;
             p.EndedAt ??= time.GetUtcNow();
