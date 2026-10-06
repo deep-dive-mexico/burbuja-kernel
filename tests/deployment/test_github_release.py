@@ -95,6 +95,48 @@ class PreparationTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_publication_includes_only_the_upcoming_summary_from_the_validated_tree(self):
+        calls, gh = self.fake_api()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Preserve café uploads.\n\n"
+                "## v0.4.0 — 2026-10-05\n\n- Historical change.\n")
+            with mock.patch.object(release, "ROOT", root), mock.patch.object(release, "gh", side_effect=gh):
+                release.publish("org/repo", TAG, SHA, "Kernel", SOURCE_SHA, allow_create_tag=True)
+        create = next(args for args, _ in calls if args[0] == "release")
+        notes = create[create.index("--notes") + 1]
+        self.assertIn("- Preserve café uploads.", notes)
+        self.assertNotIn("Historical change", notes)
+        self.assertIn(f"/blob/{SHA}/CHANGELOG.md", notes)
+        self.assertIn("--generate-notes", create)
+
+    def test_explicit_maintenance_notes_take_priority_over_upcoming_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## Unreleased\n\n- Future feature.\n\n"
+                "## v0.5.0 — 2026-10-06\n\n- Maintenance fix.\n\n"
+                "## v0.4.0 — 2026-10-05\n\n- Historical change.\n")
+            with mock.patch.object(release, "ROOT", root):
+                self.assertEqual(release.curated_notes(TAG), "- Maintenance fix.")
+
+    def test_legacy_tree_or_empty_upcoming_notes_do_not_publish_old_release_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(release, "ROOT", root):
+                self.assertEqual(release.curated_notes(TAG), "")
+                (root / "CHANGELOG.md").write_text(
+                    "# Changelog\n\n## Unreleased\n\n## v0.4.0 — 2026-10-05\n\n- Old.\n")
+                self.assertEqual(release.curated_notes(TAG), "")
+
+    def test_existing_release_preserves_its_notes_even_when_changelog_changes(self):
+        calls, gh = self.fake_api({"object": {"type": "commit", "sha": SHA}}, existing_release=True)
+        with mock.patch.object(release, "gh", side_effect=gh), \
+                mock.patch.object(release, "curated_notes", side_effect=AssertionError("notes already published")):
+            release.publish("org/repo", TAG, SHA, "Kernel", SOURCE_SHA, allow_create_tag=True)
+        self.assertTrue(all(args[0] == "api" and payload is None for args, payload in calls))
+
     def test_publication_refuses_a_checkout_other_than_the_validated_release(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -116,6 +116,21 @@ def prepare(repository, source_sha, run_id, content):
     return {"sha": sha, "tag": "v" + version}
 
 
+def curated_notes(tag):
+    """Read notes from the validated tree, preferring an explicit maintenance release."""
+    path = ROOT / "CHANGELOG.md"
+    if not path.exists():
+        return ""
+    content = path.read_text()
+    for heading in (tag, "Unreleased"):
+        section = re.search(
+            rf"^## {re.escape(heading)}(?: — [^\n]+)?\n(.*?)(?=^## |\Z)",
+            content, re.MULTILINE | re.DOTALL)
+        if section and section[1].strip():
+            return section[1].strip()
+    return ""
+
+
 def publish(repository, tag, sha, title_prefix, source_sha, allow_create_tag=False):
     """Never move a tag or replace existing release notes."""
     require_sha(sha)
@@ -137,6 +152,11 @@ def publish(repository, tag, sha, title_prefix, source_sha, allow_create_tag=Fal
     notes = f"Validated release commit: `{sha}`.\n"
     if source_sha != sha:
         notes += f"Main source commit: `{source_sha}`. The release commit changes only the declared version.\n"
+    curated = curated_notes(tag)
+    if curated:
+        notes += "\n## Release summary\n\n" + curated + "\n"
+    if (ROOT / "CHANGELOG.md").exists():
+        notes += f"\n[Curated changelog at this release](https://github.com/{repository}/blob/{sha}/CHANGELOG.md).\n"
     gh("release", "create", tag, "--repo", repository, "--verify-tag",
        "--title", f"{title_prefix} {tag}", "--generate-notes", "--notes", notes)
     print(f"Published {tag} at {sha}")
