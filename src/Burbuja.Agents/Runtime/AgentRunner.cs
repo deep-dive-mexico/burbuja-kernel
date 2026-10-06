@@ -46,11 +46,15 @@ public sealed class AgentRunner(
 {
     public async Task RunAsync(string jobKey, Guid runId, AgentRunRole role, string? briefOverride, Guid? parentRunId, Guid? groupId, CancellationToken ct, bool ownsTerminal = true)
     {
+        using var runScope = JobExecutionScope.Run(runId, ownsTerminal);
         var job = await states.GetAsync(jobKey, ct);
         if (job is null)
             return;
         if (JobExecution.IsTerminal(job.Properties.Status) && job.Properties.Status != JobExecutionStatus.AwaitingApproval)
+        {
+            await PersistRunAsync(job, runId, role, parentRunId, groupId, job.Properties.WorkerNodeId ?? "", ct);
             return;
+        }
 
         var nodeId = configuration["Kernel:NodeId"];
         if (string.IsNullOrWhiteSpace(nodeId))
@@ -78,6 +82,8 @@ public sealed class AgentRunner(
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, cancel.TokenFor(jobKey));
             job = await states.MutateAsync(jobKey, p =>
             {
+                if (JobExecution.IsTerminal(p.Status))
+                    throw new OperationCanceledException("A terminal job generation cannot be reopened.");
                 p.Status = JobExecutionStatus.Running;
                 p.RunAttempts++;
                 p.WorkerNodeId = nodeId;
@@ -117,7 +123,25 @@ public sealed class AgentRunner(
                 return;
             }
 
-            var isolated = !string.IsNullOrEmpty(briefOverride);
+            var checkpoint = Checkpoint(job.Properties, runId);
+            var isolated = !string.IsNullOrEmpty(briefOverride) && checkpoint is null;
+            if (checkpoint?.ModelInFlight == true)
+            {
+                job = await states.MutateAsync(jobKey, p =>
+                {
+                    var run = Checkpoint(p, runId)!;
+                    run.ModelInFlight = false;
+                    run.InterruptedModelCalls++;
+                    p.CostIsPartial = true;
+                    p.Notes.Add("A model request was interrupted before its response was recorded; its usage is unknown.");
+                }, ct);
+                if (Checkpoint(job.Properties, runId)!.InterruptedModelCalls > 1)
+                {
+                    await FinishAsync(jobKey, runId, streamId, null, JobExecutionStatus.Blocked,
+                        "InterruptedModelCall: recovery retry limit reached; cost is partial and review is required.", ct, ownsTerminal);
+                    return;
+                }
+            }
 
             // Fan-out workers share one job envelope but own an isolated transcript, so a
             // PendingBatch written by one worker must never be executed by another run.
@@ -126,6 +150,26 @@ public sealed class AgentRunner(
                 if (await ExecutePendingAsync(jobKey, job, streamId, runId, handle, pending, parentRunId, linked.Token))
                     return;
                 job = await states.GetAsync(jobKey, ct) ?? job;
+            }
+
+            checkpoint = Checkpoint(job.Properties, runId);
+            if (checkpoint?.LastStopReason == LlmStopReason.EndTurn)
+            {
+                var previousState = job.Properties.State ?? EmptyState();
+                if (handle is not null && !previousState.FinishNudged &&
+                    !previousState.Transcript.Any(message => message.Content.OfType<ToolResultBlock>().Any()))
+                    job = await states.MutateAsync(jobKey, p =>
+                    {
+                        var transcript = p.State!.Transcript.ToList();
+                        transcript.Add(new InputMessage("user", [new TextBlock("Please finish and commit.")]));
+                        p.State = p.State with { FinishNudged = true, Transcript = transcript };
+                        Checkpoint(p, runId)!.LastStopReason = null;
+                    }, ct);
+                else
+                {
+                    await FinishAsync(jobKey, runId, streamId, handle, JobExecutionStatus.Succeeded, null, ct, ownsTerminal);
+                    return;
+                }
             }
 
             var isolatedTranscript = isolated
@@ -225,11 +269,27 @@ public sealed class AgentRunner(
                 LlmResponse response;
                 // M9 T1: the job path emits the same telemetry pair a stateful agent's session emits, so a
                 // trajectory reads the same way whichever lane produced it.
+                checkpoint = Checkpoint(job.Properties, runId);
+                var invokeStarted = time.GetTimestamp();
+                var llmMs = checkpoint?.LlmMs ?? 0;
+                if (checkpoint?.PendingResponse is { } recordedResponse)
+                    response = recordedResponse;
+                else
+                {
+                    job = await states.MutateAsync(jobKey, p =>
+                    {
+                        if (Checkpoint(p, runId) is { } run)
+                        {
+                            run.ModelInFlight = true;
+                            run.ModelStartedAt = time.GetUtcNow();
+                            run.ResponseBooked = false;
+                            run.LastStopReason = null;
+                        }
+                    }, ct);
                 await events.AppendAsync(new EventAppend(
                     streamId, runId.ToString("N"), AgentEventTypes.TurnStarted, $"turn {turn}",
                     new JsonObject { ["turn"] = turn, ["runId"] = runId.ToString("N"), ["model"] = modelId, ["effort"] = job.Properties.Effort },
                     RenderLane.Log, job.Name, null, AgentsConstants.StreamType), ct);
-                var invokeStarted = time.GetTimestamp();
                 try
                 {
                     response = await InvokeWithRetryAsync(request, nodeId, linked.Token);
@@ -240,14 +300,27 @@ public sealed class AgentRunner(
                     return;
                 }
 
-                var llmMs = (int)time.GetElapsedTime(invokeStarted).TotalMilliseconds;
+                    llmMs = (int)time.GetElapsedTime(invokeStarted).TotalMilliseconds;
+                    job = await states.MutateAsync(jobKey, p =>
+                    {
+                        if (Checkpoint(p, runId) is { } run)
+                        {
+                            run.PendingResponse = response;
+                            run.ModelInFlight = false;
+                            run.InterruptedModelCalls = 0;
+                            run.LlmMs = llmMs;
+                        }
+                    }, ct);
+                }
 
                 var bookKey = $"booked:{job.Id}:{runId:N}:{turn}:worker";
-                var bookingId = Guid.Empty;
-                if (await cache.TryAddAsync(bookKey, true, TimeSpan.FromHours(24), ct))
+                var bookingId = Checkpoint(job.Properties, runId)?.ResponseBooked == true ? EntityIds.Derive(bookKey) : Guid.Empty;
+                checkpoint = Checkpoint(job.Properties, runId);
+                if (checkpoint is not null ? !checkpoint.ResponseBooked : await cache.TryAddAsync(bookKey, true, TimeSpan.FromHours(24), ct))
                 {
                     var usd = costs.Quote(modelId, response.Usage);
-                    bookingId = await ledger.BookAsync(new BudgetBooking(ParseJobId(job.Id), runId, BudgetKind.Worker, usd, response.Usage.InputTokens, response.Usage.OutputTokens), ct);
+                    bookingId = await ledger.BookAsync(new BudgetBooking(ParseJobId(job.Id), runId, BudgetKind.Worker, usd, response.Usage.InputTokens, response.Usage.OutputTokens)
+                    { IdempotencyId = EntityIds.Derive(bookKey), BookedAt = checkpoint?.ModelStartedAt }, ct);
                     job = await states.MutateAsync(jobKey, p =>
                     {
                         var c = p.Cost;
@@ -257,6 +330,11 @@ public sealed class AgentRunner(
                             InputTokens = c.InputTokens + response.Usage.InputTokens,
                             OutputTokens = c.OutputTokens + response.Usage.OutputTokens,
                         };
+                        if (Checkpoint(p, runId) is { } run)
+                        {
+                            run.ResponseBooked = true;
+                            run.CostUsd += usd;
+                        }
                     }, ct);
                 }
 
@@ -301,7 +379,18 @@ public sealed class AgentRunner(
                 {
                     job = await states.MutateAsync(jobKey, p =>
                     {
-                        p.State = (p.State ?? EmptyState()) with { Turn = turn + 1, Transcript = transcript, ConsecutiveFailures = 0 };
+                        p.State = (p.State ?? EmptyState()) with
+                        {
+                            Turn = turn + 1, Transcript = transcript, ConsecutiveFailures = 0,
+                            PendingBatch = response.StopReason == LlmStopReason.ToolUse
+                                ? new PendingToolBatch(Guid.NewGuid().ToString("N"), response.Blocks.OfType<ToolUseBlock>().ToList(), null)
+                                : null,
+                        };
+                        if (Checkpoint(p, runId) is { } run)
+                        {
+                            run.PendingResponse = null;
+                            run.LastStopReason = response.StopReason;
+                        }
                     }, ct);
                     state = job.Properties.State ?? EmptyState();
                 }
@@ -316,6 +405,8 @@ public sealed class AgentRunner(
                             var t = p.State?.Transcript.ToList() ?? [];
                             t.Add(new InputMessage("user", [new TextBlock("Please finish and commit.")]));
                             p.State = (p.State ?? EmptyState()) with { FinishNudged = true, Transcript = t };
+                            if (Checkpoint(p, runId) is { } run)
+                                run.LastStopReason = null;
                         }, ct);
                         continue;
                     }
@@ -385,6 +476,11 @@ public sealed class AgentRunner(
             if (cancel.IsCanceled(jobKey))
                 await FinishAsync(jobKey, runId, streamId, handle, JobExecutionStatus.Cancelled, null, CancellationToken.None, ownsTerminal);
         }
+        catch (InterruptedToolExecutionException ex)
+        {
+            await FinishAsync(jobKey, runId, streamId, null, JobExecutionStatus.Blocked, ex.Message,
+                CancellationToken.None, ownsTerminal);
+        }
         finally
         {
             await leases.ReleaseAsync(leaseName, nodeId, lease.FencingToken, CancellationToken.None);
@@ -412,6 +508,16 @@ public sealed class AgentRunner(
         throw new LlmThrottledException();
     }
 
+    public async ValueTask SettleAsync(string jobKey, JobExecutionStatus status, string? error, CancellationToken ct)
+    {
+        var job = await states.GetAsync(jobKey, ct);
+        if (job is null)
+            return;
+        var runId = job.Properties.ActiveRunId ?? job.Properties.Recovery?.Runs.FirstOrDefault()?.RunId ?? Guid.NewGuid();
+        using var scope = JobExecutionScope.Run(runId, ownsTerminal: true);
+        await FinishAsync(jobKey, runId, AgentsConstants.StreamId(job.Id), null, status, error, ct);
+    }
+
     private async Task FinishAsync(
         string jobKey,
         Guid runId,
@@ -423,7 +529,19 @@ public sealed class AgentRunner(
         bool ownsTerminal = true)
     {
         if (!ownsTerminal)
+        {
+            var worker = await states.MutateAsync(jobKey, p =>
+            {
+                if (p.Status == JobExecutionStatus.Cancelled && status != JobExecutionStatus.Cancelled)
+                    throw new OperationCanceledException("Accepted cancellation is final.");
+                p.Status = status;
+                p.Error = error;
+                p.PendingApprovalId = null;
+            }, ct);
+            await PersistRunAsync(worker, runId, AgentAmbient.Value?.Role ?? AgentRunRole.Worker,
+                null, worker.Properties.GroupId, worker.Properties.WorkerNodeId ?? "", ct);
             return;
+        }
         if (handle is not null && status == JobExecutionStatus.Succeeded)
         {
             try
@@ -441,13 +559,13 @@ public sealed class AgentRunner(
 
         var env = await states.MutateAsync(jobKey, p =>
         {
+            if (p.Status == JobExecutionStatus.Cancelled && status != JobExecutionStatus.Cancelled)
+                throw new OperationCanceledException("Accepted cancellation is final.");
             p.Status = status;
             p.Error = error;
-            p.EndedAt = time.GetUtcNow();
+            p.EndedAt ??= time.GetUtcNow();
             p.PendingApprovalId = null;
-        }, ct, status is JobExecutionStatus.Succeeded or JobExecutionStatus.Cancelled
-            ? ProvisioningState.Succeeded
-            : ProvisioningState.Failed);
+        }, ct, ProvisioningState.Updating);
 
         if (status is JobExecutionStatus.Cancelled)
             await ops.CancelAsync(env.Properties.OperationId ?? "", "cancelled", ct);
@@ -460,7 +578,23 @@ public sealed class AgentRunner(
         await using var ts = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(redactor.Redact(System.Text.Json.JsonSerializer.Serialize(transcript, JsonWire.Options))));
         await artifacts.PutAsync(ArtifactKey(jobKey, "transcript.json"), ts, "application/json", null, ct);
 
-        await events.AppendAsync(new EventAppend(
+        var recorded = false;
+        long cursor = 0;
+        while (true)
+        {
+            var count = 0;
+            await foreach (var evt in events.ReadRangeAsync(streamId, cursor, long.MaxValue, 512, null, ct))
+            {
+                count++;
+                cursor = evt.Seq + 1;
+                if (evt.Type == AgentEventTypes.Result && evt.SubStreamId == runId.ToString("N"))
+                    recorded = true;
+            }
+            if (recorded || count < 512)
+                break;
+        }
+        if (!recorded)
+            await events.AppendAsync(new EventAppend(
             streamId,
             runId.ToString("N"),
             AgentEventTypes.Result,
@@ -470,6 +604,10 @@ public sealed class AgentRunner(
             env.Name,
             env.Properties.Cost.TotalUsd,
             AgentsConstants.StreamType), ct);
+        env = await states.MutateAsync(jobKey, _ => { }, ct, status is JobExecutionStatus.Succeeded or JobExecutionStatus.Cancelled
+            ? ProvisioningState.Succeeded : ProvisioningState.Failed);
+        await PersistRunAsync(env, runId, AgentAmbient.Value?.Role ?? Checkpoint(env.Properties, runId)?.Role ?? AgentRunRole.Worker,
+            null, env.Properties.GroupId, env.Properties.WorkerNodeId ?? "", ct);
     }
 
     private async Task<WorkspaceHandle?> OpenWorkspaceAsync(ResourceEnvelope<JobProperties> job, CancellationToken ct)
@@ -608,7 +746,9 @@ public sealed class AgentRunner(
                 Role = role,
                 Attempt = job.Properties.RunAttempts,
                 WorkerNodeId = nodeId,
-                Status = JobExecutionStatus.Running,
+                Status = Checkpoint(job.Properties, runId)?.Status ?? job.Properties.Status,
+                Transcript = job.Properties.State?.Transcript.ToList() ?? [],
+                CostUsd = Checkpoint(job.Properties, runId)?.CostUsd ?? 0,
             }, JsonWire.Options)!.AsObject(),
             ProvisioningState.Succeeded,
             job.SystemData,
@@ -625,6 +765,9 @@ public sealed class AgentRunner(
 
     private static AgentRunState EmptyState() =>
         new(1, 0, 0, 0, 0, false, null, null, null, [], null, null, null, null);
+
+    private static JobRunCheckpoint? Checkpoint(JobProperties job, Guid runId) =>
+        job.Recovery?.Runs.FirstOrDefault(run => run.RunId == runId);
 
     private static int ReadInt(IConfiguration configuration, string key, int fallback) =>
         int.TryParse(configuration[key], out var n) && n > 0 ? n : fallback;

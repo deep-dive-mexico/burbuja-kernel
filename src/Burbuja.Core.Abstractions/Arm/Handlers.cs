@@ -182,6 +182,9 @@ public sealed record SkipToken(DateTimeOffset CreatedAt, string Id);
 
 public interface IResourceStore
 {
+    /// <summary>Atomically creates an absent key. Existing keys fail with 412; unsupported adapters must refuse, never upsert.</summary>
+    ValueTask<ResourceEnvelope<JsonObject>> CreateAsync(ResourceEnvelope<JsonObject> envelope, CancellationToken ct) =>
+        throw new NotSupportedException("This resource adapter does not support atomic create.");
     ValueTask<ResourceEnvelope<JsonObject>?> GetAsync(string key, CancellationToken ct);
     ValueTask<ResourceEnvelope<JsonObject>> UpsertAsync(ResourceEnvelope<JsonObject> envelope, string? ifMatchETag, CancellationToken ct);
     ValueTask DeleteAsync(string key, string? ifMatchETag, CancellationToken ct);

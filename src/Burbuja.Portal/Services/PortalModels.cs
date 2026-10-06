@@ -105,6 +105,7 @@ public sealed class PortalJob
     public PortalJobSpec Spec { get; set; } = new();
     public string Status { get; set; } = "";
     public PortalJobCost Cost { get; set; } = new();
+    public bool CostIsPartial { get; set; }
     public string? PendingApprovalId { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset? StartedAt { get; set; }

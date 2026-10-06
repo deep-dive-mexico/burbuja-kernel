@@ -5,6 +5,7 @@ using Burbuja.Agents.Abstractions.Domain;
 using Burbuja.Agents.Abstractions.Llm;
 using Burbuja.Agents.Abstractions.Orchestration;
 using Burbuja.Core.Abstractions.Json;
+using Burbuja.Agents.Model;
 
 namespace Burbuja.Agents.Runtime;
 
@@ -95,23 +96,35 @@ public sealed class ScenarioPlanProvider
         0.8);
 }
 
-public sealed class SingleWorkerStrategy(AgentRunner runner) : IOrchestrationStrategy
+public sealed class SingleWorkerStrategy(AgentRunner runner, JobStateStore states) : IOrchestrationStrategy
 {
     public string Id => StrategyIds.SingleWorker;
 
-    public async ValueTask StartAsync(OrchestrationContext context, CancellationToken ct) =>
-        await runner.RunAsync(context.JobKey, Guid.NewGuid(), AgentRunRole.Worker, null, null, null, ct);
+    public async ValueTask StartAsync(OrchestrationContext context, CancellationToken ct)
+    {
+        var job = await states.MutateAsync(context.JobKey, p =>
+        {
+            p.Recovery ??= new JobRecoveryState();
+            p.Recovery.Strategy = Id;
+            if (p.Recovery.Runs.Count == 0)
+                p.Recovery.Runs.Add(new JobRunCheckpoint { RunId = p.ActiveRunId ?? Guid.NewGuid(), Label = "worker", State = p.State });
+            p.ActiveRunId = p.Recovery.Runs[0].RunId;
+        }, ct);
+        await runner.RunAsync(context.JobKey, job.Properties.Recovery!.Runs[0].RunId, AgentRunRole.Worker, null, null, null, ct);
+    }
 
     public ValueTask OnRunCompletedAsync(OrchestrationContext context, RunOutcome outcome, CancellationToken ct) => default;
 
-    public ValueTask<StrategyRecovery> RecoverAsync(OrchestrationContext context, CancellationToken ct) =>
-        new(new StrategyRecovery([]));
+    public async ValueTask<StrategyRecovery> RecoverAsync(OrchestrationContext context, CancellationToken ct)
+    {
+        await StartAsync(context, ct);
+        return new([context.JobKey]);
+    }
 }
 
 public sealed class PlanFanOutMergeStrategy(
     AgentRunner runner,
     JobStateStore states,
-    RunGroupJoiner joiner,
     ScenarioPlanProvider plans,
     LlmProviderRouter llmRouter) : IOrchestrationStrategy
 {
@@ -120,36 +133,85 @@ public sealed class PlanFanOutMergeStrategy(
     public async ValueTask StartAsync(OrchestrationContext context, CancellationToken ct)
     {
         var spec = context.Spec;
-        var scenario = spec.Extra is not null
+        var job = await states.GetAsync(context.JobKey, ct);
+        if (job is null)
+            return;
+        var scenario = job.Tags.TryGetValue(AgentsConstants.ScenarioTag, out var declared) ? declared : spec.Extra is not null
                        && spec.Extra.TryGetValue(AgentsConstants.ScenarioTag, out var tag)
             ? tag.GetString() ?? ""
             : "";
-        var plan = plans.TryLoad(scenario) ?? await TryLlmPlanAsync(ct) ?? ScenarioPlanProvider.SafeDefault;
+        var plan = job.Properties.Recovery?.Plan ?? plans.TryLoad(scenario) ?? await TryLlmPlanAsync(ct) ?? ScenarioPlanProvider.SafeDefault;
 
         if (!JobPlanValidation.IsValid(plan, spec.MaxBudgetUsd ?? 5m)
             || plan.Subtasks.Any(s => string.IsNullOrWhiteSpace(s.Brief)))
         {
             await states.MutateAsync(context.JobKey, p => p.Notes.Add("invalid plan; falling back to single-worker"), ct);
-            await runner.RunAsync(context.JobKey, Guid.NewGuid(), AgentRunRole.Worker, null, null, null, ct);
+            await new SingleWorkerStrategy(runner, states).StartAsync(context with { Strategy = StrategyIds.SingleWorker }, ct);
             return;
         }
 
-        var groupId = Guid.NewGuid();
-        var remaining = plan.Subtasks.Count;
-        joiner.Register(groupId, remaining, async token =>
-            await runner.RunAsync(context.JobKey, Guid.NewGuid(), AgentRunRole.Merger, "merge the results", null, groupId, token));
-
-        await Task.WhenAll(plan.Subtasks.Select(async sub =>
+        job = await states.MutateAsync(context.JobKey, p =>
         {
-            await runner.RunAsync(context.JobKey, Guid.NewGuid(), AgentRunRole.Worker, sub.Brief, Guid.NewGuid(), groupId, ct, ownsTerminal: false);
-            await joiner.SignalAsync(groupId, ct);
-        }));
+            p.Recovery ??= new JobRecoveryState();
+            p.Recovery.Strategy = Id;
+            if (p.Recovery.Plan is not null)
+                return;
+            p.Recovery.Plan = plan;
+            p.Recovery.GroupId = Guid.NewGuid();
+            p.GroupId = p.Recovery.GroupId;
+            p.Recovery.Runs = plan.Subtasks.Select(sub => new JobRunCheckpoint
+            { RunId = Guid.NewGuid(), Label = sub.Id, Brief = sub.Brief }).ToList();
+            p.Recovery.Runs.Add(new JobRunCheckpoint
+            { RunId = Guid.NewGuid(), Label = "merger", Role = AgentRunRole.Merger, Brief = "merge the results" });
+            p.Status = JobExecutionStatus.Running;
+        }, ct, Burbuja.Core.Abstractions.Arm.ProvisioningState.Updating);
+        var runs = job.Properties.Recovery!.Runs;
+        var groupId = job.Properties.Recovery.GroupId;
+        var pending = runs.Where(run => run.Role == AgentRunRole.Worker).ToList();
+        var done = new HashSet<string>(StringComparer.Ordinal);
+        while (pending.Count > 0)
+        {
+            var ready = pending.Where(run => plan.Subtasks.Single(sub => sub.Id == run.Label)
+                .DependsOn?.All(done.Contains) != false).ToList();
+            if (ready.Count == 0)
+                break;
+            await Task.WhenAll(ready.Select(run => runner.RunAsync(context.JobKey, run.RunId, run.Role,
+                run.Brief, runs.Single(saved => saved.Role == AgentRunRole.Merger).RunId, groupId, ct, ownsTerminal: false)));
+            job = (await states.GetAsync(context.JobKey, ct))!;
+            foreach (var run in ready)
+            {
+                pending.Remove(run);
+                var checkpoint = job.Properties.Recovery!.Runs.Single(saved => saved.RunId == run.RunId);
+                if (checkpoint.Status == JobExecutionStatus.Succeeded)
+                    done.Add(run.Label);
+                else if (JobExecution.IsTerminal(checkpoint.Status))
+                {
+                    await runner.SettleAsync(context.JobKey, checkpoint.Status, checkpoint.Error, ct);
+                    return;
+                }
+            }
+        }
+        job = (await states.GetAsync(context.JobKey, ct))!;
+        if (job.Properties.Recovery!.Runs.Any(run => run.Role == AgentRunRole.Worker && run.Status != JobExecutionStatus.Succeeded))
+        {
+            await states.MutateAsync(context.JobKey, p =>
+            {
+                p.Status = JobExecutionStatus.AwaitingApproval;
+                p.PendingApprovalId = p.Recovery!.Runs.FirstOrDefault(run => run.PendingApprovalId is not null)?.PendingApprovalId;
+            }, ct);
+            return;
+        }
+        var merger = runs.Single(run => run.Role == AgentRunRole.Merger);
+        await runner.RunAsync(context.JobKey, merger.RunId, merger.Role, merger.Brief, null, groupId, ct);
     }
 
     public ValueTask OnRunCompletedAsync(OrchestrationContext context, RunOutcome outcome, CancellationToken ct) => default;
 
-    public ValueTask<StrategyRecovery> RecoverAsync(OrchestrationContext context, CancellationToken ct) =>
-        new(new StrategyRecovery([]));
+    public async ValueTask<StrategyRecovery> RecoverAsync(OrchestrationContext context, CancellationToken ct)
+    {
+        await StartAsync(context, ct);
+        return new([context.JobKey]);
+    }
 
     private async ValueTask<FanOutPlan?> TryLlmPlanAsync(CancellationToken ct)
     {

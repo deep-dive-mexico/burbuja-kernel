@@ -43,7 +43,9 @@ public sealed record IntegrationProperties(
     IReadOnlyList<string>? DiscoveredTools = null,
     /// <summary>How many times a declared tool has been invoked. Read by an operator, never enforced here.</summary>
     int Calls = 0,
-    int SchemaVersion = 1);
+    int SchemaVersion = 1,
+    /// <summary>The explicit policy namespace for generic MCP tools: mcp__ServerName__remoteTool.</summary>
+    string? ServerName = null);
 
 /// <summary>
 /// How the kernel reaches a surface. Deliberately data rather than a live client: the resource is a
@@ -59,7 +61,9 @@ public sealed record IntegrationTransport(
     string? Command = null,
     IReadOnlyList<string>? Args = null,
     string? Url = null,
-    string? SecretRef = null);
+    string? SecretRef = null,
+    /// <summary>Environment variable to secret NAME mappings for stdio; resolved values are never resource properties.</summary>
+    IReadOnlyDictionary<string, string>? EnvironmentSecretRefs = null);
 
 /// <summary>What a call returned, as the resource reports it.</summary>
 public sealed record IntegrationCallResult(bool Ok, JsonNode? Output = null, string? Error = null);

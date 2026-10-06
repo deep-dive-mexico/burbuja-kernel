@@ -11,48 +11,58 @@ public sealed class JobStateStore(IResourceStore store)
 {
     public async ValueTask<ResourceEnvelope<JobProperties>?> GetAsync(string key, CancellationToken ct)
     {
+        await JobExecutionScope.ValidateLeaseAsync(ct);
         var env = await store.GetAsync(key, ct);
-        return env is null ? null : Map(env);
+        return env is null ? null : View(Map(env));
     }
 
     public async ValueTask<ResourceEnvelope<JobProperties>> PersistAsync(ResourceEnvelope<JobProperties> envelope, CancellationToken ct)
     {
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            try
-            {
-                var stored = await store.UpsertAsync(ToJson(envelope), envelope.ETag, ct);
-                return Map(stored);
-            }
-            catch (ArmException ex) when (ex.Error.HttpStatus == 412 && attempt < 7)
-            {
-                var latest = await store.GetAsync(envelope.Id.ToLowerInvariant(), ct)
-                             ?? await store.GetAsync(keyOf(envelope.Id), ct);
-                if (latest is null)
-                    throw;
-                envelope = envelope with { ETag = latest.ETag };
-            }
-        }
-
-        throw new ArmException(ArmError.PreconditionFailed("Could not persist job state."));
+        JobExecutionScope.EnsureOwned(envelope.Id, envelope.Properties);
+        return Map(await store.UpsertAsync(ToJson(envelope), envelope.ETag, ct));
     }
 
     public async ValueTask<ResourceEnvelope<JobProperties>> MutateAsync(
         string key,
         Action<JobProperties> mutate,
         CancellationToken ct,
-        ProvisioningState? provisioningState = null)
+        ProvisioningState? provisioningState = null,
+        Func<CancellationToken, ValueTask>? validateLease = null)
     {
         ArmException? last = null;
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            var env = await GetAsync(key, ct) ?? throw new InvalidOperationException(key);
+            var raw = await store.GetAsync(key, ct) ?? throw new InvalidOperationException(key);
+            await JobExecutionScope.ValidateLeaseAsync(ct);
+            if (validateLease is not null)
+                await validateLease(ct);
+            var env = Map(raw);
+            JobExecutionScope.EnsureOwned(key, env.Properties);
+            var originalState = env.Properties.State;
+            var originalStatus = env.Properties.Status;
+            var originalApproval = env.Properties.PendingApprovalId;
+            var originalError = env.Properties.Error;
+            env = View(env);
             mutate(env.Properties);
+            if (Checkpoint(env.Properties) is { } run)
+            {
+                run.State = env.Properties.State;
+                run.Status = env.Properties.Status;
+                run.PendingApprovalId = env.Properties.PendingApprovalId;
+                run.Error = env.Properties.Error;
+                if (JobExecutionScope.Current?.OwnsTerminal == false)
+                {
+                    env.Properties.State = originalState;
+                    env.Properties.Status = originalStatus;
+                    env.Properties.PendingApprovalId = originalApproval;
+                    env.Properties.Error = originalError;
+                }
+            }
             if (provisioningState is { } state)
                 env = env with { ProvisioningState = state };
             try
             {
-                return await PersistAsync(env, ct);
+                return View(Map(await store.UpsertAsync(ToJson(env), env.ETag, ct)));
             }
             catch (ArmException ex) when (ex.Error.HttpStatus == 412)
             {
@@ -63,7 +73,23 @@ public sealed class JobStateStore(IResourceStore store)
         throw last ?? new ArmException(ArmError.PreconditionFailed("Could not persist job state."));
     }
 
-    private static string keyOf(string id) => id.ToLowerInvariant();
+    private static JobRunCheckpoint? Checkpoint(JobProperties properties) =>
+        JobExecutionScope.Current?.RunId is { } id
+            ? properties.Recovery?.Runs.FirstOrDefault(run => run.RunId == id)
+            : null;
+
+    private static ResourceEnvelope<JobProperties> View(ResourceEnvelope<JobProperties> envelope)
+    {
+        JobExecutionScope.EnsureOwned(envelope.Id, envelope.Properties);
+        if (Checkpoint(envelope.Properties) is { } run && !JobExecution.IsTerminal(envelope.Properties.Status))
+        {
+            envelope.Properties.State = run.State;
+            envelope.Properties.Status = run.Status;
+            envelope.Properties.PendingApprovalId = run.PendingApprovalId;
+            envelope.Properties.Error = run.Error;
+        }
+        return envelope;
+    }
 
     private static ResourceEnvelope<JsonObject> ToJson(ResourceEnvelope<JobProperties> env) =>
         new(

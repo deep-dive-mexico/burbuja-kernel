@@ -1,0 +1,25 @@
+{
+  "id": "recovery-fanout",
+  "plan": {
+    "subtasks": [
+      { "id": "fast", "title": "Fast", "brief": "fast", "files": ["fast.txt"], "dependsOn": [], "estimateUsd": 0.1 },
+      { "id": "slow", "title": "Slow", "brief": "slow", "files": ["slow.txt"], "dependsOn": [], "estimateUsd": 0.1 }
+    ],
+    "mergeStrategy": "concat", "risks": [], "confidence": 0.9
+  },
+  "defaultUsage": { "inputTokens": 40, "outputTokens": 20 },
+  "agent": {
+    "turns": [
+      {
+        "when": { "lastUserMessage": { "contains": "fast" } },
+        "emit": { "stopReason": "tool_use", "blocks": [{ "type": "tool_use", "id": "fast-write", "name": "write_file", "input": { "path": "fast.txt", "content": "fast done" } }] }
+      },
+      {
+        "when": { "lastUserMessage": { "contains": "slow" } },
+        "delayMs": 3000,
+        "emit": { "stopReason": "tool_use", "blocks": [{ "type": "tool_use", "id": "slow-write", "name": "write_file", "input": { "path": "slow.txt", "content": "slow done" } }] }
+      },
+      { "when": { "any": true }, "emit": { "stopReason": "end_turn", "blocks": [{ "type": "text", "text": "complete" }] } }
+    ]
+  }
+}
