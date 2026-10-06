@@ -11,19 +11,39 @@ import tempfile
 import time
 import urllib.request
 
-import boto3
-
 ROOT = Path(__file__).resolve().parents[1]
+# Production keeps the historical host names; every other tenant is a suffixed slice.
+TENANTS = {"production": "", "dev": "-dev"}
+BRANCHES = {"refs/heads/main": "production", "refs/heads/dev": "dev"}
 
 
 def run(args, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
 
 
+def public_host(app, tenant, ref=None):
+    """Resolve the tenant's public host, refusing a branch that does not own that tenant."""
+    if tenant not in TENANTS:
+        raise ValueError("unknown tenant")
+    if ref is not None and BRANCHES.get(ref) != tenant:
+        raise ValueError(f"{ref} may not deploy the {tenant} tenant")
+    return app + TENANTS[tenant] + ".dive.ai"
+
+
+def install_commands(key, tenant):
+    # The host declares its tenant at launch; a misdirected target fails before anything stops.
+    probe = ("/opt/dive/venv/bin/python -c 'import json, sys; sys.exit(json.load(open(\"/opt/dive/config.json\"))"
+             ".get(\"tenant\", \"production\") != sys.argv[1])' " + tenant)
+    return ["set -eu", probe + " || { echo 'deploy target belongs to another tenant' >&2; exit 1; }",
+            "/opt/dive/host.py install " + key]
+
+
 def main():
     app = os.environ["AWS_APPLICATION"]
     if app not in ("akos", "kernel"):
         raise ValueError("unknown application")
+    tenant = os.environ.get("AWS_TENANT", "production")
+    host = public_host(app, tenant, os.environ.get("GITHUB_REF"))
     region = os.environ["AWS_REGION"]
     repository = os.environ["AWS_ECR_REPOSITORY"]
     bucket = os.environ["AWS_RELEASE_BUCKET"]
@@ -32,6 +52,7 @@ def main():
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or run(
             ["git", "status", "--porcelain"], capture_output=True, text=True).stdout:
         raise ValueError("release source must be clean and committed")
+    import boto3  # Only the deploy runner has AWS tooling; the tenant rules stay testable without it.
     aws = boto3.Session(region_name=region)
     ecr = aws.client("ecr")
     name = repository.split("/", 1)[1]
@@ -74,7 +95,7 @@ def main():
         aws.client("s3").upload_file(str(archive), bucket, key)
     ssm = aws.client("ssm")
     command = ssm.send_command(InstanceIds=[instance], DocumentName="AWS-RunShellScript",
-                              Parameters={"commands": ["/opt/dive/host.py install " + key],
+                              Parameters={"commands": install_commands(key, tenant),
                                           "executionTimeout": ["1200"]})["Command"]["CommandId"]
     deadline = time.monotonic() + 1250
     while time.monotonic() < deadline:
@@ -95,14 +116,14 @@ def main():
     deadline = time.monotonic() + 180
     while True:
         try:
-            with urllib.request.urlopen(f"https://{app}.dive.ai/health/ready", timeout=15) as response:
+            with urllib.request.urlopen(f"https://{host}/health/ready", timeout=15) as response:
                 if response.status == 200:
                     break
         except Exception:
             if time.monotonic() >= deadline:
                 raise
             time.sleep(10)
-    print("Deployed and publicly healthy:", json.dumps(manifest))
+    print(f"Deployed to {tenant} and publicly healthy:", json.dumps(manifest))
 
 
 if __name__ == "__main__":

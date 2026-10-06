@@ -85,15 +85,18 @@ jobs:
         run: python3 scripts/github-release.py publish --title-prefix "Burbuja kernel"
   deploy:
     needs: [prepare-release, build-and-unit, release]
-    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request' }}
     runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-kernel"]') }}
     timeout-minutes: 40
+    # main deploys production; dev deploys the dev tenant. The dev environment admits
+    # only branch dev and overrides AWS_DEPLOY_INSTANCE; the host also checks its tenant.
     environment:
-      name: production
-      url: https://kernel.dive.ai/portal
+      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
+      url: ${{ github.ref == 'refs/heads/main' && 'https://kernel.dive.ai/portal' || 'https://kernel-dev.dive.ai/portal' }}
     env:
       AWS_REGION: us-west-2
       AWS_APPLICATION: kernel
+      AWS_TENANT: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
       AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
       AWS_RELEASE_BUCKET: ${{ vars.AWS_RELEASE_BUCKET }}
       AWS_DEPLOY_INSTANCE: ${{ vars.AWS_DEPLOY_INSTANCE }}

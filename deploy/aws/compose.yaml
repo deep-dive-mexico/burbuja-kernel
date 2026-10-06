@@ -24,4 +24,5 @@ services:
       retries: 12
 volumes:
   state:
-    name: kernel-prod-state
+    # The installer names each tenant's volume; releases built before tenants keep production's.
+    name: ${APP_STATE_VOLUME:-kernel-prod-state}
