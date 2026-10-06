@@ -6,6 +6,8 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+## v0.6.1 — 2026-10-06
+
 ### Fixed
 
 - Refresh installed runtime OS packages during image builds so inherited
@@ -20,6 +22,8 @@ and [standalone deployment evidence](docs/aws-deployment.md).
   Publication reruns preserve existing release pages and immutable tags.
 - Establish a release-note workflow that records consumer compatibility,
   validation and deployment separately.
+
+Release: [v0.6.1](https://github.com/deep-dive-mexico/burbuja-kernel/releases/tag/v0.6.1).
 
 ## v0.6.0 — 2026-10-06
 
