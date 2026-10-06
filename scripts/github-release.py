@@ -126,7 +126,7 @@ def curated_notes(tag):
         section = re.search(
             rf"^## {re.escape(heading)}(?: — [^\n]+)?\n(.*?)(?=^## |\Z)",
             content, re.MULTILINE | re.DOTALL)
-        if section and section[1].strip():
+        if section:
             return section[1].strip()
     return ""
 

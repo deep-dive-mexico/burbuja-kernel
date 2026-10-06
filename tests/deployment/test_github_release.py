@@ -130,6 +130,15 @@ class PublicationTests(unittest.TestCase):
                     "# Changelog\n\n## Unreleased\n\n## v0.4.0 — 2026-10-05\n\n- Old.\n")
                 self.assertEqual(release.curated_notes(TAG), "")
 
+    def test_empty_explicit_release_does_not_fall_through_to_future_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## Unreleased\n\n- Future feature.\n\n"
+                "## v0.5.0 — 2026-10-06\n\n## v0.4.0 — 2026-10-05\n\n- Old.\n")
+            with mock.patch.object(release, "ROOT", root):
+                self.assertEqual(release.curated_notes(TAG), "")
+
     def test_existing_release_preserves_its_notes_even_when_changelog_changes(self):
         calls, gh = self.fake_api({"object": {"type": "commit", "sha": SHA}}, existing_release=True)
         with mock.patch.object(release, "gh", side_effect=gh), \

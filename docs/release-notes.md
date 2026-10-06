@@ -55,6 +55,6 @@ of existing release notes. Existing regressions retain version-only preparation,
 tag immutability, rerun identity and validated-checkout enforcement.
 
 Prepared on 2026-10-06 from source `9cff2eaa86c3f578fc78f204393bfc28526716f7`.
-Local deployment/publication contracts passed **34/34**, zero failures/skips.
+Local deployment/publication contracts passed **35/35**, zero failures/skips.
 The new publisher and changelog are pending review/merge; this is not evidence
 that a live GitHub release has used the curated summary yet.

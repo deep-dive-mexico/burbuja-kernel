@@ -6,6 +6,13 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+### Fixed
+
+- Refresh installed runtime OS packages during image builds so inherited
+  OpenSSL vulnerabilities receive available security updates.
+- Preserve an explicitly empty maintenance-release summary without including
+  unrelated future changes from Unreleased.
+
 ### Delivery
 
 - Include a curated release summary from the validated source's changelog in

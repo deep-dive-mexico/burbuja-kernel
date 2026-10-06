@@ -17,7 +17,8 @@ FROM ${RUNTIME}
 ARG SOURCE_COMMIT
 LABEL org.opencontainers.image.source="https://github.com/deep-dive-mexico/burbuja-kernel" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}"
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git tini \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends curl ca-certificates git tini \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 burbuja && useradd -u 10001 -g 10001 -m -s /usr/sbin/nologin burbuja \
     && mkdir -p /app /var/burbuja/state \
