@@ -82,8 +82,8 @@ public sealed class PortalBrowserE2ETests(SharedServerFixture server)
     {
         await using var session = await BrowserAsync("reader");
         await session.Page.GotoAsync(server.BaseUrl + "/portal/create/workspace");
+        await Assertions.Expect(session.Page.Locator("main")).ToContainTextAsync("roles do not grant");
         await Assertions.Expect(session.Page.Locator("[data-action=create-workspace]")).ToBeDisabledAsync();
-        Assert.Contains("roles do not grant", await session.Page.Locator("body").InnerTextAsync());
     }
 
     [Theory]
@@ -125,6 +125,7 @@ public sealed class PortalBrowserE2ETests(SharedServerFixture server)
         await session.Page.EmulateMediaAsync(new() { ColorScheme = dark ? ColorScheme.Dark : ColorScheme.Light });
         await session.Page.GotoAsync(server.BaseUrl + "/portal");
         await Assertions.Expect(session.Page.Locator("h1")).ToBeVisibleAsync();
+        await Assertions.Expect(session.Page.Locator("main[data-loaded=true]")).ToBeVisibleAsync();
         Assert.DoesNotContain("NaN", await session.Page.Locator("body").InnerTextAsync());
         Assert.True(await session.Page.EvaluateAsync<bool>(
             "() => document.documentElement.scrollWidth <= innerWidth + 2"), "The console must not overflow horizontally.");
