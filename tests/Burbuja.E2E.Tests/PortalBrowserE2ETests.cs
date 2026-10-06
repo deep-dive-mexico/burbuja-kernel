@@ -69,8 +69,11 @@ public sealed class PortalBrowserE2ETests(SharedServerFixture server)
         await WaitAsync(client, Workspace + "/jobs/" + name,
             body => body["properties"]?["status"]?.GetValue<string>() == "succeeded");
         await page.ReloadAsync();
+        // Absence of Accept also holds while the asynchronous detail read is still loading.
+        // Wait for the affirmative user-visible result before checking terminal controls.
+        await Assertions.Expect(page.Locator("main[data-loaded=true]")).ToBeVisibleAsync();
+        await Assertions.Expect(page.Locator("main")).ToContainTextAsync(new Regex("succeeded", RegexOptions.IgnoreCase));
         await Assertions.Expect(page.Locator("[data-action=accept-job]")).ToHaveCountAsync(0);
-        Assert.Contains("succeeded", (await page.Locator("body").InnerTextAsync()).ToLowerInvariant());
         await ScreenshotAsync(page, "job-completed");
     }
 

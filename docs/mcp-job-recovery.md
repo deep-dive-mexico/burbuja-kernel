@@ -84,6 +84,6 @@ On 2026-10-06, clean kernel `914d719b30e17ff88feb3149e6bcc8c3f6beb8b9` passed:
 | Chromium console journeys | 20 | 0 / 0 |
 | Release/source/deployment contracts | 29 | 0 / 0 |
 
-The complete E2E receipt is `artifacts/e2e-runs/9a4f6ba8deb4/receipt.json`; unit TRX files are under `artifacts/test-results/`. Both push and PR validation passed on that revision ([PR #9](https://github.com/deep-dive-mexico/burbuja-kernel/pull/9)). A subsequent documentation-only commit records this proof; the runtime and tests above were committed together at the stated SHA.
+The complete E2E receipt is `artifacts/e2e-runs/9a4f6ba8deb4/receipt.json`; unit TRX files are under `artifacts/test-results/`. Both push and PR validation passed on that revision ([PR #9](https://github.com/deep-dive-mexico/burbuja-kernel/pull/9)). Subsequent changes record this proof and make the browser job journey wait for an affirmative loaded success state: absence of an Accept button also holds during loading and is insufficient evidence. Runtime code remains at the stated tested SHA.
 
 Scripted fixtures do not establish live-model behavior, real third-party delivery, production rollback or human acceptance. Persistent MCP sessions, automatic agent-tool import and custom orchestration strategies remain outside this contract.
