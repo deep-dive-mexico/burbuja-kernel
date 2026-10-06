@@ -26,12 +26,20 @@ public sealed class SqliteResourceStore(SqliteDatabase database, IClock clock) :
         }, ct).ConfigureAwait(false);
     }
 
-    public async ValueTask<ResourceEnvelope<JsonObject>> UpsertAsync(ResourceEnvelope<JsonObject> envelope, string? ifMatchETag, CancellationToken ct)
+    public ValueTask<ResourceEnvelope<JsonObject>> CreateAsync(ResourceEnvelope<JsonObject> envelope, CancellationToken ct) =>
+        WriteAsync(envelope, null, ct, createOnly: true);
+
+    public ValueTask<ResourceEnvelope<JsonObject>> UpsertAsync(ResourceEnvelope<JsonObject> envelope, string? ifMatchETag, CancellationToken ct) =>
+        WriteAsync(envelope, ifMatchETag, ct, createOnly: false);
+
+    private async ValueTask<ResourceEnvelope<JsonObject>> WriteAsync(ResourceEnvelope<JsonObject> envelope, string? ifMatchETag, CancellationToken ct, bool createOnly)
     {
         var key = envelope.Id.ToLowerInvariant();
         return await database.WriteAsync(async (connection, transaction) =>
         {
             var existing = await ReadVersionAsync(connection, transaction, key, ct).ConfigureAwait(false);
+            if (createOnly && existing is not null)
+                throw new ArmException(ArmError.PreconditionFailed("The resource already exists."));
             long version = 1;
             if (existing is not null)
             {

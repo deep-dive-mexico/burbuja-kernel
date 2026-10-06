@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parents[1]
 for item in ET.parse(root / "Burbuja.slnx").getroot().findall("Project"):
     project = item.attrib["Path"]
-    if project.startswith("tests/") and not project.startswith("tests/plugins/"):
+    if project.startswith("tests/") and not project.startswith(("tests/plugins/", "tests/Burbuja.E2E.Tests/")):
         subprocess.run(["dotnet", "test", project, "-c", "Release", "--no-build",
                         "--filter", "Category!=Live&Category!=E2E", "--logger",
                         f"trx;LogFileName=unit-{Path(project).stem}.trx", "--results-directory",

@@ -38,8 +38,14 @@ public sealed class DurableBudgetLedger(IResourceStore store, TimeProvider time)
 
     public async ValueTask<Guid> BookAsync(BudgetBooking booking, CancellationToken ct)
     {
-        var day = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
-        var entry = new LedgerEntry(Guid.NewGuid(), booking.JobId, booking.RunId, booking.Kind, booking.Usd, booking.InputTokens, booking.OutputTokens);
+        var day = DateOnly.FromDateTime((booking.BookedAt ?? time.GetUtcNow()).UtcDateTime);
+        var entry = new LedgerEntry(booking.IdempotencyId ?? Guid.NewGuid(), booking.JobId, booking.RunId, booking.Kind, booking.Usd, booking.InputTokens, booking.OutputTokens);
+        if (booking.IdempotencyId is not null &&
+            (await ReadAsync(JobKey(booking.JobId), ct)).FirstOrDefault(existing => existing.Id == entry.Id) is { } recorded)
+        {
+            VerifyIdentity(recorded, entry);
+            return recorded.Id;
+        }
         await AppendAsync(DayKey(day), DayType, entry, ct).ConfigureAwait(false);
         await AppendAsync(JobKey(booking.JobId), JobType, entry, ct).ConfigureAwait(false);
         return entry.Id;
@@ -85,8 +91,11 @@ public sealed class DurableBudgetLedger(IResourceStore store, TimeProvider time)
                 ct.ThrowIfCancellationRequested();
                 var existing = await store.GetAsync(key, ct).ConfigureAwait(false);
                 var bookings = existing is null ? [] : Entries(existing).ToList();
-                if (bookings.Any(b => b.Id == entry.Id))
+                if (bookings.FirstOrDefault(b => b.Id == entry.Id) is { } recorded)
+                {
+                    VerifyIdentity(recorded, entry);
                     return;
+                }
                 bookings.Add(entry);
                 try
                 {
@@ -115,6 +124,13 @@ public sealed class DurableBudgetLedger(IResourceStore store, TimeProvider time)
     }
 
     private static decimal Total(IReadOnlyList<LedgerEntry> bookings) => bookings.Sum(b => b.Usd);
+
+    private static void VerifyIdentity(LedgerEntry recorded, LedgerEntry requested)
+    {
+        if (recorded != requested)
+            throw new ArmException(ArmError.Conflict("BookingIdentityConflict",
+                "The charge identity already belongs to different usage or pricing."));
+    }
 
     private static List<LedgerEntry> Entries(ResourceEnvelope<JsonObject> env) =>
         (env.Properties.Deserialize<DayEnvelope>(JsonWire.Options) ?? new DayEnvelope()).Bookings;

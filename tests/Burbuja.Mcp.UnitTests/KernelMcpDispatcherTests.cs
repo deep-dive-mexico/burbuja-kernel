@@ -36,6 +36,24 @@ namespace Burbuja.Mcp.UnitTests;
 /// </summary>
 public sealed class KernelMcpDispatcherTests
 {
+    [Fact]
+    public async Task Retrying_an_undecided_call_keeps_its_original_approval()
+    {
+        using var sp = Host();
+        await SeedAsync(sp);
+        await PutAgentAsync(sp, "pending", null, scenario: "gray-supervisor-escalate-approved");
+        var dispatcher = sp.GetRequiredService<KernelMcpDispatcher>();
+        var first = await dispatcher.CallToolAsync(Caller("pending"), "bash",
+            new JsonObject { ["command"] = "unknowncmd --escalate" }, Ct);
+        Assert.True(first.ApprovalPending);
+        var retry = await dispatcher.CallToolAsync(Caller("pending"), "bash",
+            new JsonObject { ["command"] = "unknowncmd --escalate", ["approvalId"] = first.ApprovalId }, Ct);
+        Assert.True(retry.ApprovalPending);
+        Assert.Equal(first.ApprovalId, retry.ApprovalId);
+        var events = await SessionEventsAsync(sp, "pending");
+        Assert.DoesNotContain(events, evt => evt.Type == AgentEventTypes.ToolCall);
+    }
+
     private const string AgentsRoot = "/subscriptions/sub1/resourceGroups/rg1/providers/Burbuja.Agents";
     private const string McpKey = "mcp-key";
     private const string OwnerKey = "owner-key";

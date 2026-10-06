@@ -9,6 +9,15 @@ public sealed class InMemoryResourceStore(IClock clock) : IResourceStore
 {
     private readonly ConcurrentDictionary<string, (ResourceEnvelope<JsonObject> Env, long Version)> _items = new(StringComparer.OrdinalIgnoreCase);
 
+    public ValueTask<ResourceEnvelope<JsonObject>> CreateAsync(ResourceEnvelope<JsonObject> envelope, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var created = Stamp(envelope, 1, clock.UtcNow, created: true);
+        if (!_items.TryAdd(envelope.Id.ToLowerInvariant(), (created, 1)))
+            throw new ArmException(ArmError.PreconditionFailed("The resource already exists."));
+        return new(created);
+    }
+
     public ValueTask<ResourceEnvelope<JsonObject>?> GetAsync(string key, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

@@ -3,6 +3,7 @@ using Burbuja.Core.Arm;
 using Burbuja.Core.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Burbuja.Integrations;
 
@@ -74,6 +75,15 @@ public sealed class IntegrationsResourceProvider : IResourceProvider
 /// </summary>
 public static class IntegrationsServiceCollectionExtensions
 {
+    public static IServiceCollection AddBurbujaMcpIntegration(this IServiceCollection services)
+    {
+        services.AddOptions<McpClientOptions>()
+            .Configure<IConfiguration>((o, cfg) => cfg.GetSection(McpClientOptions.Section).Bind(o));
+        services.TryAddSingleton<McpStdioClient>();
+        services.AddSingleton<IIntegrationCaller, McpIntegrationCaller>();
+        return services;
+    }
+
     public static IServiceCollection AddBurbujaIntegrations(this IServiceCollection services)
     {
         services.AddResourceProvider<IntegrationsResourceProvider>();

@@ -19,7 +19,7 @@
                  Failure="@(_failure ?? View.Failure)"
                  Loading="@View.Loading"
                  Truncated="@View.Truncated"
-                 CostUsd="@_job?.Properties?.Cost.TotalUsd"
+                 CostUsd="@(_job?.Properties?.CostIsPartial == true ? null : _job?.Properties?.Cost.TotalUsd)"
                  ApprovalId="@_job?.Properties?.PendingApprovalId"
                  Query="@View.Query"
                  SearchScanned="@View.SearchScanned"
@@ -73,6 +73,13 @@
         }
     </Actions>
     <Extra>
+        @if (_job?.Properties?.CostIsPartial == true)
+        {
+            <p class="alert alert-warn" role="status">
+                Recorded spend is at least @PortalData.Money(_job.Properties.Cost.TotalUsd).
+                Usage from an interrupted model request is unknown.
+            </p>
+        }
         <dl class="kv kv-inline">
             <dt>workspace</dt><dd>@Workspace</dd>
             <dt>run</dt><dd>@(_job?.Properties?.RunId ?? 0)</dd>

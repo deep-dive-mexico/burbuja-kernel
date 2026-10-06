@@ -118,6 +118,7 @@ public sealed class AgentsPlugin : IBurbujaPlugin
         services.AddSingleton<AgentExecutor>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<AgentExecutor>());
         services.AddSingleton<IStreamRecoveryHandler, JobRecoveryHandler>();
+        services.AddSingleton<JobToolJournal>();
         services.AddSingleton<IResourceProvider, AgentsResourceProvider>();
         services.AddSingleton<IEventStreamResolver, AgentsEventStreams>();
         services.AddSingleton<IDataPlaneHandler, AgentsArtifactsHandler>();

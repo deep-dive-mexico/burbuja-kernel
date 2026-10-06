@@ -34,6 +34,27 @@ public abstract class StoreContractTests : IAsyncLifetime
 
     // ---------------------------------------------------------------- resources
 
+    [Fact]
+    public async Task Atomic_create_has_one_winner_and_a_late_creator_cannot_overwrite_a_completed_receipt()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var initial = Envelope("effect-claim", "Example/effects", "started");
+        async Task<int> CreateAsync()
+        {
+            try { await Fixture.Resources.CreateAsync(initial, ct); return 201; }
+            catch (ArmException ex) { return ex.Error.HttpStatus; }
+        }
+        var outcomes = await Task.WhenAll(CreateAsync(), CreateAsync());
+        outcomes.OrderBy(code => code).ShouldBe([201, 412]);
+        var claimed = (await Fixture.Resources.GetAsync(initial.Id, ct))!;
+        var completed = await Fixture.Resources.UpsertAsync(claimed with { Name = "completed" }, claimed.ETag, ct);
+        var refused = await Should.ThrowAsync<ArmException>(async () => await Fixture.Resources.CreateAsync(initial, ct));
+        refused.Error.HttpStatus.ShouldBe(412);
+        var final = (await Fixture.Resources.GetAsync(initial.Id, ct))!;
+        final.Name.ShouldBe("completed");
+        final.ETag.ShouldBe(completed.ETag);
+    }
+
     private static ResourceEnvelope<JsonObject> Envelope(string id, string type, string name) => new(
         id,
         name,

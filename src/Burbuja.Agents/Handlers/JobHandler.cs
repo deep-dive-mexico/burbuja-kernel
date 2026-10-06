@@ -25,7 +25,8 @@ public sealed class JobHandler(
     SteeringInbox steering,
     StrategyRegistry strategies,
     ICostCalculator costs,
-    IConfiguration configuration) : ChildEnvelopeHandler<JobProperties>(store, clock)
+    IConfiguration configuration,
+    JobStateStore states) : ChildEnvelopeHandler<JobProperties>(store, clock)
 {
     protected override string TypeName => $"{AgentsConstants.Namespace}/workspaces/jobs";
 
@@ -75,6 +76,11 @@ public sealed class JobHandler(
         desired.StartedAt = null;
         desired.EndedAt = null;
         desired.RunAttempts = 0;
+        desired.Recovery = null;
+        desired.State = null;
+        desired.ActiveRunId = null;
+        desired.GroupId = null;
+        desired.CostIsPartial = false;
         desired.Budgets ??= new JobBudgets(
             desired.Spec.MaxBudgetUsd ?? ReadDecimal(configuration, "Budget:DefaultJobUsd", 5m),
             desired.Spec.MaxTurns ?? 80,
@@ -151,7 +157,17 @@ public sealed class JobHandler(
         var existing = Map(existingRaw);
         if (JobExecution.IsTerminal(existing.Properties.Status))
             return new ActionOutcome.Rejected(ArmError.Conflict("Canceled", "The job is already terminal."));
+        await states.MutateAsync(StoreKey(req.Id), p =>
+        {
+            p.Status = JobExecutionStatus.Cancelled;
+            p.EndedAt ??= Clock.UtcNow;
+            p.PendingApprovalId = null;
+            foreach (var run in p.Recovery?.Runs ?? [])
+                if (!JobExecution.IsTerminal(run.Status))
+                    run.Status = JobExecutionStatus.Cancelled;
+        }, ct, ProvisioningState.Updating);
         cancel.Cancel(StoreKey(req.Id));
+        await ops.CancelAsync(existing.Properties.OperationId ?? "", "cancelled", ct);
         return new ActionOutcome.Accepted(existing.Properties.OperationId ?? "", TimeSpan.FromSeconds(1), null);
     }
 

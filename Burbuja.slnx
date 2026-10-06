@@ -30,6 +30,7 @@
   <Project Path="tests/Burbuja.Compute.UnitTests/Burbuja.Compute.UnitTests.csproj" />
   <Project Path="tests/Burbuja.Core.UnitTests/Burbuja.Core.UnitTests.csproj" />
   <Project Path="tests/Burbuja.DeepSeek.UnitTests/Burbuja.DeepSeek.UnitTests.csproj" />
+  <Project Path="tests/Burbuja.E2E.Tests/Burbuja.E2E.Tests.csproj" />
   <Project Path="tests/Burbuja.Deployments.UnitTests/Burbuja.Deployments.UnitTests.csproj" />
   <Project Path="tests/Burbuja.HostFacts.MacOs.UnitTests/Burbuja.HostFacts.MacOs.UnitTests.csproj" />
   <Project Path="tests/Burbuja.Hosting.Tests/Burbuja.Hosting.Tests.csproj" />

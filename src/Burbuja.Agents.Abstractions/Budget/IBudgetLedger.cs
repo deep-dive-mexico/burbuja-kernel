@@ -12,7 +12,12 @@ public enum BudgetKind
     Mentor,
 }
 
-public sealed record BudgetBooking(Guid JobId, Guid RunId, BudgetKind Kind, decimal Usd, int InputTokens, int OutputTokens);
+public sealed record BudgetBooking(Guid JobId, Guid RunId, BudgetKind Kind, decimal Usd, int InputTokens, int OutputTokens)
+{
+    /// <summary>A caller may supply a stable identity and UTC timestamp when recovering a recorded charge.</summary>
+    public Guid? IdempotencyId { get; init; }
+    public DateTimeOffset? BookedAt { get; init; }
+}
 
 public sealed record DailySpend(DateOnly Day, decimal SpentUsd, int JobCount);
 

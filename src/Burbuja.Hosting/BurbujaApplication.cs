@@ -75,6 +75,7 @@ public static class BurbujaApplication
         // M8/I0: integrations as ARM resources. A module rather than a plugin: the ARM router discovers
         // providers from DI, so no trust list, manifest or staged assembly is involved.
         builder.Services.AddBurbujaIntegrations();
+        builder.Services.AddBurbujaMcpIntegration();
         // I1: the mailbox instance of it.
         builder.Services.AddBurbujaMailIntegration();
         builder.Services.AddBurbujaBrowserIntegration();
