@@ -87,3 +87,18 @@ On 2026-10-06, clean kernel `914d719b30e17ff88feb3149e6bcc8c3f6beb8b9` passed:
 The complete E2E receipt is `artifacts/e2e-runs/9a4f6ba8deb4/receipt.json`; unit TRX files are under `artifacts/test-results/`. Both push and PR validation passed on that revision ([PR #9](https://github.com/deep-dive-mexico/burbuja-kernel/pull/9)). Subsequent changes record this proof and make the browser job journey wait for an affirmative loaded success state: absence of an Accept button also holds during loading and is insufficient evidence. Runtime code remains at the stated tested SHA.
 
 Scripted fixtures do not establish live-model behavior, real third-party delivery, production rollback or human acceptance. Persistent MCP sessions, automatic agent-tool import and custom orchestration strategies remain outside this contract.
+
+### Final dev settlement verification, 2026-10-06
+
+Dev run [37520754361](https://github.com/deep-dive-mexico/burbuja-kernel/actions/runs/37520754361)
+at `5d4146a8ddc9c1ac69c052e0c398c8cb80de3f2b` passed units and all 47 HTTP
+journeys, but the fan-out restart test read its events before settlement completed.
+`FinishAsync` records terminal job status while provisioning remains `updating`,
+then writes the result event and completes provisioning; durable run receipts follow.
+A temporary 500 ms delay in that interval reproduced the same missing-result
+assertion locally. Waiting for successful provisioning and the expected durable
+run count passed all four recovery journeys with the delay still present. The
+delay was removed; only test synchronization changed, retaining the exact-once
+result and stable run identity assertions. These receipts are under
+`artifacts/recovery-verification/`. Final hosted validation and tenant deployment
+remain pending; this diagnosis does not claim a completed release.
