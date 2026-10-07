@@ -31,6 +31,14 @@ public static class Program
         });
         app.MapGet("/binding", () => new { handshake.Scope, handshake.Protocol, handshake.KernelVersion,
             processId = Environment.ProcessId, dependencies = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetName().Name).Where(n => n?.StartsWith("Burbuja.") == true) });
+        // Offline example identity only; real products derive this from their authenticated human entry.
+        var arm = client.Arm(() => new ArmPrincipal("workbench-reader", "User", null, [],
+            new Dictionary<string, string> { ["roles"] = "Reader" }));
+        app.MapGet("/runtime/providers", async (CancellationToken ct) =>
+        {
+            var response = await arm.SendAsync(new Burbuja.Core.Arm.ArmClientRequest("GET", "/providers"), ct);
+            return Results.Json(response.Body, statusCode: response.StatusCode);
+        });
         app.MapPut("/notes/{name}", async (string name, JsonObject desired, CancellationToken ct) =>
         {
             var id = "/subscriptions/local/resourceGroups/dev/providers/Example.Connected/notes/" + name;

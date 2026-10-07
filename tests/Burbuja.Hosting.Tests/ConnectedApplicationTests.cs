@@ -29,6 +29,102 @@ namespace Burbuja.Hosting.Tests;
 
 public sealed class ConnectedApplicationTests
 {
+    [Fact]
+    public async Task A_connected_application_uses_the_kernel_ARM_interface_without_a_local_runtime()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await Server.Start();
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, server.Url + "/kernel/v1/runtime/arm");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", AlphaKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(new
+        {
+            principal = new ArmPrincipal("operator", "User", null, Array.Empty<string>(),
+                new Dictionary<string, string> { ["roles"] = "Owner" }),
+            request = new ArmClientRequest("GET", "/providers", new Dictionary<string, string> { ["api-version"] = ArmConstants.ApiVersion }),
+        }, JsonWire.Options), Encoding.UTF8, "application/json");
+        using var response = await http.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))!;
+        Assert.True(body["error"] is null, body.ToJsonString());
+        Assert.True(body["body"] is not null, body.ToJsonString());
+        Assert.Contains(body["body"]!["value"]!.AsArray(), p => p!["name"]?.GetValue<string>() == "Burbuja.Agents");
+    }
+
+    [Fact]
+    public async Task Runtime_requests_keep_human_permissions_request_local_and_application_state_isolated()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await Server.Start();
+        var alpha = await server.Client(AlphaKey, AlphaScope);
+        var beta = await server.Client(BetaKey, BetaScope);
+        var roles = "Owner";
+        ArmPrincipal Human() => new("operator", "User", null, [], new Dictionary<string, string> { ["roles"] = roles });
+        var a = alpha.Arm(Human);
+        var b = beta.Arm(Human);
+        var query = new Dictionary<string, string> { ["api-version"] = ArmConstants.ApiVersion };
+        var path = "/subscriptions/local";
+        var created = await a.SendAsync(new ArmClientRequest("PUT", path, query,
+            Body: new JsonObject { ["properties"] = new JsonObject { ["displayName"] = "alpha", ["state"] = "Enabled" } }), ct);
+        Assert.Equal(201, created.StatusCode);
+        Assert.Equal(404, (await b.SendAsync(new ArmClientRequest("GET", path, query), ct)).StatusCode);
+        roles = "Reader";
+        Assert.Equal(200, (await a.SendAsync(new ArmClientRequest("GET", path, query), ct)).StatusCode);
+        var denied = await a.SendAsync(new ArmClientRequest("PUT", path, query,
+            Body: new JsonObject { ["properties"] = new JsonObject { ["displayName"] = "forbidden", ["state"] = "Enabled" } }), ct);
+        Assert.Equal(403, denied.StatusCode);
+        var unchanged = await a.SendAsync(new ArmClientRequest("GET", path, query), ct);
+        Assert.Equal("alpha", unchanged.Body!["value"]!.AsArray().Single()!["properties"]!["displayName"]!.GetValue<string>());
+    }
+    [Fact]
+    public async Task Runtime_event_streams_resume_without_crossing_application_boundaries()
+    {
+        await using var server = await Server.Start();
+        var alpha = await server.Client(AlphaKey, AlphaScope);
+        ArmPrincipal Human() => new("operator", "User", null, [], new Dictionary<string, string> { ["roles"] = "Owner" });
+        var arm = alpha.Arm(Human);
+        Assert.Equal(201, (await arm.SendAsync(new ArmClientRequest("PUT", "/subscriptions/local",
+            Body: new JsonObject { ["properties"] = new JsonObject { ["displayName"] = "alpha", ["state"] = "Enabled" } }), TestContext.Current.CancellationToken)).StatusCode);
+        Assert.Equal(201, (await arm.SendAsync(new ArmClientRequest("PUT", "/subscriptions/local/resourceGroups/dev",
+            Body: new JsonObject { ["location"] = "local", ["properties"] = new JsonObject() }), TestContext.Current.CancellationToken)).StatusCode);
+        var resource = "/subscriptions/local/resourceGroups/dev/providers/Burbuja.Compute/workspaces/shared";
+        var stream = Burbuja.Compute.Abstractions.ComputeConstants.StreamId(resource);
+        var a = server.Stores(AlphaKey).Events;
+        var b = server.Stores(BetaKey).Events;
+        var first = await a.AppendAsync(new EventAppend(stream, null, "compute.test", "first",
+            new JsonObject { ["value"] = "first" }, RenderLane.Log, null, null, null), TestContext.Current.CancellationToken);
+        await b.AppendAsync(new EventAppend(stream, null, "compute.test", "other",
+            new JsonObject { ["value"] = "other" }, RenderLane.Log, null, null, null), TestContext.Current.CancellationToken);
+        await a.AppendAsync(new EventAppend(stream, null, "compute.test", "second",
+            new JsonObject { ["value"] = "second" }, RenderLane.Log, null, null, null), TestContext.Current.CancellationToken);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var tail = arm.StreamAsync(resource + "/events", first.ToString(), deadline.Token).GetAsyncEnumerator(deadline.Token);
+        Assert.True(await tail.MoveNextAsync());
+        Assert.Equal("compute.test", tail.Current.Name);
+        Assert.Equal("second", JsonNode.Parse(tail.Current.Data)!["value"]!.GetValue<string>());
+        var waiting = tail.MoveNextAsync().AsTask();
+        deadline.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await waiting);
+    }
+
+    [Fact]
+    public async Task Runtime_readonly_registration_and_undelegated_identities_fail_closed()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await Server.Start(readonlyBeta: true);
+        var beta = await server.Client(BetaKey, BetaScope);
+        var identity = new ArmPrincipal("operator", "User", null, [], new Dictionary<string, string> { ["roles"] = "Owner" });
+        var arm = beta.Arm(() => identity);
+        var write = new ArmClientRequest("PUT", "/subscriptions/local", Body: new JsonObject
+            { ["properties"] = new JsonObject { ["displayName"] = "forbidden", ["state"] = "Enabled" } });
+        Assert.Equal(403, (await arm.SendAsync(write, ct)).StatusCode);
+        Assert.Null(await server.Stores(BetaKey).Resources.GetAsync("/subscriptions/local", ct));
+        identity = identity with { TenantId = "other" };
+        Assert.Equal(403, (await arm.SendAsync(new ArmClientRequest("GET", "/providers"), ct)).StatusCode);
+        identity = identity with { TenantId = null, Claims = new Dictionary<string, string> { ["roles"] = "Unregistered" } };
+        Assert.Equal(403, (await arm.SendAsync(new ArmClientRequest("GET", "/providers"), ct)).StatusCode);
+    }
+
     private const string AlphaKey = "synthetic-alpha-application-key-0001";
     private const string BetaKey = "synthetic-beta-application-key-00002";
     private static readonly ApplicationScope AlphaScope = new("development", "example", "alpha");
@@ -262,11 +358,12 @@ public sealed class ConnectedApplicationTests
                 return faultAppend ? new FaultProvider(sqlite) : sqlite;
             });
             var options = new ConnectedKernelOptions { Enabled = true, Environment = "development", StorageRoot = directory,
-                Applications = [new() { Tenant = "example", Application = "alpha", Credential = AlphaKey, WriteNamespaces = ["Example.Connected"], EventPrefixes = ["example."] },
-                    new() { Tenant = "example", Application = "beta", Credential = BetaKey, Writable = !readonlyBeta, WriteNamespaces = ["Example.Connected"], EventPrefixes = ["example."] }] };
+                Applications = [new() { Tenant = "example", Application = "alpha", Credential = AlphaKey, WriteNamespaces = ["Example.Connected"], EventPrefixes = ["example."], RuntimeEnabled = true, DelegatedRoles = ["Owner", "Reader"] },
+                    new() { Tenant = "example", Application = "beta", Credential = BetaKey, Writable = !readonlyBeta, WriteNamespaces = ["Example.Connected"], EventPrefixes = ["example."], RuntimeEnabled = true, DelegatedRoles = ["Owner", "Reader"] }] };
             builder.Services.AddSingleton(options);
             builder.Services.AddSingleton(sp => new ApplicationStorageFactory(options, sp.GetServices<IApplicationStorageProvider>()));
             builder.Services.AddSingleton(sp => new ConnectedControlState(options, sp.GetServices<IApplicationStorageProvider>()));
+            builder.Services.AddSingleton<ScopedApplicationRuntime>();
             var app = builder.Build();
             ConnectedKernelEndpoints.Map(app);
             await app.StartAsync();

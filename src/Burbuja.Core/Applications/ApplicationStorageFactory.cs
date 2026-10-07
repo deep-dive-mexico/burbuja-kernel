@@ -34,6 +34,9 @@ public sealed class ApplicationRegistration
     public bool Writable { get; set; } = true;
     public List<string> WriteNamespaces { get; set; } = [];
     public List<string> EventPrefixes { get; set; } = [];
+    public bool RuntimeEnabled { get; set; }
+    public List<string> DelegatedRoles { get; set; } = ["Reader"];
+    public decimal DailyHardStopUsd { get; set; } = 1m;
 }
 
 /// <summary>One kernel owns each lazily opened binding for the lifetime of the service.</summary>

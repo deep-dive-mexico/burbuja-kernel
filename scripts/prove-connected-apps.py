@@ -78,7 +78,8 @@ def main():
         prefix = f"ConnectedKernel__Applications__{index}__"
         kernel_env.update({prefix + "Tenant": "example", prefix + "Application": name,
                            prefix + "Credential": keys[name], prefix + "WriteNamespaces__0": "Example.Connected",
-                           prefix + "EventPrefixes__0": "example."})
+                           prefix + "EventPrefixes__0": "example.", prefix + "RuntimeEnabled": "true",
+                           prefix + "DelegatedRoles__0": "Reader"})
     processes, logs, app_environments = {}, [], {}
 
     def start(name, assembly, environment, directory):
@@ -113,6 +114,8 @@ def main():
         identities = [wait(url + "/binding") for url in (a, b)]
         assert identities[0]["processId"] != identities[1]["processId"]
         assert all(not (forbidden & set(identity["dependencies"])) for identity in identities)
+        for url in (a, b):
+            assert any(provider["name"] == "Burbuja.Agents" for provider in get(url + "/runtime/providers")["value"])
         get(a + "/notes/same", {"owner": "alpha"})
         get(b + "/notes/same", {"owner": "beta"})
         assert get(a + "/notes/same")["properties"]["owner"] == "alpha"
@@ -128,17 +131,20 @@ def main():
         wait(b + "/binding")
         stop("kernel")
         for url in (a, b):
-            try:
-                get(url + "/notes/same")
-                raise AssertionError("Application fell back to a local authority")
-            except urllib.error.HTTPError as error:
-                assert error.code == 503
-                assert json.load(error)["code"] == "KernelUnavailable"
+            for endpoint in ("/notes/same", "/runtime/providers"):
+                try:
+                    get(url + endpoint)
+                    raise AssertionError("Application fell back to a local authority")
+                except urllib.error.HTTPError as error:
+                    assert error.code == 503
+                    assert json.load(error)["code"] == "KernelUnavailable"
         start("kernel", kernel / "Burbuja.Host.dll", kernel_env, kernel)
         wait(kernel_url + "/health/plugins")
         assert get(a + "/notes/same")["properties"]["owner"] == "alpha"
         assert get(b + "/notes/same")["properties"]["owner"] == "beta"
-        receipt.update(status="passed", independentApplications=identities,
+        for url in (a, b):
+            assert any(provider["name"] == "Burbuja.Agents" for provider in get(url + "/runtime/providers")["value"])
+        receipt.update(status="passed", independentApplications=identities, runtimeThroughKernel=True,
                        sameIdentifiersIsolated=True, independentAppRestarts=True, kernelRestartReadback=True,
                        unavailableWithoutFallback=True, sharedStateMounts=False)
     finally:

@@ -8,6 +8,12 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- Prototype opt-in application-scoped ARM runtime calls and authorized resource
+  SSE through the kernel service. Request-local delegated roles stay within the
+  application registration, and read-only registrations cannot start runtime
+  workers. SDK-only process probes exercise runtime unavailability/restarts;
+  production provider, product dispatch and consumer migration gates remain open.
+
 - Begin the 0.7 development line with an opt-in connected-application storage
   interface: credential-bound environment/tenant/application scopes, kernel-owned
   SQLite and in-memory bindings, typed HTTP/SSE clients, conditional/atomic writes,

@@ -5,9 +5,9 @@ application consumes contracts and `Burbuja.Core.Sdk` over HTTP. The kernel owns
 provider selection, connections, migration and persistent files. The existing
 embedded mode remains supported and the new endpoints are disabled by default.
 
-This candidate does **not** move an application's product handlers or generic
-execution into a connected lifecycle. Authenticated product-step dispatch,
-application-scoped runtime/model/budget configuration, remote approval actions,
+This candidate does **not** migrate a product host. It adds an opt-in generic
+ARM runtime entry scoped to each binding, but authenticated product-step dispatch,
+production model/budget wiring, witnessed remote approval actions,
 application host adapters and live state migration remain separate gates. Do not
 change an installed consumer lock or present this as a migrated AKOS/Pomnibot host.
 
@@ -79,6 +79,33 @@ required except explicitly selected HTTP development connections. Required
 capabilities and scope mismatches fail startup. Human-facing authorization and
 product policy still need enforcement in each application's connected entry.
 
+## Opt-in scoped ARM runtime — development candidate
+
+A writable registration may explicitly enable `RuntimeEnabled` and list
+`DelegatedRoles` (default: Reader). `ConnectedKernelClient.Arm` accepts a principal
+resolver invoked for **each** request. Real applications must derive that identity
+from their authenticated entry; the independent example uses a synthetic Reader.
+The application credential bounds both the storage scope and the allowed roles.
+A principal naming another tenant or a role outside the registration is denied.
+Assertions are request-local; an earlier Owner assertion does not grant a later
+Reader request write permission. Read-only registrations cannot start runtime
+workers through this capability.
+
+`POST /kernel/v1/runtime/arm` carries a bounded typed ARM request and delegated
+principal. The kernel runs its generic routing/authentication/authorization
+pipeline against explicitly captured binding stores. Generic hosted workers are
+kernel-owned, and local Compute directories are derived from the binding scope.
+No application starts these workers or opens their database. This prototype uses
+only the scripted provider; it does not advertise production provider parity.
+`POST /kernel/v1/runtime/stream` uses the same authority and native ARM data-plane
+authorization for resource SSE, preserving event names, IDs, resume and cancellation.
+
+Runtime calls currently use existing ARM request semantics, **not** the storage
+RPC's durable effect receipt protocol. Network loss never automatically retries
+an ARM mutation. Runtime reconciliation, audit completeness, all generic provider
+coverage, real model/budget configuration and end-to-end product dispatch remain
+release gates. Do not use this candidate for a production cutover.
+
 ## Verification and remaining work
 
 `make test` includes the socket tests in `ConnectedApplicationTests`: identical
@@ -91,7 +118,9 @@ reserved kernel writes fail and a second writer is refused.
 two independent `Example.Connected` processes on free loopback ports. The
 applications publish only kernel contracts/SDK dependencies, retain conflicting
 note IDs separately, restart independently, report explicit kernel unavailability
-without a fallback, and read their original data after a kernel restart. It writes
+without a fallback, and read their original data after a kernel restart. They
+also read generic ARM providers through the separate runtime before/after restart
+and report 503 for runtime calls while the kernel is unavailable. It writes
 an ignored `artifacts/connected-proof/<run>/receipt.json`; no model call occurs.
 
 This proves the storage slice. It does not prove generic execution with a durable
@@ -110,3 +139,16 @@ suite passed 9/9 (one additional fault-window case). `make test-e2e` passed
 reports 0.7.0-dev, SDK-only client closures, independent restarts, scoped
 readback and explicit 503 unavailability. No live service was restarted,
 consumer lock advanced or application database migrated.
+
+## Runtime tracer receipt — 2026-10-07
+
+On storage foundation `426856a4c552d5d326d72a84e4532592fcad91b9` with the
+runtime candidate uncommitted, the connected socket suite passed 13 cases.
+The broader kernel gate passed 1,338 unit cases plus 47 HTTP, seven owned-process
+and 20 Chromium E2E cases (`artifacts/e2e-runs/1aca3961386b/receipt.json`).
+New tracers cover generic provider discovery, isolated ARM subscription state,
+Owner-to-Reader downgrade, rejected undelegated identities/read-only runtime,
+and resource SSE isolation/resume/cancellation. The three-process proof at
+`artifacts/connected-proof/f71ffddc92b6488eb2a9597218c807f4/receipt.json`
+passed with SDK-only application closures and runtime unavailability/restart
+checks. These witnesses do not substitute for AKOS product migration acceptance.

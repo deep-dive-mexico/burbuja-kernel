@@ -43,6 +43,11 @@ public sealed class HttpArmClient(HttpClient http, string apiVersion, string? ap
         using var message = Build(new ArmClientRequest("GET", path), lastEventId, acceptSse: true);
         using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
+        await foreach (var evt in ReadEventsAsync(response, ct)) yield return evt;
+    }
+
+    internal static async IAsyncEnumerable<ArmSseEvent> ReadEventsAsync(HttpResponseMessage response, [EnumeratorCancellation] CancellationToken ct)
+    {
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: true);
         string? id = null, name = null;

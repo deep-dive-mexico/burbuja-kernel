@@ -21,7 +21,7 @@ namespace Burbuja.Core.Arm;
 /// subject naming a type this host does not have is still a subject with a scope, and its writability is
 /// exactly what should be evaluated.</para>
 /// </summary>
-public sealed class ApprovalDecider(AuthorizationEvaluator evaluator) : IApprovalDecider
+public sealed class ApprovalDecider(IAuthorizationEvaluator evaluator) : IApprovalDecider
 {
     public async ValueTask<ArmError?> RefuseAsync(
         ApprovalRecord record, ArmPrincipal principal, CancellationToken ct)

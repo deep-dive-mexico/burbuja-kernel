@@ -19,13 +19,16 @@ public static class ArmEndpoints
         app.MapMethods("/health/{**probe}", ["GET"], (Delegate)HandleAsync);
     }
 
-    internal static async Task<IResult> HandleAsync(HttpContext http)
+    internal static Task<IResult> HandleAsync(HttpContext http) => HandleDelegatedAsync(http, null);
+
+    internal static async Task<IResult> HandleDelegatedAsync(HttpContext http, ArmPrincipal? delegatedPrincipal)
     {
         using var scope = http.RequestServices.CreateScope();
         var pipeline = scope.ServiceProvider.GetRequiredService<ArmPipeline>();
         var events = scope.ServiceProvider.GetRequiredService<IEventLog>();
         var table = scope.ServiceProvider.GetRequiredService<ArmRoutingTable>();
         var context = Bind(http, scope.ServiceProvider);
+        context.Principal = delegatedPrincipal;
         if (IsDataPlaneRequest(table, context.Path))
         {
             await pipeline.RunThroughAsync(context, 700, http.RequestAborted);

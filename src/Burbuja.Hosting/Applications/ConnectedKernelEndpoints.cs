@@ -11,6 +11,7 @@ using Burbuja.Core.Abstractions.Json;
 using Burbuja.Core.Abstractions.Outbox;
 using Burbuja.Core.Applications;
 using Burbuja.Core.Arm;
+using Burbuja.Core.Sdk.Applications;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +36,7 @@ public static class ConnectedKernelEndpoints
         services.AddSingleton<IApplicationStorageProvider, InMemoryApplicationStorageProvider>();
         services.AddSingleton(sp => new ApplicationStorageFactory(options, sp.GetServices<IApplicationStorageProvider>()));
         services.AddSingleton(sp => new ConnectedControlState(options, sp.GetServices<IApplicationStorageProvider>()));
+        services.AddSingleton<ScopedApplicationRuntime>();
     }
 
     public static void Map(WebApplication app)
@@ -43,14 +45,16 @@ public static class ConnectedKernelEndpoints
         // Validate all registrations before opening a listener, including unsupported providers.
         _ = app.Services.GetRequiredService<ApplicationStorageFactory>();
         _ = app.Services.GetRequiredService<ConnectedControlState>();
-        app.MapGet(Root + "/handshake", (HttpContext context, ApplicationStorageFactory factory) =>
+        app.MapGet(Root + "/handshake", (HttpContext context, ApplicationStorageFactory factory, ConnectedKernelOptions options) =>
         {
             var authority = Authenticate(context, factory);
             if (authority is null) return Error(ArmError.AuthenticationFailed("Application credential required."));
             var version = typeof(ApplicationStorageFactory).Assembly
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
-            return Results.Json(new ApplicationHandshake(Protocol, version, authority.Value.Scope,
-                ["scoped-storage", "conditional-resources", "atomic-create", "event-chains", "event-sse", "artifacts", "write-receipts"]), JsonWire.Options);
+            var capabilities = new List<string> { "scoped-storage", "conditional-resources", "atomic-create", "event-chains", "event-sse", "artifacts", "write-receipts" };
+            if (options.Applications.Any(a => a.Tenant == authority.Value.Scope.Tenant && a.Application == authority.Value.Scope.Application
+                && a.RuntimeEnabled && a.Writable)) capabilities.AddRange(["scoped-arm", "scoped-arm-sse"]);
+            return Results.Json(new ApplicationHandshake(Protocol, version, authority.Value.Scope, capabilities), JsonWire.Options);
         }).AllowAnonymous();
         app.MapPost(Root + "/storage", CallAsync).AllowAnonymous();
         app.MapGet(Root + "/receipts/{id}", async (HttpContext context, string id, ApplicationStorageFactory factory, ConnectedControlState state) =>
@@ -64,6 +68,40 @@ public static class ConnectedKernelEndpoints
         app.MapGet(Root + "/events", TailAsync).AllowAnonymous();
         app.MapGet(Root + "/artifacts", GetArtifactAsync).AllowAnonymous();
         app.MapPut(Root + "/artifacts", PutArtifactAsync).AllowAnonymous();
+        app.MapPost(Root + "/runtime/arm", async (HttpContext context, ApplicationStorageFactory factory) =>
+        {
+            var authority = Authenticate(context, factory);
+            if (authority is null) return Error(ArmError.AuthenticationFailed("Application credential required."));
+            var call = await RuntimeCallAsync(context);
+            if (call is null) return Error(ArmError.Validation("A bounded, valid runtime request is required.", []));
+            var runtime = context.RequestServices.GetRequiredService<ScopedApplicationRuntime>();
+            var response = await runtime.SendAsync(authority.Value.Scope, authority.Value.Stores, call, context.RequestAborted);
+            return Results.Json(response, JsonWire.Options);
+        }).AllowAnonymous();
+        app.MapPost(Root + "/runtime/stream", async (HttpContext context, ApplicationStorageFactory factory, ScopedApplicationRuntime runtime) =>
+        {
+            var authority = Authenticate(context, factory);
+            if (authority is null) { context.Response.StatusCode = 401; return; }
+            var call = await RuntimeCallAsync(context);
+            if (call is null) { context.Response.StatusCode = 400; return; }
+            await runtime.StreamAsync(authority.Value.Scope, authority.Value.Stores, call, context);
+        }).AllowAnonymous();
+
+    }
+
+    private static async Task<ApplicationRuntimeCall?> RuntimeCallAsync(HttpContext context)
+    {
+        if (context.Request.ContentLength is null or <= 0 or > 1_048_576) return null;
+        try
+        {
+            var call = await context.Request.ReadFromJsonAsync<ApplicationRuntimeCall>(JsonWire.Options, context.RequestAborted);
+            if (call?.Principal?.Claims is null || call.Request is null || call.Principal.PrincipalId?.Length is null or > 256
+                || call.Principal.Claims.Count > 32 || call.Principal.Claims.Any(kv => kv.Key.Length > 256 || kv.Value is null || kv.Value.Length > 4096)
+                || call.Request.Path is null || !call.Request.Path.StartsWith('/') || call.Request.Path.Length > 8192
+                || call.Request.Method is not ("GET" or "PUT" or "POST" or "PATCH" or "DELETE" or "HEAD")) return null;
+            return call;
+        }
+        catch (JsonException) { return null; }
     }
 
     private static (ApplicationScope Scope, bool Writable, ApplicationStores Stores, IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes)? Authenticate(HttpContext context, ApplicationStorageFactory factory)
