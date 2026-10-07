@@ -91,7 +91,8 @@ jobs:
     # product fails here before a release is published or a tenant deployed. The deploy key is
     # read-only and scoped to the product repository alone (docs/releases.md, "Consumer gate").
     runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
-    timeout-minutes: 60
+    # Includes up to an hour waiting for the host-wide AKOS lane lock below.
+    timeout-minutes: 120
     env:
       DOTNET_INSTALL_DIR: /home/runner/.dotnet-akos
       KERNEL_COMMIT: ${{ needs.prepare-release.outputs.sha || github.sha }}
@@ -124,7 +125,11 @@ jobs:
         run: |
           git -C ../kernel remote set-url origin https://github.com/deep-dive-mexico/burbuja-kernel.git
           echo "AKOS dev source: $(git rev-parse HEAD)"
-          python3 scripts/test-kernel-candidate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"
+          # The product's own CI runner shares this 4-vCPU host and its lanes hold the same lock, so
+          # two AKOS suites never run at once: concurrent Chromium lanes starved each other into
+          # 20-30 s timeouts on the second live gate run (2026-10-07).
+          flock --timeout 3600 /home/runner/dive-akos-lanes.lock \
+            python3 scripts/test-kernel-candidate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

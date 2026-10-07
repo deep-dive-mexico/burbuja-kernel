@@ -26,6 +26,12 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertIn("scripts/test-product.py install-browser", job)
         self.assertIn("path: akos/artifacts/kernel-compatibility/", job)
 
+    def test_consumer_suite_holds_the_host_wide_akos_lane_lock(self):
+        job = jobs()["consumer-akos"]
+        self.assertIn("flock --timeout 3600 /home/runner/dive-akos-lanes.lock", job)
+        self.assertLess(job.index("flock --timeout"), job.index("scripts/test-kernel-candidate.py"))
+        self.assertIn("timeout-minutes: 120", job)
+
     def test_consumer_hosts_use_a_port_band_disjoint_from_the_product_and_kernel_lanes(self):
         job = jobs()["consumer-akos"]
         low = int(re.search(r'BURBUJA_PORT_MIN: "(\d+)"', job).group(1))
