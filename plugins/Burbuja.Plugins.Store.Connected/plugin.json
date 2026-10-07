@@ -13,5 +13,5 @@
   "config_section": "ConnectedStore",
   "trusted": true,
   "depends_on": [],
-  "load_order": 100
+  "load_order": 110
 }

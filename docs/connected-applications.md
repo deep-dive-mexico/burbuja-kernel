@@ -37,7 +37,16 @@ Protocol control receipts/audits have their own kernel-owned binding. Each RPC
 records its authenticated scope, request identity and delegated actor, without
 raw arguments. The delegated actor is audit identity, never a role grant.
 
-Persistence authority permits product resource writes only in registered
+A registration may instead declare `EmbeddedRuntime=true`: the application is a
+kernel-image host that runs its own runtime (Store.Connected below) and the
+kernel only provides its isolated binding. Such an application persists its
+runtime's kernel-namespace resources, events and approvals as ordinary state in
+that binding, so the reserved-namespace rules below do not apply to it; it still
+cannot reach another binding or the control state, and it cannot combine with
+`RuntimeEnabled`, because the kernel runs no authority for that scope. The
+handshake reports `embedded-runtime-binding`.
+
+Persistence authority for the other registrations permits product resource writes only in registered
 namespaces. It cannot write kernel runtime or authorization resources, forge
 approval outcomes/grants, replace kernel operation receipts, or emit reserved
 runtime events/topics. Application lease/idempotency/cache keys have a private

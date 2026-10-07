@@ -37,13 +37,21 @@ public sealed class ApplicationRegistration
     public bool RuntimeEnabled { get; set; }
     public List<string> DelegatedRoles { get; set; } = ["Reader"];
     public decimal DailyHardStopUsd { get; set; } = 1m;
+    /// <summary>
+    /// The application hosts its own kernel runtime (a kernel-image host with the Store.Connected plugin) and
+    /// the kernel only provides its isolated binding. Its runtime persists kernel-namespace resources, events
+    /// and approvals inside that binding, so the reserved-namespace rules do not apply; it cannot combine with
+    /// <see cref="RuntimeEnabled"/>, because the kernel then runs no authority for the scope that those writes
+    /// could influence.
+    /// </summary>
+    public bool EmbeddedRuntime { get; set; }
 }
 
 /// <summary>One kernel owns each lazily opened binding for the lifetime of the service.</summary>
 public sealed class ApplicationStorageFactory : IDisposable
 {
     private sealed record Entry(byte[] CredentialHash, ApplicationScope Scope, bool Writable,
-        IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes, Lazy<ApplicationStores> Stores);
+        IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes, Lazy<ApplicationStores> Stores, bool Embedded);
     private readonly IReadOnlyList<Entry> _entries;
     public string Environment { get; }
 
@@ -67,31 +75,39 @@ public sealed class ApplicationStorageFactory : IDisposable
             if (!adapters.TryGetValue(registration.Provider, out var adapter))
                 throw new InvalidOperationException("Unsupported application storage provider: " + registration.Provider);
             var writeNamespaces = new HashSet<string>(registration.WriteNamespaces, StringComparer.OrdinalIgnoreCase);
-            string[] reserved = ["Burbuja.Agents", "Burbuja.Compute", "Burbuja.Resources", "Burbuja.Authorization",
-                "Burbuja.Connected", "Burbuja.Deployments", "Burbuja.Integrations"];
-            if ((registration.Writable && writeNamespaces.Count == 0) || writeNamespaces.Any(ns =>
-                !System.Text.RegularExpressions.Regex.IsMatch(ns, "^[A-Za-z][A-Za-z0-9.]*$") || reserved.Contains(ns, StringComparer.OrdinalIgnoreCase)))
-                throw new InvalidOperationException("Writable applications require explicit product namespaces; kernel namespaces are reserved.");
             var eventPrefixes = new HashSet<string>(registration.EventPrefixes, StringComparer.Ordinal);
-            string[] reservedEvents = ["agents.", "arm.", "approvals.", "compute.", "deployments.", "connected.", "kernel."];
-            if ((registration.Writable && eventPrefixes.Count == 0) || eventPrefixes.Any(prefix =>
-                !System.Text.RegularExpressions.Regex.IsMatch(prefix, "^[A-Za-z][A-Za-z0-9.-]*\\.$") || reservedEvents.Any(reserved => prefix.StartsWith(reserved, StringComparison.Ordinal))))
-                throw new InvalidOperationException("Writable applications require explicit product event/topic prefixes; kernel prefixes are reserved.");
+            if (registration.EmbeddedRuntime)
+            {
+                if (registration.RuntimeEnabled || !registration.Writable)
+                    throw new InvalidOperationException("An embedded-runtime application is writable and cannot also use the kernel's scoped runtime.");
+            }
+            else
+            {
+                string[] reserved = ["Burbuja.Agents", "Burbuja.Compute", "Burbuja.Resources", "Burbuja.Authorization",
+                    "Burbuja.Connected", "Burbuja.Deployments", "Burbuja.Integrations"];
+                if ((registration.Writable && writeNamespaces.Count == 0) || writeNamespaces.Any(ns =>
+                    !System.Text.RegularExpressions.Regex.IsMatch(ns, "^[A-Za-z][A-Za-z0-9.]*$") || reserved.Contains(ns, StringComparer.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("Writable applications require explicit product namespaces; kernel namespaces are reserved.");
+                string[] reservedEvents = ["agents.", "arm.", "approvals.", "compute.", "deployments.", "connected.", "kernel."];
+                if ((registration.Writable && eventPrefixes.Count == 0) || eventPrefixes.Any(prefix =>
+                    !System.Text.RegularExpressions.Regex.IsMatch(prefix, "^[A-Za-z][A-Za-z0-9.-]*\\.$") || reservedEvents.Any(reserved => prefix.StartsWith(reserved, StringComparison.Ordinal))))
+                    throw new InvalidOperationException("Writable applications require explicit product event/topic prefixes; kernel prefixes are reserved.");
+            }
             var identity = System.Text.Json.JsonSerializer.Serialize(scope);
             var directory = Path.Combine(Path.GetFullPath(options.StorageRoot), Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity))));
             var binding = new ApplicationStorageBinding(scope, adapter.Id, directory);
             entries.Add(new Entry(Hash(registration.Credential), scope, registration.Writable, writeNamespaces, eventPrefixes,
-                new Lazy<ApplicationStores>(() => adapter.Open(binding), LazyThreadSafetyMode.ExecutionAndPublication)));
+                new Lazy<ApplicationStores>(() => adapter.Open(binding), LazyThreadSafetyMode.ExecutionAndPublication), registration.EmbeddedRuntime));
         }
         _entries = entries;
     }
 
-    public (ApplicationScope Scope, bool Writable, ApplicationStores Stores, IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes)? Authenticate(string credential)
+    public (ApplicationScope Scope, bool Writable, ApplicationStores Stores, IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes, bool Embedded)? Authenticate(string credential)
     {
         var hash = Hash(credential);
         foreach (var entry in _entries)
             if (CryptographicOperations.FixedTimeEquals(hash, entry.CredentialHash))
-                return (entry.Scope, entry.Writable, entry.Stores.Value, entry.WriteNamespaces, entry.EventPrefixes);
+                return (entry.Scope, entry.Writable, entry.Stores.Value, entry.WriteNamespaces, entry.EventPrefixes, entry.Embedded);
         return null;
     }
 

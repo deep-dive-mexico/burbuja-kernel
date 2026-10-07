@@ -33,6 +33,7 @@ namespace Burbuja.Hosting.Tests;
 public sealed class ConnectedStorePluginTests
 {
     private const string Key = "connected-store-plugin-credential-0123456789abcdef";
+    private const string HostKey = "connected-store-embedded-host-credential-0123456789abcdef";
 
     [Fact]
     public void Plugin_requires_a_complete_registration_and_opens_nothing_locally()
@@ -125,6 +126,49 @@ public sealed class ConnectedStorePluginTests
         Assert.ThrowsAny<Exception>(() => host.GetRequiredService<IResourceStore>());
     }
 
+    [Fact]
+    public async Task An_embedded_runtime_host_owns_its_whole_binding_including_kernel_namespaces()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var kernel = await Kernel.Start();
+        var settings = Settings(kernel.Url);
+        settings["ConnectedStore:Credential"] = HostKey;
+        settings["ConnectedStore:Application"] = "host";
+        using var embedded = Host(settings);
+        using var plain = Host(Settings(kernel.Url));
+        var roleId = "/subscriptions/local/providers/Burbuja.Authorization/roleAssignments/ra-1";
+        var assignment = new ResourceEnvelope<JsonObject>(roleId, "ra-1", "Burbuja.Authorization/roleAssignments", null,
+            new Dictionary<string, string>(), new JsonObject { ["role"] = "Owner" }, ProvisioningState.Succeeded,
+            new SystemData(null, "host", "Application", null, null, null), "");
+        await embedded.GetRequiredService<IResourceStore>().UpsertAsync(assignment, null, ct);
+        Assert.NotNull(await kernel.StoresFor(HostKey).Resources.GetAsync(roleId.ToLowerInvariant(), ct));
+        await embedded.GetRequiredService<IEventLog>().AppendAsync(new EventAppend("arm/requests", "r", "arm.request", "x", null, RenderLane.Log, null, null, "Burbuja.Core"), ct);
+        var approvals = embedded.GetRequiredService<IApprovalStore>();
+        var request = new ApprovalRequest("stream/1", null, ApprovalKind.Permission, "tool", "t-1", "decide", null, "Gray", "run", null, "because", ["yes", "no"], false, TimeSpan.FromMinutes(5));
+        approvals.Put(new ApprovalRecord("ap-1", request, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), null, null));
+        Assert.NotNull(kernel.StoresFor(HostKey).Approvals.Get("ap-1"));
+        Assert.Contains("embedded-runtime-binding", embedded.GetRequiredService<ConnectedStoreConnection>().Handshake!.Capabilities);
+
+        var error = await Assert.ThrowsAsync<Burbuja.Core.Arm.ArmException>(async () =>
+            await plain.GetRequiredService<IResourceStore>().UpsertAsync(assignment, null, ct));
+        Assert.Equal(403, error.Error.HttpStatus);
+        Assert.Null(await kernel.StoresFor(Key).Resources.GetAsync(roleId.ToLowerInvariant(), ct));
+        Assert.DoesNotContain("embedded-runtime-binding", plain.GetRequiredService<ConnectedStoreConnection>().Handshake!.Capabilities);
+    }
+
+    [Fact]
+    public void An_embedded_runtime_registration_cannot_also_use_the_scoped_runtime()
+    {
+        var options = new ConnectedKernelOptions { Enabled = true, Environment = "development", StorageRoot = Path.GetTempPath(),
+            Applications = [new() { Tenant = "t", Application = "a", Credential = Key, Provider = "memory", EmbeddedRuntime = true, RuntimeEnabled = true }] };
+        var error = Assert.Throws<InvalidOperationException>(() => new ApplicationStorageFactory(options,
+            [new InMemoryApplicationStorageProvider(new TimeProviderClock(TimeProvider.System), new CaptureGroupRedactor())]));
+        Assert.Contains("embedded-runtime", error.Message);
+        options.Applications[0].RuntimeEnabled = false;
+        using var factory = new ApplicationStorageFactory(options, [new InMemoryApplicationStorageProvider(new TimeProviderClock(TimeProvider.System), new CaptureGroupRedactor())]);
+        Assert.True(factory.Authenticate(Key)!.Value.Embedded);
+    }
+
     private static Dictionary<string, string?> Settings(string url) => new()
     {
         ["ConnectedStore:Url"] = url,
@@ -156,7 +200,8 @@ public sealed class ConnectedStorePluginTests
         private readonly WebApplication _app;
         public string Directory { get; }
         public string Url => _app.Urls.Single();
-        public ApplicationStores Stores => _app.Services.GetRequiredService<ApplicationStorageFactory>().Authenticate(Key)!.Value.Stores;
+        public ApplicationStores Stores => StoresFor(Key);
+        public ApplicationStores StoresFor(string key) => _app.Services.GetRequiredService<ApplicationStorageFactory>().Authenticate(key)!.Value.Stores;
         private Kernel(WebApplication app, string directory) { _app = app; Directory = directory; }
 
         public static async Task<Kernel> Start()
@@ -173,7 +218,8 @@ public sealed class ConnectedStorePluginTests
             {
                 Enabled = true, Environment = "development", StorageRoot = directory,
                 Applications = [new() { Tenant = "example", Application = "alpha", Credential = Key,
-                    WriteNamespaces = ["Example.Connected"], EventPrefixes = ["example."] }],
+                    WriteNamespaces = ["Example.Connected"], EventPrefixes = ["example."] },
+                    new() { Tenant = "example", Application = "host", Credential = HostKey, EmbeddedRuntime = true }],
             };
             builder.Services.AddSingleton(options);
             builder.Services.AddSingleton(sp => new ApplicationStorageFactory(options, sp.GetServices<IApplicationStorageProvider>()));

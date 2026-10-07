@@ -54,6 +54,7 @@ public static class ConnectedKernelEndpoints
             var capabilities = new List<string> { "scoped-storage", "conditional-resources", "atomic-create", "event-chains", "event-sse", "artifacts", "write-receipts" };
             if (options.Applications.Any(a => a.Tenant == authority.Value.Scope.Tenant && a.Application == authority.Value.Scope.Application
                 && a.RuntimeEnabled && a.Writable)) capabilities.AddRange(["scoped-arm", "scoped-arm-sse"]);
+            if (authority.Value.Embedded) capabilities.Add("embedded-runtime-binding");
             return Results.Json(new ApplicationHandshake(Protocol, version, authority.Value.Scope, capabilities), JsonWire.Options);
         }).AllowAnonymous();
         app.MapPost(Root + "/storage", CallAsync).AllowAnonymous();
@@ -104,7 +105,7 @@ public static class ConnectedKernelEndpoints
         catch (JsonException) { return null; }
     }
 
-    private static (ApplicationScope Scope, bool Writable, ApplicationStores Stores, IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes)? Authenticate(HttpContext context, ApplicationStorageFactory factory)
+    private static (ApplicationScope Scope, bool Writable, ApplicationStores Stores, IReadOnlySet<string> WriteNamespaces, IReadOnlySet<string> EventPrefixes, bool Embedded)? Authenticate(HttpContext context, ApplicationStorageFactory factory)
     {
         var authorization = context.Request.Headers.Authorization.ToString();
         var authority = authorization.StartsWith("Bearer ", StringComparison.Ordinal)
@@ -141,17 +142,20 @@ public static class ConnectedKernelEndpoints
                 return Error(ArmError.Validation("Invalid request or delegated actor identity.", []));
         }
         catch (JsonException) { return Error(ArmError.Validation("Invalid typed storage request.", [])); }
-        var (scope, writable, stores, writeNamespaces, eventPrefixes) = authority.Value;
+        var (scope, writable, stores, writeNamespaces, eventPrefixes, embedded) = authority.Value;
         await audit.AppendAsync(new EventAppend("connected.kernel/audit", scope.Application, "connected.storage.request",
             call.Operation, JsonSerializer.SerializeToNode(new { scope, call.RequestId, call.Actor }, JsonWire.Options),
             RenderLane.Log, null, null, "Burbuja.Connected"), context.RequestAborted);
         var write = !Reads.Contains(call.Operation);
         if (write && !writable) return Error(ArmError.Forbidden("Application registration is read-only."));
-        // Persisting product state is not authority to forge kernel decisions or runtime resources.
-        if (call.Operation.StartsWith("approvals.", StringComparison.Ordinal) && write)
+        // Persisting product state is not authority to forge kernel decisions or runtime resources. An
+        // embedded-runtime application owns its whole isolated binding: the kernel runs no authority for that
+        // scope, so its own runtime's kernel-namespace resources, events and approvals are plain state here.
+        if (call.Operation.StartsWith("approvals.", StringComparison.Ordinal) && write && !embedded)
             return Error(ArmError.Forbidden("Kernel approval decisions require the approval capability, not persistence authority."));
         try
         {
+            if (embedded) goto authorized;
             if (call.Operation is "resources.create" or "resources.upsert")
             {
                 var envelope = Required<ResourceEnvelope<JsonObject>>(call.Arguments, "envelope");
@@ -174,6 +178,7 @@ public static class ConnectedKernelEndpoints
             if (call.Operation == "outbox.enqueue" && !eventPrefixes.Any(prefix =>
                 Required<OutboxMessage>(call.Arguments, "message").Topic.StartsWith(prefix, StringComparison.Ordinal)))
                 return Error(ArmError.Forbidden("Outbox topic is outside the registered product prefixes."));
+            authorized:;
         }
         catch (JsonException) { return Error(ArmError.Validation("Invalid typed storage arguments.", [])); }
         var receiptKey = ReceiptId(scope, call.RequestId);
