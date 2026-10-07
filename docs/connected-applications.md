@@ -137,7 +137,12 @@ kernel service owns the binding, provider, migrations and backups. It loads afte
 
 The handshake runs once on first store use. An unreachable kernel, a wrong
 credential or a scope mismatch fails that first use with the kernel's identity in
-the message; nothing falls back to a local store (`ConnectedStorePluginTests`).
+the message; nothing falls back to a local store, and a failed handshake is not
+cached: the next store use tries again, so a host that boots before its kernel
+recovers without a restart (`ConnectedStorePluginTests`). Two invariants travel
+with a hosted kernel: `ConnectedStore:Environment` must equal the kernel's
+`ConnectedKernel:Environment`, and plain `http://` is accepted only when that
+environment is literally `development` with `AllowInsecureDevelopment=true`.
 Once running, a lost kernel surfaces on the host's own ARM as 503 `KernelUnavailable`
 with a retry hint (`ArmPipelineTests`), never as a 500 or a local answer.
 This is the first consumer-side step of the shared-service direction: a product

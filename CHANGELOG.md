@@ -17,9 +17,6 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 - `EmbeddedRuntime` application registrations: a connected kernel-image host
   owns its whole isolated binding, including its runtime's kernel-namespace
   state, and cannot combine with the kernel's scoped runtime.
-
-### Added
-
 - Prototype opt-in application-scoped ARM runtime calls and authorized resource
   SSE through the kernel service. Request-local delegated roles stay within the
   application registration, and read-only registrations cannot start runtime

@@ -36,7 +36,7 @@ public sealed class StoreConnectedPlugin : IBurbujaPlugin
         PluginLoadKind.Dynamic,
         ["store.connected"],
         [],
-        // Outbound HTTPS to the kernel service only; no filesystem, process or secret capability.
+        // Outbound HTTPS to the kernel service; the optional CredentialFile is read, never written.
         [PluginCapability.Network],
         ["all", "control-plane", "worker"],
         Section,
@@ -111,45 +111,64 @@ public sealed class ConnectedStoreOptions
 }
 
 /// <summary>
-/// One verified connection per host. The handshake runs once, on first store use, so a host whose kernel
-/// is unreachable fails at startup with the kernel's identity in the message instead of serving nothing.
+/// One verified connection per host. The handshake runs on first store use, so a host whose kernel is
+/// unreachable fails that use with the kernel's identity in the message instead of serving nothing; a
+/// failed handshake is not cached, so the next use tries again once the kernel is back (a host that boots
+/// before its kernel recovers without a restart). Configuration errors do not retry.
 /// </summary>
 public sealed class ConnectedStoreConnection : IDisposable
 {
-    private readonly Lazy<ConnectedKernelClient> _client;
-    private readonly HttpClient _http = new();
+    private readonly IConfiguration _configuration;
+    private readonly ILogger? _logger;
+    private readonly object _gate = new();
+    // Pooled connections are recycled so a hosted kernel whose address moved (MagicDNS, failover) is reached again.
+    private HttpClient? _http;
+    private ConnectedKernelClient? _client;
     private ApplicationHandshake? _handshake;
 
     public ConnectedStoreConnection(IConfiguration configuration, ILoggerFactory? loggerFactory = null)
     {
-        var logger = loggerFactory?.CreateLogger<ConnectedStoreConnection>();
-        _client = new Lazy<ConnectedKernelClient>(() =>
-        {
-            var options = ConnectedStoreOptions.Read(configuration);
-            _http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-            var client = new ConnectedKernelClient(_http, new Uri(options.Url, UriKind.Absolute), options.Credential, options.Scope,
-                actor: options.Actor.Length > 0 ? options.Actor : null, allowInsecureDevelopment: options.AllowInsecureDevelopment);
-            try
-            {
-                _handshake = client.ConnectAsync().GetAwaiter().GetResult();
-            }
-            catch (Exception error) when (error is KernelUnavailableException or HttpRequestException or OperationCanceledException)
-            {
-                throw new InvalidOperationException($"Store.Connected cannot reach the kernel service at {options.Url} for "
-                    + $"{options.Environment}/{options.Tenant}/{options.Application}; this host has no local store to fall back to.", error);
-            }
-            logger?.LogInformation("Store.Connected serving {Scope} from kernel {Kernel} ({Protocol}, {Version}); capabilities {Capabilities}",
-                _handshake.Scope, options.Url, _handshake.Protocol, _handshake.KernelVersion, string.Join(",", _handshake.Capabilities));
-            return client;
-        }, LazyThreadSafetyMode.ExecutionAndPublication);
+        _configuration = configuration;
+        _logger = loggerFactory?.CreateLogger<ConnectedStoreConnection>();
     }
 
-    public ConnectedKernelClient Client => _client.Value;
+    public ConnectedKernelClient Client
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_client is not null) return _client;
+                var options = ConnectedStoreOptions.Read(_configuration);
+                // Created once: HttpClient settings cannot change after its first request, and a failed
+                // handshake keeps the client for the next attempt.
+                _http ??= new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) })
+                {
+                    Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds),
+                };
+                var client = new ConnectedKernelClient(_http, new Uri(options.Url, UriKind.Absolute), options.Credential, options.Scope,
+                    actor: options.Actor.Length > 0 ? options.Actor : null, allowInsecureDevelopment: options.AllowInsecureDevelopment);
+                try
+                {
+                    _handshake = client.ConnectAsync().GetAwaiter().GetResult();
+                }
+                catch (Exception error) when (error is KernelUnavailableException or HttpRequestException or OperationCanceledException)
+                {
+                    throw new InvalidOperationException($"Store.Connected cannot reach the kernel service at {options.Url} for "
+                        + $"{options.Environment}/{options.Tenant}/{options.Application}; this host has no local store to fall back to "
+                        + "and will try again on the next store use.", error);
+                }
+                _logger?.LogInformation("Store.Connected serving {Scope} from kernel {Kernel} ({Protocol}, {Version}); capabilities {Capabilities}",
+                    _handshake.Scope, options.Url, _handshake.Protocol, _handshake.KernelVersion, string.Join(",", _handshake.Capabilities));
+                return _client = client;
+            }
+        }
+    }
 
-    /// <summary>The negotiated scope/version after the first store use; null before.</summary>
+    /// <summary>The negotiated scope/version after the first successful store use; null before.</summary>
     public ApplicationHandshake? Handshake => _handshake;
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose() => _http?.Dispose();
 }
 
 public sealed class ConnectedDecisionCache<T>(ConnectedStoreConnection connection) : IDecisionCache<T>

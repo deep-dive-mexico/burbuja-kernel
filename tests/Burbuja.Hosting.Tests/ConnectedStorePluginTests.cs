@@ -115,19 +115,23 @@ public sealed class ConnectedStorePluginTests
     }
 
     [Fact]
-    public async Task An_unreachable_kernel_is_explicit_unavailability_not_a_silent_local_store()
+    public async Task An_unreachable_kernel_is_explicit_unavailability_and_the_next_use_retries()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var kernel = await Kernel.Start();
-        var url = kernel.Url;
-        await kernel.DisposeAsync();
-        using var host = Host(Settings(url));
+        var port = await Kernel.ReservePort();
+        using var host = Host(Settings("http://127.0.0.1:" + port));
         var error = Assert.Throws<InvalidOperationException>(() => host.GetRequiredService<IResourceStore>());
         Assert.Contains("cannot reach the kernel service", error.Message);
         Assert.True(error.InnerException is KernelUnavailableException or HttpRequestException, error.InnerException?.GetType().Name);
-        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+        var again = await Assert.ThrowsAnyAsync<Exception>(async () =>
             await host.GetRequiredService<IEventLog>().AppendAsync(new EventAppend("example/s", "n", "example.x", "x", null, RenderLane.Log, null, null, "Example.Connected"), ct));
-        Assert.IsType<InvalidOperationException>(ex);
+        Assert.IsType<InvalidOperationException>(again);
+        Assert.Null(host.GetRequiredService<ConnectedStoreConnection>().Handshake);
+        // The kernel comes up later on the same address: the host recovers on its next store use, no restart.
+        await using var kernel = await Kernel.Start(port);
+        var seq = await host.GetRequiredService<IEventLog>().AppendAsync(new EventAppend("example/s", "n", "example.x", "x", null, RenderLane.Log, null, null, "Example.Connected"), ct);
+        Assert.True(seq >= 0);
+        Assert.NotNull(host.GetRequiredService<ConnectedStoreConnection>().Handshake);
     }
 
     [Fact]
@@ -218,11 +222,21 @@ public sealed class ConnectedStorePluginTests
         public ApplicationStores StoresFor(string key) => _app.Services.GetRequiredService<ApplicationStorageFactory>().Authenticate(key)!.Value.Stores;
         private Kernel(WebApplication app, string directory) { _app = app; Directory = directory; }
 
-        public static async Task<Kernel> Start()
+        public static async Task<int> ReservePort()
+        {
+            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            await Task.CompletedTask;
+            return port;
+        }
+
+        public static async Task<Kernel> Start(int port = 0)
         {
             var directory = Path.Combine(Path.GetTempPath(), "connected-store-" + Guid.NewGuid().ToString("N"));
             var builder = WebApplication.CreateSlimBuilder();
-            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            builder.WebHost.UseUrls("http://127.0.0.1:" + port);
             builder.Logging.ClearProviders();
             builder.Services.AddSingleton<IClock>(new TimeProviderClock(TimeProvider.System));
             builder.Services.AddSingleton<IRedactor, CaptureGroupRedactor>();
