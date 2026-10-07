@@ -5,6 +5,7 @@ import unittest
 import json
 import tempfile
 import copy
+import io
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,11 +65,12 @@ class ConsumerGateTests(unittest.TestCase):
                     (snapshot / "browser-receipt.json").unlink()
                 return plan.get("code", int(bool(plan.get("failed"))))
 
-            with patch.object(gate, "harness", side_effect=execute) as harness:
+            with patch.object(gate, "harness", side_effect=execute) as harness, patch.object(gate.sys, "stdout", new_callable=io.StringIO) as output:
                 code = gate.run_gate(root, ROOT, "c" * 40, "b" * 40)
             self.assertEqual(code, expected)
             summary = json.loads((root / "consumer-gate-summary.json").read_text())
             self.assertEqual(summary["status"], "passed" if expected == 0 else "failed")
+            self.assertIn(json.dumps(summary, indent=2), output.getvalue())
             return summary, harness.call_count
 
     def test_all_four_fresh_lanes_pass_with_source_bound_summary(self):
@@ -77,6 +79,7 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertEqual(summary["kernel_commit"], "c" * 40)
         self.assertEqual(summary["product_commit"], "b" * 40)
         self.assertEqual(calls, 1)
+        self.assertTrue(all(lane["results"]["total"] > 0 for lane in summary["lanes"].values()))
 
     def test_browser_retry_combines_three_initial_lanes_and_fresh_browser_evidence(self):
         summary, calls = self.run_campaign([{"failed": ["browser"]}, {}], 0)
@@ -180,7 +183,18 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
         self.assertIn('../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"', job)
         self.assertIn("scripts/test-product.py install-browser", job)
-        self.assertIn("path: akos/artifacts/kernel-compatibility/", job)
+        self.assertIn("akos/artifacts/kernel-compatibility/consumer-gate-summary.json", job)
+        self.assertIn("akos/artifacts/kernel-compatibility/candidate-*/.kernel-candidate-test-only.json", job)
+        self.assertIn("akos/artifacts/kernel-compatibility/candidate-*/artifacts/diag/", job)
+
+    def test_diagnostic_upload_failure_cannot_override_test_outcomes(self):
+        for name in ("consumer-akos", "build-and-unit"):
+            job = jobs()[name]
+            self.assertEqual(job.count("continue-on-error: true"), 1)
+            upload = job.split("uses: actions/upload-artifact@v4", 1)[1]
+            self.assertIn("continue-on-error: true", upload)
+            self.assertIn("::warning::Artifact upload failed", upload)
+            self.assertIn("retention-days: 7", upload)
 
     def test_consumer_suite_holds_the_host_wide_akos_lane_lock(self):
         job = jobs()["consumer-akos"]

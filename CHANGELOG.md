@@ -15,6 +15,8 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 - Require fresh, matching consumer receipts and complete passing test counts; retain
   an aggregate result when an executed browser failure passes its single retry.
+  Preserve source identities and test counts in CI logs when diagnostic upload
+  storage is unavailable; keep uploads to receipts and diagnostics for seven days.
 
 ## v0.6.1 — 2026-10-06
 

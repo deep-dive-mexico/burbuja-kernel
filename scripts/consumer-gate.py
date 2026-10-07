@@ -84,12 +84,12 @@ def run_gate(root, kernel_root, kernel_commit, product_commit):
         summary["attempts"].append(str(marker))
         if code == 0 and metadata.get("status") == "passed":
             for lane in sorted(LANES):
-                lane_receipt(marker, metadata, lane, "passed")
-            summary["lanes"] = metadata["lanes"]
+                receipt = lane_receipt(marker, metadata, lane, "passed")
+                summary["lanes"][lane] = {**metadata["lanes"][lane], "results": receipt["results"]}
         elif code != 0 and only_browser_failed(metadata):
             for lane in ("unit", "http", "own-host"):
-                lane_receipt(marker, metadata, lane, "passed")
-                summary["lanes"][lane] = metadata["lanes"][lane]
+                receipt = lane_receipt(marker, metadata, lane, "passed")
+                summary["lanes"][lane] = {**metadata["lanes"][lane], "results": receipt["results"]}
             first = lane_receipt(marker, metadata, "browser", "failed")
             print("consumer gate: only browser tests failed; retrying once", flush=True)
             retry_code, retry_marker, retry = attempt(root, kernel_root, kernel_commit, product_commit, "browser")
@@ -99,7 +99,7 @@ def run_gate(root, kernel_root, kernel_commit, product_commit):
             second = lane_receipt(retry_marker, retry, "browser", "passed")
             if second["results"]["total"] != first["results"]["total"]:
                 raise ValueError("browser retry changed the test count")
-            summary["lanes"]["browser"] = retry["lanes"]["browser"]
+            summary["lanes"]["browser"] = {**retry["lanes"]["browser"], "results": second["results"]}
             summary["browser_retry"] = {"first_attempt": str(marker), "retry": str(retry_marker), "status": "passed"}
         else:
             raise ValueError("full suite failed outside retryable browser tests")
@@ -108,6 +108,8 @@ def run_gate(root, kernel_root, kernel_commit, product_commit):
         summary["error"] = str(error)
         print("consumer gate: " + str(error), file=sys.stderr)
     (root / "consumer-gate-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    # Workflow logs retain exact sources and outcomes when artifact storage is unavailable.
+    print(json.dumps(summary, indent=2), flush=True)
     print("consumer gate: " + summary["status"], flush=True)
     return 0 if summary["status"] == "passed" else 1
 

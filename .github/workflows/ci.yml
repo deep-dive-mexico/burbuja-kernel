@@ -75,13 +75,19 @@ jobs:
           python3 scripts/test-e2e.py install-browser
           python3 scripts/test-e2e.py browser
       - uses: actions/upload-artifact@v4
+        id: kernel-diagnostics
         if: always()
+        continue-on-error: true
         with:
           name: kernel-e2e-diagnostics
+          retention-days: 7
           path: |
             artifacts/e2e-runs/
             artifacts/e2e-logs/
             artifacts/e2e-browser/
+      - name: Report unavailable kernel diagnostic storage
+        if: ${{ always() && steps.kernel-diagnostics.outcome == 'failure' }}
+        run: echo "::warning::Artifact upload failed; kernel test outcomes remain in workflow logs."
   consumer-akos:
     needs: [prepare-release, build-and-unit]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' }}
@@ -139,11 +145,21 @@ jobs:
             bash -eo pipefail -c 'python3 scripts/test-product.py install-browser \
               && python3 ../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"'
       - uses: actions/upload-artifact@v4
+        id: consumer-diagnostics
         if: always()
+        continue-on-error: true
         with:
           name: akos-consumer-compatibility-${{ matrix.product-ref }}
-          path: akos/artifacts/kernel-compatibility/
+          retention-days: 7
+          path: |
+            akos/artifacts/kernel-compatibility/consumer-gate-summary.json
+            akos/artifacts/kernel-compatibility/candidate-*/.kernel-candidate-test-only.json
+            akos/artifacts/kernel-compatibility/candidate-*/*.log
+            akos/artifacts/kernel-compatibility/candidate-*/artifacts/diag/
           include-hidden-files: true
+      - name: Report unavailable consumer diagnostic storage
+        if: ${{ always() && steps.consumer-diagnostics.outcome == 'failure' }}
+        run: echo "::warning::Artifact upload failed; source-bound consumer receipts remain in workflow logs."
   release:
     needs: [prepare-release, build-and-unit, consumer-akos]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && needs.consumer-akos.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
