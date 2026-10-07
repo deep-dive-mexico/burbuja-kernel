@@ -85,12 +85,18 @@ jobs:
   consumer-akos:
     needs: [prepare-release, build-and-unit]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' }}
-    # AKOS is this kernel's first consumer. Its complete offline product suite (units, HTTP,
+    # Validate both the development and production source lines of the first consumer.
+    # Its complete offline product suite (units, HTTP,
     # owned-process restarts, Chromium journeys) runs against this exact kernel commit through the
     # product's own non-deployable candidate harness, so a generic change that would regress the
     # product fails here before a release is published or a tenant deployed. The deploy key is
     # read-only and scoped to the product repository alone (docs/releases.md, "Consumer gate").
     runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        product-ref: [dev, main]
     # Includes up to an hour waiting for the host-wide AKOS lane lock below.
     timeout-minutes: 120
     env:
@@ -110,7 +116,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: deep-dive-mexico/akos-server
-          ref: dev
+          ref: ${{ matrix.product-ref }}
           path: akos
           ssh-key: ${{ secrets.AKOS_READ_SSH_KEY }}
           persist-credentials: false
@@ -121,21 +127,23 @@ jobs:
         working-directory: akos
         run: |
           git -C ../kernel remote set-url origin https://github.com/deep-dive-mexico/burbuja-kernel.git
-          echo "AKOS dev source: $(git rev-parse HEAD)"
+          echo "AKOS ${{ matrix.product-ref }} source: $(git rev-parse HEAD)"
           # The product's own CI runner shares this 4-vCPU host and its lanes hold the same lock, so
           # two AKOS suites never run at once: concurrent Chromium lanes starved each other into
           # 20-30 s timeouts on the second live gate run (2026-10-07). The Chromium install runs
           # inside the lock too (its apt step cannot share dpkg). A lock timeout exits 75, not 1.
-          # The product's Chromium lane has known render races (its own CI reruns them); one browser-only
-          # retry keeps a single race from blocking a kernel release, and both receipts stay in the artifact.
+          # One retry requires fresh, source-matched evidence of executed browser failures.
+          # The aggregate gate receipt retains the four final lanes and both attempts.
+          # shellcheck disable=SC2016
           flock -E 75 --verbose --timeout 3600 /home/runner/dive-akos-lanes.lock \
             bash -eo pipefail -c 'python3 scripts/test-product.py install-browser \
               && python3 ../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: akos-consumer-compatibility
+          name: akos-consumer-compatibility-${{ matrix.product-ref }}
           path: akos/artifacts/kernel-compatibility/
+          include-hidden-files: true
   release:
     needs: [prepare-release, build-and-unit, consumer-akos]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && needs.consumer-akos.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}

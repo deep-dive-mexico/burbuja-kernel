@@ -2,6 +2,10 @@
 from pathlib import Path
 import re
 import unittest
+import json
+import tempfile
+import copy
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +23,138 @@ spec.loader.exec_module(gate)
 
 
 class ConsumerGateTests(unittest.TestCase):
+    def run_campaign(self, attempts, expected, stale=False):
+        """Exercise orchestration with on-disk evidence, without a .NET/browser dependency."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            if stale:
+                old = root / "candidate-stale" / gate.MARKER
+                old.parent.mkdir()
+                old.write_text("{}")
+            index = 0
+
+            def execute(kernel_root, commit, lane=None):
+                nonlocal index
+                plan = attempts[index]
+                index += 1
+                if plan.get("missing"):
+                    return plan.get("code", 1)
+                snapshot = root / ("candidate-" + str(index))
+                snapshot.mkdir()
+                metadata = {"kind": gate.KIND, "kernel_commit": commit, "product_commit": "b" * 40,
+                            "kernel_root": str(kernel_root.resolve()), "status": "passed", "lanes": {}}
+                for name in ({lane} if lane else gate.LANES):
+                    failed = name in plan.get("failed", [])
+                    status = "failed" if failed else "passed"
+                    path = snapshot / (name + "-receipt.json")
+                    receipt = {"evidence_kind": gate.KIND, "lane": name, "kernel_commit": commit,
+                               "product_commit": "b" * 40, "kernel_release": None, "status": status,
+                               "results": {"total": 4, "passed": 3 if failed else 4, "failed": int(failed),
+                                           "notExecuted": 0, "aborted": 0}}
+                    receipt.update(copy.deepcopy(plan.get("receipts", {}).get(name, {})))
+                    path.write_text(json.dumps(receipt))
+                    metadata["lanes"][name] = {"status": status, "exit_code": int(failed),
+                                              "receipt": str(path), "log": str(snapshot / (name + ".log"))}
+                if plan.get("failed"):
+                    metadata["status"] = "failed"
+                metadata.update(plan.get("metadata", {}))
+                marker = snapshot / gate.MARKER
+                marker.write_text("{" if plan.get("malformed") else json.dumps(metadata))
+                if plan.get("missing_receipt"):
+                    (snapshot / "browser-receipt.json").unlink()
+                return plan.get("code", int(bool(plan.get("failed"))))
+
+            with patch.object(gate, "harness", side_effect=execute) as harness:
+                code = gate.run_gate(root, ROOT, "c" * 40, "b" * 40)
+            self.assertEqual(code, expected)
+            summary = json.loads((root / "consumer-gate-summary.json").read_text())
+            self.assertEqual(summary["status"], "passed" if expected == 0 else "failed")
+            return summary, harness.call_count
+
+    def test_all_four_fresh_lanes_pass_with_source_bound_summary(self):
+        summary, calls = self.run_campaign([{}], 0, stale=True)
+        self.assertEqual(set(summary["lanes"]), gate.LANES)
+        self.assertEqual(summary["kernel_commit"], "c" * 40)
+        self.assertEqual(summary["product_commit"], "b" * 40)
+        self.assertEqual(calls, 1)
+
+    def test_browser_retry_combines_three_initial_lanes_and_fresh_browser_evidence(self):
+        summary, calls = self.run_campaign([{"failed": ["browser"]}, {}], 0)
+        self.assertEqual(set(summary["lanes"]), gate.LANES)
+        self.assertEqual(len(summary["attempts"]), 2)
+        self.assertEqual(summary["browser_retry"]["status"], "passed")
+        self.assertEqual(calls, 2)
+
+    def test_failure_in_each_non_browser_lane_is_final(self):
+        for lane in ("unit", "http", "own-host"):
+            with self.subTest(lane=lane):
+                _, calls = self.run_campaign([{"failed": [lane, "browser"]}], 1)
+                self.assertEqual(calls, 1)
+
+    def test_success_exit_without_fresh_marker_fails(self):
+        self.run_campaign([{"missing": True, "code": 0}], 1)
+
+    def test_malformed_marker_fails(self):
+        self.run_campaign([{"malformed": True}], 1)
+
+    def test_marker_identity_and_lane_mismatches_fail(self):
+        for changes in ({"kernel_commit": "d" * 40}, {"product_commit": "d" * 40},
+                        {"kernel_root": "/unrelated"}, {"kind": "stable"}, {"lanes": {}}):
+            with self.subTest(changes=changes):
+                self.run_campaign([{"metadata": changes}], 1)
+
+    def test_missing_receipt_fails_even_after_success_exit(self):
+        self.run_campaign([{"missing_receipt": True}], 1)
+
+    def test_empty_skipped_aborted_and_failed_results_cannot_pass(self):
+        for changes in ({"total": 0, "passed": 0}, {"notExecuted": 1}, {"aborted": 1},
+                        {"failed": 1}, {"passed": 3}, {"total": -1}, {"total": "4"}):
+            counts = {"total": 4, "passed": 4, "failed": 0, "notExecuted": 0, "aborted": 0, **changes}
+            with self.subTest(changes=changes):
+                self.run_campaign([{"receipts": {"browser": {"results": counts}}}], 1)
+
+    def test_lane_receipt_identity_must_match_marker(self):
+        for changes in ({"kernel_commit": "d" * 40}, {"product_commit": "d" * 40},
+                        {"kernel_release": "v99.0.0"}, {"lane": "unit"}, {"evidence_kind": "stable"}):
+            with self.subTest(changes=changes):
+                self.run_campaign([{"receipts": {"browser": changes}}], 1)
+
+    def test_browser_build_failure_has_no_retry(self):
+        _, calls = self.run_campaign([{"failed": ["browser"], "receipts": {"browser": {
+            "status": "incomplete", "results": {"total": 0, "passed": 0, "failed": 0,
+                                                   "notExecuted": 0, "aborted": 0}}}}], 1)
+        self.assertEqual(calls, 1)
+
+    def test_retry_failure_is_final_after_two_attempts(self):
+        _, calls = self.run_campaign([{"failed": ["browser"]}, {"failed": ["browser"]}], 1)
+        self.assertEqual(calls, 2)
+
+    def test_retry_success_without_fresh_receipt_is_rejected(self):
+        self.run_campaign([{"failed": ["browser"]}, {"missing": True, "code": 0}], 1)
+
+    def test_retry_cannot_change_product_or_kernel(self):
+        for field in ("product_commit", "kernel_commit"):
+            with self.subTest(field=field):
+                self.run_campaign([{"failed": ["browser"]}, {"metadata": {field: "d" * 40}}], 1)
+
+    def test_retry_cannot_reduce_test_count(self):
+        self.run_campaign([{"failed": ["browser"]}, {"receipts": {"browser": {
+            "results": {"total": 3, "passed": 3, "failed": 0, "notExecuted": 0, "aborted": 0}}}}], 1)
+
+    def test_preflight_failure_cannot_reuse_a_stale_browser_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "candidate-old" / gate.MARKER
+            marker.parent.mkdir()
+            marker.write_text(json.dumps({"status": "failed", "lanes": {
+                lane: {"status": "failed" if lane == "browser" else "passed"}
+                for lane in ("unit", "http", "own-host", "browser")}}))
+            arguments = ["consumer-gate.py", "--kernel-root", str(ROOT), "--kernel-commit", "c" * 40,
+                         "--compatibility-root", str(root)]
+            with patch.object(gate.sys, "argv", arguments), patch.object(gate, "harness", side_effect=[1, 0]) as harness:
+                self.assertEqual(gate.main(), 1)
+                self.assertEqual(harness.call_count, 1)
+
     def test_only_a_browser_only_failure_earns_a_retry(self):
         passed = {"status": "passed"}
         lanes = {l: {"status": "passed"} for l in ("unit", "http", "own-host", "browser")}
@@ -34,7 +170,12 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertIn("KERNEL_COMMIT: ${{ needs.prepare-release.outputs.sha || github.sha }}", job)
         self.assertIn("ref: ${{ needs.prepare-release.outputs.sha || github.sha }}", job)
         self.assertIn("repository: deep-dive-mexico/akos-server", job)
-        self.assertIn("ref: dev\n", job)
+        self.assertIn("product-ref: [dev, main]", job)
+        self.assertIn("ref: ${{ matrix.product-ref }}", job)
+        self.assertIn("fail-fast: false", job)
+        self.assertIn("max-parallel: 1", job)
+        self.assertIn("name: akos-consumer-compatibility-${{ matrix.product-ref }}", job)
+        self.assertIn("include-hidden-files: true", job)
         self.assertIn("ssh-key: ${{ secrets.AKOS_READ_SSH_KEY }}", job)
         self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
         self.assertIn('../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"', job)
