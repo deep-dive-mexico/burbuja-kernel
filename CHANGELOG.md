@@ -8,6 +8,13 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- `Store.Connected` plugin: a kernel-image host can serve every durable store
+  from a separate kernel service over the connected-application protocol, with
+  no local database and explicit unavailability when the kernel is unreachable
+  ([connected applications](docs/connected-applications.md#connected-store-plugin-for-kernel-image-hosts)).
+
+### Added
+
 - Prototype opt-in application-scoped ARM runtime calls and authorized resource
   SSE through the kernel service. Request-local delegated roles stay within the
   application registration, and read-only registrations cannot start runtime

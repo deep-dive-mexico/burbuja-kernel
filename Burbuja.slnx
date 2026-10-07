@@ -6,6 +6,7 @@
   <Project Path="plugins/Burbuja.Plugins.Llm.DeepSeek/Burbuja.Plugins.Llm.DeepSeek.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Llm.Scripted/Burbuja.Plugins.Llm.Scripted.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Policy.Core/Burbuja.Plugins.Policy.Core.csproj" />
+  <Project Path="plugins/Burbuja.Plugins.Store.Connected/Burbuja.Plugins.Store.Connected.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Store.Sqlite/Burbuja.Plugins.Store.Sqlite.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Supervisor/Burbuja.Plugins.Supervisor.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Tools.Agents/Burbuja.Plugins.Tools.Agents.csproj" />

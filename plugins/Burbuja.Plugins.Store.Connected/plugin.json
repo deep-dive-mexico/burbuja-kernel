@@ -1,0 +1,17 @@
+{
+  "id": "Store.Connected",
+  "name": "Connected Kernel Stores",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Store.Connected.dll",
+  "entry_type": "Burbuja.Plugins.Store.Connected.StoreConnectedPlugin",
+  "load": "dynamic",
+  "provides": ["store.connected"],
+  "extension_points": [],
+  "requires": ["Network"],
+  "roles": ["all", "control-plane", "worker"],
+  "config_section": "ConnectedStore",
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 100
+}

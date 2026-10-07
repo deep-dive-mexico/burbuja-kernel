@@ -106,6 +106,35 @@ an ARM mutation. Runtime reconciliation, audit completeness, all generic provide
 coverage, real model/budget configuration and end-to-end product dispatch remain
 release gates. Do not use this candidate for a production cutover.
 
+## Connected store plugin for kernel-image hosts
+
+`plugins/Burbuja.Plugins.Store.Connected` (`Store.Connected`, config section
+`ConnectedStore`) lets any host built on the kernel image keep its product plugins,
+workers and ARM surface while every durable store is served by a separate kernel
+service over this protocol: `IResourceStore`, `IEventLog`, `ILeaseStore`,
+`IOutbox`/`IOutboxStore`, `IIdempotencyStore`, `IApprovalStore`,
+`IOperationTracker`, `IArtifactStore` and `IDecisionCache<T>` resolve to one
+`ConnectedKernelClient`. The host opens no database and holds no state file; the
+kernel service owns the binding, provider, migrations and backups. It loads after
+`Store.Sqlite` (order 110), so installing both leaves the SQLite file unopened.
+
+| Setting | Meaning |
+|---|---|
+| `ConnectedStore:Url` | Kernel service base URL; HTTPS, or HTTP only with `AllowInsecureDevelopment=true` and `Environment=development` |
+| `ConnectedStore:Credential` / `CredentialFile` | The application credential the kernel registered (private runtime configuration) |
+| `ConnectedStore:Environment`, `Tenant`, `Application` | The expected scope; the handshake and every request verify it |
+| `ConnectedStore:Actor` | Delegated audit identity recorded by the kernel; not a role |
+| `ConnectedStore:TimeoutSeconds` | Per-call HTTP timeout (default 30) |
+
+The handshake runs once on first store use. An unreachable kernel, a wrong
+credential or a scope mismatch fails that first use with the kernel's identity in
+the message; nothing falls back to a local store (`ConnectedStorePluginTests`).
+This is the first consumer-side step of the shared-service direction: a product
+such as Pomnibot runs its own container with `Store.Connected` against a kernel
+container on the same machine or a hosted kernel over a private network. Generic
+execution in kernel workers, remote product dispatch and per-application
+provider/budget routing remain the later stages.
+
 ## Verification and remaining work
 
 `make test` includes the socket tests in `ConnectedApplicationTests`: identical

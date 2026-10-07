@@ -5,13 +5,15 @@ WORKDIR /src
 COPY . .
 RUN dotnet publish src/Burbuja.Host/Burbuja.Host.csproj -c Release -m:1 -o /out/host \
     && rm -f /out/host/appsettings.Development.json \
-    && dotnet build plugins/Burbuja.Plugins.Store.Sqlite/Burbuja.Plugins.Store.Sqlite.csproj -c Release -m:1 \
-    && mkdir -p /out/plugins/Store.Sqlite \
-    && cp -R plugins/Burbuja.Plugins.Store.Sqlite/bin/Release/net10.0/. /out/plugins/Store.Sqlite/ \
-    && cp plugins/Burbuja.Plugins.Store.Sqlite/plugin.json /out/plugins/Store.Sqlite/ \
-    && rm -rf /out/plugins/Store.Sqlite/publish \
-    && for banned in Burbuja.Core.dll Burbuja.Core.Sdk.dll Burbuja.Core.Abstractions.dll; do \
-         test ! -f "/out/plugins/Store.Sqlite/$banned" || exit 1; \
+    && for plugin in Store.Sqlite Store.Connected; do \
+         dotnet build "plugins/Burbuja.Plugins.$plugin/Burbuja.Plugins.$plugin.csproj" -c Release -m:1 \
+         && mkdir -p "/out/plugins/$plugin" \
+         && cp -R "plugins/Burbuja.Plugins.$plugin/bin/Release/net10.0/." "/out/plugins/$plugin/" \
+         && cp "plugins/Burbuja.Plugins.$plugin/plugin.json" "/out/plugins/$plugin/" \
+         && rm -rf "/out/plugins/$plugin/publish" \
+         && for banned in Burbuja.Core.dll Burbuja.Core.Sdk.dll Burbuja.Core.Abstractions.dll; do \
+              test ! -f "/out/plugins/$plugin/$banned" || exit 1; \
+            done || exit 1; \
        done
 FROM ${RUNTIME}
 ARG SOURCE_COMMIT
