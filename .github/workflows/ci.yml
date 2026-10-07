@@ -126,9 +126,11 @@ jobs:
           # two AKOS suites never run at once: concurrent Chromium lanes starved each other into
           # 20-30 s timeouts on the second live gate run (2026-10-07). The Chromium install runs
           # inside the lock too (its apt step cannot share dpkg). A lock timeout exits 75, not 1.
+          # The product's Chromium lane has known render races (its own CI reruns them); one browser-only
+          # retry keeps a single race from blocking a kernel release, and both receipts stay in the artifact.
           flock -E 75 --verbose --timeout 3600 /home/runner/dive-akos-lanes.lock \
             bash -eo pipefail -c 'python3 scripts/test-product.py install-browser \
-              && python3 scripts/test-kernel-candidate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"'
+              && python3 ../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

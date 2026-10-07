@@ -12,7 +12,22 @@ def jobs():
     return {part.split(":", 1)[0]: part for part in parts if part}
 
 
+import importlib.util
+spec = importlib.util.spec_from_file_location("consumer_gate", ROOT / "scripts/consumer-gate.py")
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+
+
 class ConsumerGateTests(unittest.TestCase):
+    def test_only_a_browser_only_failure_earns_a_retry(self):
+        passed = {"status": "passed"}
+        lanes = {l: {"status": "passed"} for l in ("unit", "http", "own-host", "browser")}
+        self.assertFalse(gate.only_browser_failed({"status": "failed", "lanes": {**lanes, "unit": {"status": "failed"}}}))
+        self.assertFalse(gate.only_browser_failed({"status": "failed", "lanes": {**lanes, "http": {"status": "failed"}, "browser": {"status": "failed"}}}))
+        self.assertFalse(gate.only_browser_failed({"status": "failed", "lanes": {k: v for k, v in lanes.items() if k != "own-host"}}))
+        self.assertFalse(gate.only_browser_failed(passed))
+        self.assertTrue(gate.only_browser_failed({"status": "failed", "lanes": {**lanes, "browser": {"status": "failed"}}}))
+
     def test_akos_suite_runs_against_the_exact_validated_kernel_commit(self):
         job = jobs()["consumer-akos"]
         self.assertIn("needs: [prepare-release, build-and-unit]", job)
@@ -22,7 +37,7 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertIn("ref: dev\n", job)
         self.assertIn("ssh-key: ${{ secrets.AKOS_READ_SSH_KEY }}", job)
         self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
-        self.assertIn('scripts/test-kernel-candidate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"', job)
+        self.assertIn('../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"', job)
         self.assertIn("scripts/test-product.py install-browser", job)
         self.assertIn("path: akos/artifacts/kernel-compatibility/", job)
 
@@ -30,7 +45,7 @@ class ConsumerGateTests(unittest.TestCase):
         job = jobs()["consumer-akos"]
         self.assertIn("flock -E 75 --verbose --timeout 3600 /home/runner/dive-akos-lanes.lock", job)
         self.assertLess(job.index("flock -E 75"), job.index("scripts/test-product.py install-browser"))
-        self.assertLess(job.index("scripts/test-product.py install-browser"), job.index("scripts/test-kernel-candidate.py"))
+        self.assertLess(job.index("scripts/test-product.py install-browser"), job.index("scripts/consumer-gate.py"))
         self.assertIn("timeout-minutes: 120", job)
 
     def test_consumer_hosts_use_a_port_band_disjoint_from_the_product_and_kernel_lanes(self):
