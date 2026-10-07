@@ -28,8 +28,9 @@ class ConsumerGateTests(unittest.TestCase):
 
     def test_consumer_suite_holds_the_host_wide_akos_lane_lock(self):
         job = jobs()["consumer-akos"]
-        self.assertIn("flock --timeout 3600 /home/runner/dive-akos-lanes.lock", job)
-        self.assertLess(job.index("flock --timeout"), job.index("scripts/test-kernel-candidate.py"))
+        self.assertIn("flock -E 75 --verbose --timeout 3600 /home/runner/dive-akos-lanes.lock", job)
+        self.assertLess(job.index("flock -E 75"), job.index("scripts/test-product.py install-browser"))
+        self.assertLess(job.index("scripts/test-product.py install-browser"), job.index("scripts/test-kernel-candidate.py"))
         self.assertIn("timeout-minutes: 120", job)
 
     def test_consumer_hosts_use_a_port_band_disjoint_from_the_product_and_kernel_lanes(self):
