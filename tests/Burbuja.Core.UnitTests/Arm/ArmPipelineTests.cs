@@ -703,6 +703,37 @@ public sealed class ArmPipelineTests
         envelope.Error.Target.ShouldBe(ctx.RequestId);
     }
 
+    [Fact]
+    public async Task A_lost_kernel_service_returns_503_with_a_retry_hint_not_a_500()
+    {
+        var pipeline = new ArmPipeline(
+            [new RequestIdentityMiddleware(), new KernelLostMiddleware()],
+            NullLogger<ArmPipeline>.Instance);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var ctx = new ArmRequestContext
+        {
+            Method = "GET",
+            Path = "/subscriptions/sub1",
+            Query = new Dictionary<string, string> { ["api-version"] = ArmConstants.ApiVersion },
+            Headers = new Dictionary<string, string>(),
+            Services = services,
+        };
+        await pipeline.RunAsync(ctx, CancellationToken.None);
+        ctx.StatusCode.ShouldBe(503);
+        ctx.Error!.Code.ShouldBe("KernelUnavailable");
+        ctx.Error.Target.ShouldBe("resources.get");
+        ctx.RetryAfter.ShouldBe(TimeSpan.FromSeconds(5));
+        ctx.Result.ShouldBeOfType<ArmErrorEnvelope>();
+    }
+
+    private sealed class KernelLostMiddleware : IArmMiddleware
+    {
+        public int Order => 200;
+
+        public ValueTask InvokeAsync(ArmRequestContext context, Func<ArmRequestContext, CancellationToken, ValueTask> next, CancellationToken ct) =>
+            throw new Burbuja.Core.Sdk.Applications.KernelUnavailableException("resources.get", "req-1", new HttpRequestException("connection refused"));
+    }
+
     private sealed class ThrowingMiddleware : IArmMiddleware
     {
         public int Order => 200;

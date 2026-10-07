@@ -12,6 +12,8 @@ and [standalone deployment evidence](docs/aws-deployment.md).
   from a separate kernel service over the connected-application protocol, with
   no local database and explicit unavailability when the kernel is unreachable
   ([connected applications](docs/connected-applications.md#connected-store-plugin-for-kernel-image-hosts)).
+- A connected host whose kernel service is unreachable answers ARM requests with
+  503 `KernelUnavailable` and a retry hint instead of a 500.
 - `EmbeddedRuntime` application registrations: a connected kernel-image host
   owns its whole isolated binding, including its runtime's kernel-namespace
   state, and cannot combine with the kernel's scoped runtime.

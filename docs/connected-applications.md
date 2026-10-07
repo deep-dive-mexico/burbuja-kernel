@@ -138,6 +138,8 @@ kernel service owns the binding, provider, migrations and backups. It loads afte
 The handshake runs once on first store use. An unreachable kernel, a wrong
 credential or a scope mismatch fails that first use with the kernel's identity in
 the message; nothing falls back to a local store (`ConnectedStorePluginTests`).
+Once running, a lost kernel surfaces on the host's own ARM as 503 `KernelUnavailable`
+with a retry hint (`ArmPipelineTests`), never as a 500 or a local answer.
 This is the first consumer-side step of the shared-service direction: a product
 such as Pomnibot runs its own container with `Store.Connected` against a kernel
 container on the same machine or a hosted kernel over a private network. Generic

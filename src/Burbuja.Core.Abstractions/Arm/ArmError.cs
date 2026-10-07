@@ -40,6 +40,11 @@ public sealed record ArmError(
     public static ArmError Internal(string requestId) =>
         new("InternalServerError", "An internal error occurred.", requestId, [], null, 500);
 
+    /// <summary>A connected host's kernel service is unreachable: explicit unavailability, never a local fallback.</summary>
+    public static ArmError KernelUnavailable(string operation, string? requestId, int retryAfterSeconds = 5) =>
+        new("KernelUnavailable", "The kernel service that serves this host's state is unavailable.", operation, [],
+            new JsonObject { ["retryAfter"] = retryAfterSeconds, ["requestId"] = requestId }, 503);
+
     public static ArmError InvalidResourceUri(string message) =>
         new("InvalidResourceUri", message, null, [], null, 400);
 

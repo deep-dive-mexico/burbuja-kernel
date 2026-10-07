@@ -44,6 +44,14 @@ public sealed class ArmPipeline(
             Record(context, AbortedStatus, AbortedCode, started);
             throw;
         }
+        catch (Burbuja.Core.Sdk.Applications.KernelUnavailableException ex)
+        {
+            // A connected host (Store.Connected) lost its kernel service: 503 with a retry hint, not a 500.
+            log.LogWarning(ex, "ARM request {RequestId} could not reach the kernel service ({Operation})", context.RequestId, ex.Operation);
+            var error = ArmError.KernelUnavailable(ex.Operation, ex.RequestId);
+            ApplyError(context, error);
+            context.RetryAfter ??= TimeSpan.FromSeconds(5);
+        }
         catch (Exception ex)
         {
             log.LogError(ex, "ARM pipeline failed request {RequestId}", context.RequestId);
