@@ -45,8 +45,18 @@ public sealed class StoreConnectedPlugin : IBurbujaPlugin
         // After Store.Sqlite (100): when both are installed the remote stores win and the SQLite file is never opened.
         110);
 
+    /// <summary>
+    /// The plugin ships in the kernel image beside Store.Sqlite, so a kernel service or a locally stored host
+    /// also loads it. It replaces nothing unless <c>ConnectedStore:Url</c> is configured: an unconfigured
+    /// Store.Connected is inert rather than a host that cannot reach a kernel it was never pointed at.
+    /// </summary>
+    public static bool IsConfigured(IServiceCollection services) =>
+        services.LastOrDefault(d => d.ServiceType == typeof(IConfiguration))?.ImplementationInstance is IConfiguration configuration
+        && !string.IsNullOrWhiteSpace(configuration[Section + ":Url"]);
+
     public void ConfigureServices(IServiceCollection services)
     {
+        if (!IsConfigured(services)) return;
         services.TryAddSingleton<ConnectedStoreConnection>();
         services.Replace(ServiceDescriptor.Singleton<IResourceStore>(sp => sp.GetRequiredService<ConnectedStoreConnection>().Client));
         services.Replace(ServiceDescriptor.Singleton<IEventLog>(sp => sp.GetRequiredService<ConnectedStoreConnection>().Client));

@@ -36,6 +36,20 @@ public sealed class ConnectedStorePluginTests
     private const string HostKey = "connected-store-embedded-host-credential-0123456789abcdef";
 
     [Fact]
+    public void Plugin_is_inert_without_a_kernel_url()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build());
+        var local = new Burbuja.Core.Arm.InMemoryResourceStore(new TimeProviderClock(TimeProvider.System));
+        services.AddSingleton<IResourceStore>(local);
+        Assert.False(StoreConnectedPlugin.IsConfigured(services));
+        new StoreConnectedPlugin().ConfigureServices(services);
+        using var provider = services.BuildServiceProvider();
+        Assert.Same(local, provider.GetRequiredService<IResourceStore>());
+        Assert.Null(provider.GetService<ConnectedStoreConnection>());
+    }
+
+    [Fact]
     public void Plugin_requires_a_complete_registration_and_opens_nothing_locally()
     {
         var missing = Host(new Dictionary<string, string?> { ["ConnectedStore:Url"] = "https://kernel.invalid" });
