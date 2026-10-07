@@ -11,6 +11,8 @@
     <PackageReference Include="xunit.v3.mtp-off" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <ProjectReference Include="../../src/Burbuja.Hosting/Burbuja.Hosting.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Store.Sqlite/Burbuja.Plugins.Store.Sqlite.csproj" />
+    <ProjectReference Include="../../examples/Example.Connected/Example.Connected.csproj" />
     <ProjectReference Include="../../examples/Example.Workbench/Example.Workbench.Host/Example.Workbench.Host.csproj" />
     <ProjectReference Include="../../examples/Example.Workbench/Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>

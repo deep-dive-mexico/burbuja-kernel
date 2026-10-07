@@ -40,6 +40,7 @@ public sealed class StoreSqlitePlugin : IBurbujaPlugin
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddSingleton<Burbuja.Core.Abstractions.Applications.IApplicationStorageProvider, SqliteApplicationStorageProvider>();
         services.TryAddSingleton(sp =>
         {
             var config = sp.GetRequiredService<IConfiguration>();

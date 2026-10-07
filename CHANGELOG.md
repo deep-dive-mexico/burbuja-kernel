@@ -6,6 +6,16 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+### Added
+
+- Begin the 0.7 development line with an opt-in connected-application storage
+  interface: credential-bound environment/tenant/application scopes, kernel-owned
+  SQLite and in-memory bindings, typed HTTP/SSE clients, conditional/atomic writes,
+  isolated auxiliary stores and durable JSON write receipts. The independent
+  connected example proves separate application processes without embedded runtime
+  dependencies. This is the storage foundation; generic execution/dispatch,
+  per-application provider/budget wiring and consumer migrations remain pending.
+
 ## v0.6.1 — 2026-10-06
 
 ### Fixed

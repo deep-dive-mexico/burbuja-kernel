@@ -14,6 +14,7 @@ test counts are not current kernel instructions. Paths below are relative to thi
 | Capability | Current implementation | Existing verification surface |
 |---|---|---|
 | Independent executable and dynamically installed resource providers | `src/Burbuja.Hosting/BurbujaApplication.cs`, `BurbujaHostOptions.cs`; `Core/Plugin/PluginHost.cs` | `Hosting.Tests/ExternalPluginTests`, `ExecutableSmokeTests`; Workbench |
+| Development candidate: registered application scopes and kernel-owned stores over authenticated HTTP/SSE | [Connected application storage](connected-applications.md); `Core/Applications`, `Hosting/Applications`, `Core.Sdk/Applications` | `Hosting.Tests/ConnectedApplicationTests`; `scripts/prove-connected-apps.py` — storage slice only, no product migration |
 | ARM resource lifecycle, authorization, schemas, ETags, named actions and asynchronous operations | `src/Burbuja.Core/Arm/`, contracts in `Core.Abstractions/Arm/`, SDK handlers in `Core.Sdk` | `tests/Burbuja.Core.UnitTests`; Workbench HTTP CRUD/RBAC/SSE cases |
 | One-shot jobs with single-worker and plan-fan-out strategies; an independent team task board | `src/Burbuja.Agents/Runtime/Strategies.cs`, `Orchestration.cs`, `TeamBoard.cs` | `tests/Burbuja.Agents.UnitTests`, `tests/scenarios`, public E2E |
 | Stateful agents with inboxes, fenced activation, forks, interrupt/resume and tool loops | `Agents/Runtime/Activation.cs`, `AgentActivationWorker.cs`, `AgentTurnRunner.cs`, `SessionLog.cs` | Agents units; generic black-box tests currently also retained in the separate consuming product |

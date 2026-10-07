@@ -69,6 +69,7 @@ public static class BurbujaApplication
         // configuration providers and test transports must therefore be supplied BEFORE this call.
         options.ConfigureBuilder?.Invoke(builder);
         builder.Services.AddBurbujaCore(builder.Configuration, StaticPlugins(builder.Configuration, options.AdditionalStaticPlugins));
+        Applications.ConnectedKernelEndpoints.AddServices(builder.Services, builder.Configuration);
         // M5.2: the kernel MCP lane. Registered unconditionally (the role gate is the status quo of
         // every other subsystem) and mounted below only on the control plane.
         builder.Services.AddBurbujaMcp();
@@ -128,6 +129,7 @@ public static class BurbujaApplication
 
         if (controlPlane)
         {
+            Applications.ConnectedKernelEndpoints.Map(app);
             app.MapOpenApi("/openapi/v1.json");
             ArmEndpoints.Map(app);
 
