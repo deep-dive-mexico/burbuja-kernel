@@ -26,6 +26,14 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertIn("scripts/test-product.py install-browser", job)
         self.assertIn("path: akos/artifacts/kernel-compatibility/", job)
 
+    def test_consumer_hosts_use_a_port_band_disjoint_from_the_product_and_kernel_lanes(self):
+        job = jobs()["consumer-akos"]
+        low = int(re.search(r'BURBUJA_PORT_MIN: "(\d+)"', job).group(1))
+        high = int(re.search(r'BURBUJA_PORT_MAX: "(\d+)"', job).group(1))
+        self.assertLess(low, high)
+        # Product lanes claim 18025-18099 (akos-server scripts/test-product.py); kernel lanes default to 18100-18399.
+        self.assertTrue(high < 18025 or low > 18399, (low, high))
+
     def test_publication_and_deployment_wait_for_the_consumer_gate(self):
         for name in ("release", "deploy"):
             job = jobs()[name]

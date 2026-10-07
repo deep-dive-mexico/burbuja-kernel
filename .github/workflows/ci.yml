@@ -95,6 +95,11 @@ jobs:
     env:
       DOTNET_INSTALL_DIR: /home/runner/.dotnet-akos
       KERNEL_COMMIT: ${{ needs.prepare-release.outputs.sha || github.sha }}
+      # The product's own CI shares this host and claims loopback ports 18025-18099 for its hosts;
+      # a second checkout cannot see those claims, and two Hosts on one port route requests to the
+      # wrong kernel (first live gate run, 2026-10-07). This job keeps a disjoint band.
+      BURBUJA_PORT_MIN: "18400"
+      BURBUJA_PORT_MAX: "18474"
     steps:
       - uses: actions/checkout@v4
         with:
