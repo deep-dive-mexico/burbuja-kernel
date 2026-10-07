@@ -82,9 +82,52 @@ jobs:
             artifacts/e2e-runs/
             artifacts/e2e-logs/
             artifacts/e2e-browser/
-  release:
+  consumer-akos:
     needs: [prepare-release, build-and-unit]
-    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' }}
+    # AKOS is this kernel's first consumer. Its complete offline product suite (units, HTTP,
+    # owned-process restarts, Chromium journeys) runs against this exact kernel commit through the
+    # product's own non-deployable candidate harness, so a generic change that would regress the
+    # product fails here before a release is published or a tenant deployed. The deploy key is
+    # read-only and scoped to the product repository alone (docs/releases.md, "Consumer gate").
+    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
+    timeout-minutes: 60
+    env:
+      DOTNET_INSTALL_DIR: /home/runner/.dotnet-akos
+      KERNEL_COMMIT: ${{ needs.prepare-release.outputs.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.sha || github.sha }}
+          path: kernel
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: deep-dive-mexico/akos-server
+          ref: dev
+          path: akos
+          ssh-key: ${{ secrets.AKOS_READ_SSH_KEY }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.400
+      - name: Install Chromium for the product's browser lane
+        working-directory: akos
+        run: python3 scripts/test-product.py install-browser
+      - name: Run the complete AKOS product suite against this kernel commit
+        working-directory: akos
+        run: |
+          git -C ../kernel remote set-url origin https://github.com/deep-dive-mexico/burbuja-kernel.git
+          echo "AKOS dev source: $(git rev-parse HEAD)"
+          python3 scripts/test-kernel-candidate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: akos-consumer-compatibility
+          path: akos/artifacts/kernel-compatibility/
+  release:
+    needs: [prepare-release, build-and-unit, consumer-akos]
+    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && needs.consumer-akos.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     # Release jobs only call the GitHub API; their own runner keeps them from queueing behind validation.
     runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-release"]') }}
     timeout-minutes: 5
@@ -103,8 +146,8 @@ jobs:
           RELEASE_SHA: ${{ needs.prepare-release.outputs.sha }}
         run: python3 scripts/github-release.py publish --title-prefix "Burbuja kernel"
   deploy:
-    needs: [prepare-release, build-and-unit, release]
-    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request' }}
+    needs: [prepare-release, build-and-unit, consumer-akos, release]
+    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && needs.consumer-akos.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request' }}
     runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-kernel"]') }}
     timeout-minutes: 40
     # main deploys production; dev deploys the dev tenant. The dev environment admits

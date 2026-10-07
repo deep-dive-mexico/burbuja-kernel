@@ -6,6 +6,13 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+### Delivery
+
+- Run the AKOS product's complete offline suite against every validated kernel
+  commit (`consumer-akos` job) before a release is published or a tenant
+  deployed, so generic regressions that would affect the product fail in the
+  kernel's own CI ([consumer gate](https://github.com/deep-dive-mexico/burbuja-kernel/blob/main/docs/releases.md#consumer-gate)).
+
 ## v0.6.1 — 2026-10-06
 
 ### Fixed
