@@ -13,6 +13,7 @@
     <PackageReference Include="xunit.v3.mtp-off" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <ProjectReference Include="../../src/Burbuja.Realtime/Burbuja.Realtime.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Realtime.Redis/Burbuja.Plugins.Realtime.Redis.csproj" />
     <ProjectReference Include="../../examples/Example.Arena/Example.Arena.Host/Example.Arena.Host.csproj" />
     <!-- Built, never referenced: the end-to-end test installs it as a dynamic plugin. -->
     <ProjectReference Include="../../examples/Example.Arena/Example.Arena.Plugin/Example.Arena.Plugin.csproj" ReferenceOutputAssembly="false" Private="false" />

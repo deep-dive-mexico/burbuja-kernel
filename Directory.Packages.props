@@ -36,5 +36,6 @@
     <PackageVersion Include="Microsoft.Data.Sqlite.Core" Version="10.0.12" />
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <PackageVersion Include="StackExchange.Redis" Version="3.4.5" />
   </ItemGroup>
 </Project>
