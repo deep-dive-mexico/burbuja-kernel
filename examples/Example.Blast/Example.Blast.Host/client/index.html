@@ -26,7 +26,7 @@ body { background: #111; color: #eee; font: 14px/1.5 system-ui,sans-serif; overf
 #ui select { padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #eee; font-size: 13px; }
 #ui label { font-size: 13px; color: #aaa; }
 #canvas-wrap { position: absolute; inset: 0; }
-canvas { display: block; }
+canvas { display: block; width: 100%; height: 100%; }
 #hud { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
 #hud-top { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 12px; background: rgba(0,0,0,.5); }
 #hud-timer { font-size: 1.4rem; font-weight: bold; }
@@ -159,11 +159,15 @@ function initThree() {
   renderer.setAnimationLoop(animate);
 }
 
+// Size from the container, not innerWidth: a canvas sized by its own drawing buffer can hold a phone's layout
+// viewport wider than the screen. CSS owns the canvas box; the buffer follows it.
 function onResize() {
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h);
+  const wrap = document.getElementById('canvas-wrap');
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  frameStage();
 }
 
 // ─── stage rendering ──────────────────────────────────────────────────────────
@@ -232,11 +236,21 @@ function buildStage(data) {
     }
   }
 
-  // Position camera to see the whole stage.
-  const cx = width / 2, cz = height / 2;
-  camera.position.set(cx, Math.max(width, height) * 0.9, cz + Math.max(width, height) * 0.5);
-  camera.lookAt(cx, 0, cz);
   stageData = data;
+  frameStage();
+}
+
+// The fixed battle camera, pulled back until the whole stage fits the window, portrait phones included.
+function frameStage() {
+  if (!stageData) return;
+  const { width, height } = stageData;
+  const cx = width / 2, cz = height / 2;
+  const fitWidth = width / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / camera.aspect;
+  const span = Math.max(Math.max(width, height), fitWidth * 0.95);
+  camera.position.set(cx, span * 0.9, cz + span * 0.5);
+  camera.lookAt(cx, 0, cz);
+  scene.fog.near = span * 1.4;
+  scene.fog.far = span * 3;
 }
 
 function updateSoftBlocks(b64) {
@@ -437,7 +451,14 @@ function showMsg(text, ms = 3000) {
 }
 
 // ─── input ────────────────────────────────────────────────────────────────────
-document.addEventListener('keydown', e => { keys[e.code] = true; e.preventDefault(); }, { passive: false });
+// Form fields keep their keys, so a name and a join code can be typed; game keys don't scroll the page.
+const GAME_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyF','KeyJ','KeyK','KeyR','ShiftLeft','ShiftRight']);
+const typing = e => e.target instanceof HTMLElement && e.target.matches('input, select, textarea');
+document.addEventListener('keydown', e => {
+  if (typing(e)) return;
+  keys[e.code] = true;
+  if (GAME_KEYS.has(e.code)) e.preventDefault();
+}, { passive: false });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 function readInput() {
