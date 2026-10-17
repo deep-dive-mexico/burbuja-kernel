@@ -34,8 +34,8 @@ skipped or empty results. Its fixtures publish `Burbuja.Host`, use isolated SQLi
 scripted models, and reference no private product executable or assembly. See
 [MCP and job recovery](docs/mcp-job-recovery.md) for the new runtime contract and proof.
 
-The generic Core, Agents, Compute, Deployments, DeepSeek, Store, HostFacts, Integrations, MCP and
-Hosting test projects are selected explicitly, together with their test plugin/tool sources.
+The generic Core, Agents, Compute, Deployments, DeepSeek, Store, HostFacts, Integrations, MCP,
+Realtime and Hosting test projects are selected explicitly, together with their test plugin/tool sources.
 `export-manifest.json` lists the exact project/file inventory and exclusions.
 
 The historical mixed Host and Portal unit suites remain in the private product export.

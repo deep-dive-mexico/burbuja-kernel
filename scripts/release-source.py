@@ -29,7 +29,7 @@ REPOSITORIES = {
 BLOCKED = {"bin", "obj", ".git", ".claude", ".opencode", "node_modules", "artifacts",
            "testresults", "__pycache__", "akos-source", "soka-fuentes", "personal-data",
            "secrets", "backups", "backup", "vendor", "recordings", "state", "data"}
-SUFFIXES = {".cs", ".csproj", ".razor", ".css", ".js", ".svg", ".c", ".h",
+SUFFIXES = {".cs", ".csproj", ".razor", ".html", ".css", ".js", ".svg", ".c", ".h",
             ".md", ".json", ".jsonl", ".props", ".targets", ".slnx", ".yml",
             ".yaml", ".py", ".sh", ".txt", ".woff2"}
 SECRET = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\s+[A-Za-z0-9+/=]{40}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b")

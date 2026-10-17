@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Realtime.Abstractions</RootNamespace>
+    <Description>Contracts for lobby-scoped, server-authoritative real-time sessions: games, players, transports, placement and matchmaking.</Description>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,17 @@
+{
+  "id": "Example.Arena",
+  "name": "Example Arena real-time shooter",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Example.Arena.Plugin.dll",
+  "entry_type": "Example.Arena.Plugin.ArenaPlugin",
+  "load": "dynamic",
+  "provides": ["Example.Arena"],
+  "extension_points": [],
+  "requires": [],
+  "roles": ["all"],
+  "config_section": null,
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 900
+}

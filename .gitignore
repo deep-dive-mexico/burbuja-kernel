@@ -2,6 +2,7 @@
 **/bin/
 **/obj/
 /artifacts/
+/examples/*/artifacts/
 TestResults/
 **/__pycache__/
 *.pyc
