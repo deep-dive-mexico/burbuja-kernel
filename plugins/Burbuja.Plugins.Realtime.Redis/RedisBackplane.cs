@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Burbuja.Realtime.Abstractions;
 using StackExchange.Redis;
@@ -15,8 +16,11 @@ public sealed class RedisBackplane : IRealtimeBackplane, IAsyncDisposable
     private readonly string _prefix;
     private readonly bool _ownsMultiplexer;
 
-    // Unique per-instance channel for replies, so multiple backplane instances in one process are isolated.
-    private readonly string _replyBase;
+    // One reply channel per instance, subscribed once; replies are matched to calls by correlation id.
+    private readonly RedisChannel _replyChannel;
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _calls = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _replySubscription = new(1, 1);
+    private bool _listening;
 
     // ─── Lua scripts ─────────────────────────────────────────────────────────────
 
@@ -92,13 +96,15 @@ return 1";
 local cur = redis.call('GET', KEYS[1])
 if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
 
-    // AddTicketAsync: add ticket unless player already has a live queued one.
-    // Returns: {new(1)/existing(0), ticketId, playerId, gameId, queued('0'/'1'), enqueuedAtMs, payload}
+    // AddTicketAsync: add ticket unless player already has a live queued one. KEYS[4] is the ticket the caller
+    // read from the player's slot (ARGV[7], '' for none); a different slot value means a race, and the caller
+    // reads again, so the script touches only declared keys.
+    // Returns: {-1} to retry, or {new(1)/existing(0), ticketId, playerId, gameId, queued('0'/'1'), enqueuedAtMs, payload}
     private static readonly string ScriptAddTicket = @"
-local existId = redis.call('GET', KEYS[1])
-if existId and existId ~= '' then
-  local ek = ARGV[7] .. 'ticket:' .. existId
-  local f = redis.call('HMGET', ek, 'pid', 'gid', 'q', 'eat', 'p')
+local existId = redis.call('GET', KEYS[1]) or ''
+if existId ~= ARGV[7] then return {-1} end
+if existId ~= '' then
+  local f = redis.call('HMGET', KEYS[4], 'pid', 'gid', 'q', 'eat', 'p')
   if f[3] == '1' then return {0, existId, f[1], f[2], f[3], f[4], f[5]} end
 end
 redis.call('HSET', KEYS[2], 'pid', ARGV[2], 'gid', ARGV[3], 'q', '1', 'eat', ARGV[4], 'p', ARGV[5])
@@ -114,12 +120,13 @@ local cur = redis.call('HGET', KEYS[1], 'q')
 if not cur or cur ~= '1' then return 0 end
 redis.call('HSET', KEYS[1], 'q', ARGV[4], 'p', ARGV[5])
 redis.call('PEXPIRE', KEYS[1], ARGV[6])
+local cq = redis.call('GET', KEYS[2])
 if ARGV[4] == '0' then
   redis.call('ZREM', KEYS[3], ARGV[1])
-  local cq = redis.call('GET', KEYS[2])
   if cq == ARGV[1] then redis.call('DEL', KEYS[2]) end
   return 2
 end
+if cq == ARGV[1] then redis.call('PEXPIRE', KEYS[2], ARGV[6]) end
 return 1";
 
     // HoldLeaseAsync: acquire or renew.
@@ -142,7 +149,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         _mux = mux;
         _prefix = prefix;
         _ownsMultiplexer = ownsMultiplexer;
-        _replyBase = prefix + "reply:" + Guid.NewGuid().ToString("N") + ":";
+        _replyChannel = RedisChannel.Literal(prefix + "reply:" + Guid.NewGuid().ToString("N"));
     }
 
     public bool IsDistributed => true;
@@ -202,11 +209,8 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             {
                 var fields = tasks[i].Result;
                 if (fields.Length == 0) { dead.Add(members[i]); continue; }
-                var h = fields.ToHashSet();
-                result.Add(new BackplaneNode(
-                    (string)members[i]!,
-                    h.FirstOrDefault(f => f.Name == "i").Value!,
-                    h.FirstOrDefault(f => f.Name == "p").Value!));
+                var h = fields.ToDictionary(f => (string)f.Name!, f => (string?)f.Value);
+                result.Add(new BackplaneNode((string)members[i]!, h.GetValueOrDefault("i") ?? "", h.GetValueOrDefault("p") ?? "{}"));
             }
 
             if (dead.Count > 0)
@@ -394,14 +398,23 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
     {
         try
         {
-            var result = await Db().ScriptEvaluateAsync(ScriptAddTicket,
-                [K("queued:" + ticket.PlayerId), K("ticket:" + ticket.TicketId), K("queue:" + ticket.GameId)],
-                [ticket.TicketId, ticket.PlayerId, ticket.GameId,
-                 ticket.EnqueuedAt.ToUnixTimeMilliseconds(),
-                 ticket.Payload,
-                 (long)ttl.TotalMilliseconds,
-                 _prefix]);
-            return TicketFromResult((RedisResult[])result!);
+            var db = Db();
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                var existing = (string?)await db.StringGetAsync(K("queued:" + ticket.PlayerId)) ?? "";
+                var result = (RedisResult[])(await db.ScriptEvaluateAsync(ScriptAddTicket,
+                    [K("queued:" + ticket.PlayerId), K("ticket:" + ticket.TicketId), K("queue:" + ticket.GameId),
+                     K("ticket:" + (existing.Length > 0 ? existing : ticket.TicketId))],
+                    [ticket.TicketId, ticket.PlayerId, ticket.GameId,
+                     ticket.EnqueuedAt.ToUnixTimeMilliseconds(),
+                     ticket.Payload,
+                     (long)ttl.TotalMilliseconds,
+                     existing]))!;
+                if ((long)result[0] != -1)
+                    return TicketFromResult(result);
+            }
+
+            throw new RealtimeBackplaneException($"Player '{ticket.PlayerId}' kept racing for a queue slot.");
         }
         catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to add ticket.", ex); }
     }
@@ -539,35 +552,11 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         var sub = Sub();
         var channel = RedisChannel.Literal(K("rpc:" + nodeId));
 
-        async void OnMessage(RedisChannel _, RedisValue value)
+        // The subscriber callback only hands the request over; the handler runs on the thread pool.
+        void OnMessage(RedisChannel from, RedisValue value)
         {
-            if (value.IsNullOrEmpty) return;
-            RpcEnvelope? envelope;
-            try
-            {
-                envelope = JsonSerializer.Deserialize<RpcEnvelope>((string)value!);
-                if (envelope is null) return;
-            }
-            catch { return; }
-
-            string reply;
-            bool isError = false;
-            try
-            {
-                reply = await handler(envelope.Payload, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                reply = ex.Message;
-                isError = true;
-            }
-
-            var responseJson = JsonSerializer.Serialize(new RpcReply(isError, reply));
-            try
-            {
-                await Sub().PublishAsync(RedisChannel.Literal(envelope.ReplyChannel), responseJson);
-            }
-            catch { /* best effort */ }
+            if (!value.IsNullOrEmpty)
+                _ = Task.Run(() => AnswerAsync((string)value!, handler));
         }
 
         try
@@ -579,72 +568,114 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         return new Disposer(async () =>
         {
             try { await sub.UnsubscribeAsync(channel, OnMessage); }
-            catch { /* swallow on dispose */ }
+            catch (RedisException) { /* the connection is going away anyway */ }
         });
+    }
+
+    private async Task AnswerAsync(string message, Func<string, CancellationToken, Task<string>> handler)
+    {
+        RpcEnvelope? envelope;
+        try
+        {
+            envelope = JsonSerializer.Deserialize<RpcEnvelope>(message);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        if (envelope is null)
+            return;
+        RpcReply reply;
+        try
+        {
+            reply = new RpcReply(envelope.CorrelationId, false, await handler(envelope.Payload, CancellationToken.None));
+        }
+        catch (Exception ex)
+        {
+            reply = new RpcReply(envelope.CorrelationId, true, ex.Message);
+        }
+
+        try
+        {
+            await Sub().PublishAsync(RedisChannel.Literal(envelope.ReplyChannel), JsonSerializer.Serialize(reply));
+        }
+        catch (RedisException)
+        {
+            // The caller times out; it already cannot tell whether the request ran.
+        }
     }
 
     /// <inheritdoc/>
     public async Task<string> CallAsync(string nodeId, string request, TimeSpan timeout, CancellationToken ct)
     {
+        await ListenForRepliesAsync();
         var correlationId = Guid.NewGuid().ToString("N");
-        var replyChannel = RedisChannel.Literal(_replyBase + correlationId);
-        var rpcChannel = RedisChannel.Literal(K("rpc:" + nodeId));
-        var sub = Sub();
-
-        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        void OnReply(RedisChannel _, RedisValue value)
-        {
-            if (value.IsNullOrEmpty) return;
-            try
-            {
-                var reply = JsonSerializer.Deserialize<RpcReply>((string)value!);
-                if (reply is null) return;
-                if (reply.Error)
-                    tcs.TrySetException(new RealtimeBackplaneException(
-                        $"Node '{nodeId}' failed to handle the call: {reply.Payload}"));
-                else
-                    tcs.TrySetResult(reply.Payload);
-            }
-            catch (Exception ex) { tcs.TrySetException(ex); }
-        }
-
+        var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _calls[correlationId] = pending;
         try
         {
-            await sub.SubscribeAsync(replyChannel, OnReply);
-        }
-        catch (RedisException ex) { throw new RealtimeBackplaneException($"Failed to subscribe for reply from '{nodeId}'.", ex); }
-
-        try
-        {
-            var envelope = JsonSerializer.Serialize(new RpcEnvelope(correlationId, replyChannel.ToString()!, request));
+            var envelope = JsonSerializer.Serialize(new RpcEnvelope(correlationId, _replyChannel.ToString(), request));
             long receivers;
             try
             {
-                receivers = await sub.PublishAsync(rpcChannel, envelope);
+                receivers = await Sub().PublishAsync(RedisChannel.Literal(K("rpc:" + nodeId)), envelope);
             }
             catch (RedisException ex) { throw new RealtimeBackplaneException($"Failed to call node '{nodeId}'.", ex); }
 
             if (receivers == 0)
-                throw new TimeoutException($"Node '{nodeId}' has no active server (PUBLISH returned 0 receivers).");
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-            cts.Token.Register(() => tcs.TrySetCanceled(cts.Token));
-
+                throw new TimeoutException($"No node '{nodeId}' answers calls.");
             try
             {
-                return await tcs.Task;
+                return await pending.Task.WaitAsync(timeout, ct);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            catch (TimeoutException)
             {
-                throw new TimeoutException($"Node '{nodeId}' did not reply within {timeout.TotalMilliseconds:F0} ms.");
+                throw new TimeoutException($"Node '{nodeId}' did not answer within {timeout.TotalMilliseconds:F0} ms.");
             }
         }
         finally
         {
-            try { await sub.UnsubscribeAsync(replyChannel, OnReply); }
-            catch { /* swallow */ }
+            _calls.TryRemove(correlationId, out _);
+        }
+    }
+
+    private async Task ListenForRepliesAsync()
+    {
+        if (Volatile.Read(ref _listening))
+            return;
+        await _replySubscription.WaitAsync();
+        try
+        {
+            if (_listening)
+                return;
+            await Sub().SubscribeAsync(_replyChannel, (_, value) =>
+            {
+                if (value.IsNullOrEmpty)
+                    return;
+                RpcReply? reply;
+                try
+                {
+                    reply = JsonSerializer.Deserialize<RpcReply>((string)value!);
+                }
+                catch (JsonException)
+                {
+                    return;
+                }
+
+                if (reply is null || !_calls.TryRemove(reply.CorrelationId, out var call))
+                    return;
+                if (reply.Error)
+                    call.TrySetException(new RealtimeBackplaneException($"The node failed to handle the call: {reply.Payload}"));
+                else
+                    call.TrySetResult(reply.Payload);
+            });
+            Volatile.Write(ref _listening, true);
+        }
+        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to listen for call replies.", ex); }
+        finally
+        {
+            _replySubscription.Release();
         }
     }
 
@@ -652,6 +683,14 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
 
     public async ValueTask DisposeAsync()
     {
+        foreach (var call in _calls.Values)
+            call.TrySetCanceled();
+        if (_listening)
+        {
+            try { await Sub().UnsubscribeAsync(_replyChannel); }
+            catch (RedisException) { /* closing */ }
+        }
+
         if (_ownsMultiplexer)
             await _mux.CloseAsync();
     }
@@ -713,5 +752,5 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
     // ─── RPC envelope types ──────────────────────────────────────────────────────
 
     private sealed record RpcEnvelope(string CorrelationId, string ReplyChannel, string Payload);
-    private sealed record RpcReply(bool Error, string Payload);
+    private sealed record RpcReply(string CorrelationId, bool Error, string Payload);
 }
