@@ -2,6 +2,12 @@
   <PropertyGroup>
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
+  <!-- Allow the test project to access internal test seams. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Burbuja.Realtime.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="$(BurbujaRoot)/src/Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" Private="false" ExcludeAssets="runtime" />
     <ProjectReference Include="$(BurbujaRoot)/src/Burbuja.Realtime.Abstractions/Burbuja.Realtime.Abstractions.csproj" Private="false" ExcludeAssets="runtime" />

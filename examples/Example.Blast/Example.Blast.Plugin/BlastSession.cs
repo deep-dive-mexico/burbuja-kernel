@@ -424,6 +424,9 @@ public sealed class BlastSession : GameSession
     private const float PlayerSpeed = 4.5f;  // cells/sec
     private const float PlayerRadius = 0.4f;
 
+    /// <summary>How high above its tier a player stands: a bomb coming down below this lands on their head.</summary>
+    private const float HeadHeight = 1.2f;
+
     private void MovePlayer(BlastPlayer p, InputState input, float dt)
     {
         ApplyMoveDelta(p, input.X * PlayerSpeed * dt, input.Z * PlayerSpeed * dt);
@@ -807,10 +810,11 @@ public sealed class BlastSession : GameSession
 
         var landingY = _stage.At((int)b.X, (int)b.Z).Tier;
 
-        // Check for head hit on a player.
+        // A head hit is a bomb coming down onto a player's head; on the way up it clears the thrower.
         foreach (var p in _players.Values)
         {
             if (!p.Alive || p.Ghost || p.InvincibleTimer > 0 || p.Tier != b.Tier) continue;
+            if (b.FlyVY > 0 || b.FlyY > p.Tier + HeadHeight) continue;
             if (Dist2(b.X, b.Z, p.X, p.Z) < (PlayerRadius + BlastBomb.Radius) * (PlayerRadius + BlastBomb.Radius))
             {
                 // Head hit: stun the player, bomb bounces (continues).
@@ -842,7 +846,9 @@ public sealed class BlastSession : GameSession
 
     private void UpdateCarriedBombPosition(BlastBomb b)
     {
-        if (!_players.TryGetValue(b.OwnerId!, out var carrier)) return;
+        // Whoever holds it, which need not be the player who placed it.
+        var carrier = _players.Values.FirstOrDefault(p => p.CarryingBombId == b.Id);
+        if (carrier is null) return;
         b.X = carrier.X + carrier.FacingX * (PlayerRadius + BlastBomb.Radius + 0.05f);
         b.Z = carrier.Z + carrier.FacingZ * (PlayerRadius + BlastBomb.Radius + 0.05f);
         b.Tier = carrier.Tier;
@@ -1445,5 +1451,59 @@ public sealed class BlastSession : GameSession
         public bool A { get; set; }
         public bool B { get; set; }
         public bool R { get; set; }
+    }
+
+    // ─── internal test seams (InternalsVisibleTo Burbuja.Realtime.Tests) ────────
+    // These methods expose mutable simulation state for deterministic unit tests.
+    // They MUST NOT be called from production code paths.
+
+    /// <summary>Direct read of a player entity by id. Returns null if not found.</summary>
+    internal BlastPlayer? TestPlayer(string id) =>
+        _players.TryGetValue(id, out var p) ? p : null;
+
+    /// <summary>Read-only view of the live bomb list.</summary>
+    internal IReadOnlyList<BlastBomb> TestBombs => _bombs;
+
+    /// <summary>Read-only view of the live hazard list.</summary>
+    internal IReadOnlyList<BlastHazard> TestHazards => _hazards;
+
+    /// <summary>Teleport a player to (x, z, tier) without collision checks. For test setup only.</summary>
+    internal void TestPlacePlayer(string id, float x, float z, int tier = 0)
+    {
+        if (_players.TryGetValue(id, out var p))
+        { p.X = x; p.Z = z; p.Tier = tier; }
+    }
+
+    /// <summary>
+    /// Insert a bomb directly into the live bomb list, bypassing placement rules.
+    /// <paramref name="ownerId"/> may be null (ownerless bomb).
+    /// </summary>
+    internal BlastBomb TestPlaceBomb(string? ownerId, int cellX, int cellZ,
+        int tier = 0, int fireLevel = 1, float fuse = BlastBomb.FuseSeconds)
+    {
+        var bomb = new BlastBomb
+        {
+            Id = NextBombId(),
+            OwnerId = ownerId,
+            X = cellX + 0.5f,
+            Z = cellZ + 0.5f,
+            CellX = cellX,
+            CellZ = cellZ,
+            Tier = tier,
+            FireLevel = fireLevel,
+            FuseTimer = fuse,
+        };
+        _bombs.Add(bomb);
+        if (ownerId is not null && _players.TryGetValue(ownerId, out var owner))
+            owner.ActiveBombs++;
+        return bomb;
+    }
+
+    /// <summary>Remove all soft blocks from the grid. For test setup only.</summary>
+    internal void TestClearSoftBlocks()
+    {
+        for (var x = 0; x < _stage.Width; x++)
+            for (var z = 0; z < _stage.Height; z++)
+                _softBlocks.Set(x, z, false);
     }
 }
