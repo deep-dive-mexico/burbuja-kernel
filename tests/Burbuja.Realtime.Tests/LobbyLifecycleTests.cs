@@ -55,6 +55,28 @@ public sealed class LobbyLifecycleTests
     }
 
     [Fact]
+    public void A_session_with_cpu_players_may_start_below_the_rules_minimum_but_never_below_one()
+    {
+        var h = new Harness(new RecordingGame { MinPlayersToStart = 1 });
+        var lobby = h.CreateLobby();
+        var a = h.Connect(lobby, "a");
+        h.Step();
+        Assert.Equal(LobbyState.Countdown, lobby.State);
+        Assert.Equal(1, (int)a.OfType(RealtimeProtocol.Lobby).Last()["d"]!["minPlayers"]!);
+
+        var floor = new Harness(new RecordingGame { MinPlayersToStart = 0 });
+        var empty = floor.CreateLobby();
+        floor.Step();
+        Assert.Equal(LobbyState.Open, empty.State);
+        var raised = new Harness(new RecordingGame { MinPlayersToStart = 5 });
+        var two = raised.CreateLobby();
+        raised.Connect(two, "a");
+        raised.Connect(two, "b");
+        raised.Step();
+        Assert.Equal(LobbyState.Countdown, two.State);
+    }
+
+    [Fact]
     public void Countdown_returns_to_open_when_the_lobby_drops_below_its_minimum()
     {
         var h = new Harness();

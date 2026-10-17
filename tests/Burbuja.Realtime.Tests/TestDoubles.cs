@@ -94,11 +94,14 @@ internal sealed class RecordingGame(GameRules? rules = null, string id = "test",
 
     public IMatchmakingStrategy? Matchmaking { get; init; }
 
+    /// <summary>What every session answers for <see cref="IGameSession.MinPlayersToStart"/>.</summary>
+    public int? MinPlayersToStart { get; init; }
+
     public IGameSession CreateSession(GameSessionOptions options)
     {
         if (session is not null)
             return session();
-        var recording = new RecordingSession();
+        var recording = new RecordingSession { StartWith = MinPlayersToStart };
         Sessions.Add(recording);
         return recording;
     }
@@ -110,6 +113,9 @@ internal sealed class RecordingSession : GameSession, IDisposable
     public int Ticks { get; private set; }
     public int Messages { get; private set; }
     public bool Disposed { get; private set; }
+    public int? StartWith { get; init; }
+
+    public override int? MinPlayersToStart => StartWith;
 
     public override void OnPlayerJoined(ISessionContext context, RealtimePlayer player) => Calls.Add($"joined:{player.PlayerId}:{player.Slot}");
 

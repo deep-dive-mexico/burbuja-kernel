@@ -25,7 +25,6 @@ body { background: #111; color: #eee; font: 14px/1.5 system-ui,sans-serif; overf
 #ui .panel h2 { font-size: 1rem; margin-bottom: 10px; }
 #ui select { padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #eee; font-size: 13px; }
 #ui label { font-size: 13px; color: #aaa; }
-#ui .code { font-size: 2rem; font-weight: bold; letter-spacing: .3em; color: #4cf; }
 #canvas-wrap { position: absolute; inset: 0; }
 canvas { display: block; }
 #hud { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
@@ -88,7 +87,7 @@ canvas { display: block; }
           <select id="opt-wins"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
         </label>
         <label>Bots
-          <select id="opt-bots"><option selected>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select>
+          <select id="opt-bots"><option selected>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select>
         </label>
         <label>Round seconds
           <select id="opt-seconds"><option value="60">1 min</option><option value="120" selected>2 min</option><option value="180">3 min</option><option value="300">5 min</option></select>
@@ -102,10 +101,6 @@ canvas { display: block; }
         <input id="join-code" placeholder="Join code" maxlength="10" style="text-transform:uppercase">
         <button id="btn-join">Join</button>
       </div>
-      <div id="host-code" style="display:none;margin-top:12px;">
-        <div style="color:#aaa;font-size:12px;">Share this code:</div>
-        <div class="code" id="code-display"></div>
-      </div>
     </div>
   </div>
 </div>
@@ -114,12 +109,14 @@ canvas { display: block; }
 import * as THREE from 'three';
 
 // ─── constants ────────────────────────────────────────────────────────────────
-const SLOT_COLORS = [0xe55,0x5ae,0x5e5,0xfa0,0xd5f,0x5dd,0xff5,0xf84]
+// Six-digit hex: 0xe55 would be 0x000e55, not CSS #e55.
+const SLOT_COLORS = [0xee5555,0x55aaee,0x55ee55,0xffaa00,0xdd55ff,0x55dddd,0xffff55,0xff8844]
   .map(c => new THREE.Color(c));
 const CELL = { Floor:0, Pillar:1, Void:2, Water:3, Ramp:4 };
 const PHASE = { Ready:0, Fight:1, Hurry:2, Over:3 };
 
 // ─── state ────────────────────────────────────────────────────────────────────
+let joinCode = null;
 let ws = null, playerId = null, playerToken = null, reservation = null;
 let stageData = null, lastState = null, prevState = null, lastStateTime = 0;
 let bombMeshes = {}, hazardMeshes = {}, itemMeshes = {}, playerMeshes = {};
@@ -177,7 +174,7 @@ function buildStage(data) {
 
   const floorMat = new THREE.MeshLambertMaterial({ color: 0x4a6a4a });
   const rampMat  = new THREE.MeshLambertMaterial({ color: 0x6a8a6a });
-  const pillarMat= new THREE.MeshLambertMaterial({ color: 0x888 });
+  const pillarMat= new THREE.MeshLambertMaterial({ color: 0x888888 });
   const waterMat = new THREE.MeshLambertMaterial({ color: 0x2244aa, transparent: true, opacity: 0.7 });
   const softMat  = new THREE.MeshLambertMaterial({ color: 0x8b6040 });
 
@@ -281,7 +278,7 @@ function getPlayerMesh(slot, isGhost) {
 
 function getBombMesh(id) {
   if (!bombMeshes[id]) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0x333 });
+    const mat = new THREE.MeshLambertMaterial({ color: 0x333333 });
     const m = new THREE.Mesh(bombGeoBase, mat);
     m.castShadow = true;
     const fuse = new THREE.Mesh(fuseGeo, fuseMat);
@@ -517,7 +514,7 @@ async function hostLobby() {
     stage: document.getElementById('opt-stage').value,
     wins: document.getElementById('opt-wins').value,
     bots: document.getElementById('opt-bots').value,
-    roundSeconds: document.getElementById('opt-seconds').value,
+    'round-seconds': document.getElementById('opt-seconds').value,
   };
   const r = await fetch(`${origin}/realtime/v1/lobbies`, {
     method: 'POST',
@@ -526,8 +523,7 @@ async function hostLobby() {
   });
   if (!r.ok) { alert('Host failed: ' + await r.text()); return; }
   const d = await r.json();
-  document.getElementById('code-display').textContent = d.lobby.joinCode;
-  document.getElementById('host-code').style.display = 'block';
+  joinCode = d.lobby.joinCode;
   connect(d.reservation);
   hideUI();
 }
@@ -560,8 +556,9 @@ async function pollTicket(ticketId) {
   throw new Error('Timed out waiting for match');
 }
 
+// A fleet hands out the hosting node's absolute URL (ws, wss, http or https); a single node may hand out a path.
 function resolveWsUrl(connectUrl) {
-  if (connectUrl.startsWith('http://') || connectUrl.startsWith('https://'))
+  if (/^(wss?|https?):\/\//.test(connectUrl))
     return connectUrl.replace(/^http/, 'ws');
   return wsOrigin + connectUrl;
 }
@@ -598,10 +595,16 @@ function onMessage(ev) {
     case 'sys.ended':
       showResults(frame.d);
       break;
-    case 'sys.lobby':
-      if (frame.d.state === 'countdown') showMsg('Get ready!', 2000);
-      if (frame.d.state === 'running') showMsg('Fight!', 1500);
+    case 'sys.lobby': {
+      const lobby = frame.d;
+      if (lobby.state === 'open') {
+        const here = lobby.players.filter(p => p.connected).length;
+        showMsg(`Waiting for players: ${here} of ${lobby.minPlayers}` + (joinCode ? ` · join code ${joinCode}` : ''), 0);
+      }
+      if (lobby.state === 'countdown') showMsg('Get ready!', 2000);
+      if (lobby.state === 'running') showMsg('Fight!', 1500);
       break;
+    }
   }
 }
 

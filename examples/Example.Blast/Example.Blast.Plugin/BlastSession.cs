@@ -24,6 +24,9 @@ public sealed class BlastSession : GameSession
     private readonly bool _suddenDeath;
     private readonly bool _ghostsEnabled;
     private readonly int _botCount;
+
+    /// <summary>CPU players fill the arena, so a lobby with bots starts with one human, as in the original.</summary>
+    public override int? MinPlayersToStart => _botCount > 0 ? 1 : null;
     private readonly StageLayout _stage;
 
     // ─── round state ─────────────────────────────────────────────────────────
@@ -115,7 +118,7 @@ public sealed class BlastSession : GameSession
     public override void OnMatchStarted(ISessionContext context)
     {
         // Add CPU bots into the player table.
-        for (var i = 0; i < _botCount && _players.Count + i < 8; i++)
+        for (var i = 0; i < _botCount && _players.Count < 8; i++)
         {
             var slot = FindFreeSlot();
             var botId = $"bot-{i}";

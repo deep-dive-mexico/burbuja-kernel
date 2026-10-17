@@ -120,13 +120,28 @@ public sealed class RealtimeFleet : IAsyncDisposable
         foreach (var other in (await ReadNodesAsync(ct)).Where(n => n.NodeId != NodeId))
             foreach (var clash in other.Servers.Select(s => s.ServerId).Intersect(_manager.Balancer.Servers.Select(s => s.Id)))
                 errors.Add($"server '{clash}' is already hosted by node '{other.NodeId}'; server ids must be unique in the fleet");
-        if (errors.Count == 0 && !await _backplane.PublishNodeAsync(NodeRecord(), NodeTtl, ct))
+        if (errors.Count == 0 && !await PublishFirstRecordAsync(ct))
             errors.Add($"node id '{NodeId}' is already used by another live node; give each node its own Kernel:NodeId");
         if (errors.Count > 0)
             throw new InvalidOperationException("Realtime fleet configuration is invalid: " + string.Join("; ", errors));
 
         _serving = await _backplane.ServeAsync(NodeId, HandleAsync, ct);
         _nodes = null;
+    }
+
+    /// <summary>A node restarted after a crash finds its previous record still alive, so a refusal is retried
+    /// until that record could have expired. Only a duplicate that keeps heartbeating outlasts the wait.</summary>
+    private async Task<bool> PublishFirstRecordAsync(CancellationToken ct)
+    {
+        var deadline = _time.GetUtcNow() + NodeTtl + HeartbeatInterval;
+        while (!await _backplane.PublishNodeAsync(NodeRecord(), NodeTtl, ct))
+        {
+            if (_time.GetUtcNow() >= deadline)
+                return false;
+            await Task.Delay(HeartbeatInterval, _time, ct);
+        }
+
+        return true;
     }
 
     /// <summary>Republishes this node, its lobbies and their seat claims. The host runs it every

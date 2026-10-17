@@ -33,6 +33,14 @@ public interface IGameSession
 
     /// <summary>The match ended, by the session itself or by the kernel (time limit, abandonment).</summary>
     void OnMatchEnded(ISessionContext context, MatchResult result);
+
+    /// <summary>
+    /// Connected players this lobby needs before its countdown starts, when fewer than
+    /// <see cref="GameRules.MinPlayers"/>: a session whose settings add CPU players can start with one human.
+    /// Read once, after the session is created; the kernel keeps it between 1 and the rules' minimum. Null uses
+    /// the rules. Matchmaking still groups by the rules' minimum.
+    /// </summary>
+    int? MinPlayersToStart => null;
 }
 
 /// <summary>An <see cref="IGameSession"/> whose every callback is an overridable no-op.</summary>
@@ -51,6 +59,8 @@ public abstract class GameSession : IGameSession
     public virtual void OnTick(ISessionContext context) { }
 
     public virtual void OnMatchEnded(ISessionContext context, MatchResult result) { }
+
+    public virtual int? MinPlayersToStart => null;
 }
 
 /// <summary>

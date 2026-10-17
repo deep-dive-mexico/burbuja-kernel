@@ -53,6 +53,7 @@ public sealed class Lobby
     private readonly SessionContext _context;
     private readonly string? _publicUrl;
     private readonly TimeSpan _tickInterval;
+    private readonly int _minPlayersToStart;
     private readonly JsonSerializerOptions _json;
     private List<RealtimePlayer>? _roster;
     private MatchResult? _pendingEnd;
@@ -102,6 +103,7 @@ public sealed class Lobby
         _context = new SessionContext(this, new Random(spec.Seed));
         _session = spec.Game.CreateSession(new GameSessionOptions(Id, GameId, Settings, spec.Seed))
             ?? throw new InvalidOperationException($"Game '{GameId}' created no session.");
+        _minPlayersToStart = Math.Clamp(_session.MinPlayersToStart ?? Rules.MinPlayers, 1, Rules.MinPlayers);
     }
 
     public string Id { get; }
@@ -487,7 +489,7 @@ public sealed class Lobby
         var connected = _seats.Values.Count(s => s.Live);
         switch (_state)
         {
-            case LobbyState.Open when connected >= Rules.MinPlayers:
+            case LobbyState.Open when connected >= _minPlayersToStart:
                 if (Rules.StartCountdown <= TimeSpan.Zero)
                 {
                     Start(now);
@@ -500,7 +502,7 @@ public sealed class Lobby
                 }
 
                 break;
-            case LobbyState.Countdown when connected < Rules.MinPlayers:
+            case LobbyState.Countdown when connected < _minPlayersToStart:
                 _state = LobbyState.Open;
                 CountdownEndsAt = null;
                 _lobbyChanged = true;
@@ -755,7 +757,7 @@ public sealed class Lobby
         serverId = ServerId,
         region = Region,
         state = _state.ToString().ToLowerInvariant(),
-        minPlayers = Rules.MinPlayers,
+        minPlayers = _minPlayersToStart,
         maxPlayers = Rules.MaxPlayers,
         countdownEndsAt = CountdownEndsAt?.ToUnixTimeMilliseconds(),
         startedAt = StartedAt?.ToUnixTimeMilliseconds(),

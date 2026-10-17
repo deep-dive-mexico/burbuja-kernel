@@ -230,26 +230,49 @@ public sealed class FleetTests
     }
 
     [Fact]
-    public void A_fleet_refuses_a_duplicate_node_a_duplicate_server_and_a_distributed_server_without_a_public_url()
+    public async Task A_fleet_refuses_a_duplicate_node_or_server_and_a_distributed_server_without_a_public_url_but_admits_a_restart()
     {
         var time = new FakeTimeProvider();
         var shared = new DistributedBackplane(new LocalBackplane(time));
 
+        // Created, not started: the test starts each one.
         RealtimeFleet Node(string nodeId, string serverId, string? publicUrl)
         {
             var options = new RealtimeOptions { Enabled = true };
             var manager = new LobbyManager(new RealtimeGames([new RecordingGame()]),
                 new LobbyBalancer([new LobbyServer(serverId, "local", 1, publicUrl, time, NullLogger.Instance)], new LeastLoadedPlacement(), true),
                 options, nodeId, time, NullLoggerFactory.Instance, runLoops: false);
-            var fleet = new RealtimeFleet(manager, shared, RealtimeNode.Create(nodeId), options, time, NullLogger.Instance);
-            fleet.StartAsync(Ct).GetAwaiter().GetResult();
-            return fleet;
+            return new RealtimeFleet(manager, shared, RealtimeNode.Create(nodeId), options, time, NullLogger.Instance);
         }
 
-        Node("n1", "s1", "wss://n1.example.com");
-        Assert.Contains("needs a PublicUrl", Assert.Throws<InvalidOperationException>(() => Node("n2", "s2", null)).Message);
-        Assert.Contains("already hosted by node 'n1'", Assert.Throws<InvalidOperationException>(() => Node("n2", "s1", "wss://n2.example.com")).Message);
-        Assert.Contains("already used by another live node", Assert.Throws<InvalidOperationException>(() => Node("n1", "s9", "wss://n1b.example.com")).Message);
+        // Advances the fake clock a second at a time until the start finishes, heartbeating a live node meanwhile.
+        async Task RunAsync(Task start, RealtimeFleet? alive = null)
+        {
+            for (var i = 0; i < 20 && !start.IsCompleted; i++)
+            {
+                time.Advance(TimeSpan.FromSeconds(1));
+                if (alive is not null)
+                    await alive.HeartbeatAsync(Ct);
+                await Task.Delay(5, Ct);
+            }
+
+            await start;
+        }
+
+        var first = Node("n1", "s1", "wss://n1.example.com");
+        await first.StartAsync(Ct);
+        Assert.Contains("needs a PublicUrl",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => Node("n2", "s2", null).StartAsync(Ct))).Message);
+        Assert.Contains("already hosted by node 'n1'",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => Node("n2", "s1", "wss://n2.example.com").StartAsync(Ct))).Message);
+
+        // A second process with the same node id waits out one record lifetime and fails while the first heartbeats.
+        var duplicate = Node("n1", "s9", "wss://n1b.example.com").StartAsync(Ct);
+        Assert.Contains("already used by another live node",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(duplicate, first))).Message);
+
+        // The same node id after a crash: the old record stopped refreshing, so the restart waits and joins.
+        await RunAsync(Node("n1", "s9", "wss://n1b.example.com").StartAsync(Ct));
     }
 
     /// <summary>Cancels one ticket while the strategy runs, then matches everyone: a cancel landing between the
