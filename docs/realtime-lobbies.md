@@ -328,7 +328,7 @@ Errors are `{"error":{"code","message"}}` with stable codes: `unknown_game` 404,
 dotnet test tests/Burbuja.Realtime.Tests/Burbuja.Realtime.Tests.csproj -c Release
 ```
 
-41 tests, all run by `make test`. They cover the lifecycle under a fake clock (exact tick counts, the
+93 tests, all run by `make test`. They cover the lifecycle under a fake clock (exact tick counts, the
 countdown reverting, reservation expiry, reconnect grace and slot retention, single-use tokens, newer
 connections replacing older ones, rate limiting, system messages, fault isolation, seat bounds,
 join-in-progress, one seat per player, kicks, empty-lobby reaping, join codes). They also cover
@@ -352,6 +352,10 @@ restarts. `FleetHostTests` boots two real Blast hosts that install the game and 
 dynamic plugins. Four guests queue through different nodes and play one match on the node the fleet chose.
 The other node answers for the lobby, the seats and the operator view, and a node leaving removes its
 servers at once.
+
+`BlastSimTests` drive the Blast session through internal test seams with exact assertions on its mechanics
+(blast sphere and pillar shielding, chains, kicks, pumped throws onto heads, hearts, the edge, rounds and
+the match end, sudden death, ghosts, bots and determinism). `BlastHostTests` play it over WebSockets.
 
 `ArenaHostTests` boots the real Arena host with the game installed as a
 dynamic plugin in its own load context. Two guests queue, get one placed lobby and play over real
