@@ -26,3 +26,11 @@ class ReleaseAliasTests(unittest.TestCase):
                 (root / name).symlink_to("outside.md")
                 with self.assertRaises(release.ReleaseError):
                     release.read_tracked(root, name)
+
+
+class ReleaseBoundaryTests(unittest.TestCase):
+    def test_web_client_sources_are_inside_and_build_output_is_not(self):
+        self.assertTrue(release.allowed("examples/Example.Arena/Example.Arena.Host/client/index.html"))
+        self.assertFalse(release.allowed("examples/Example.Arena/artifacts/host/client/index.html"))
+        self.assertFalse(release.allowed("examples/Example.Arena/Example.Arena.Host/bin/Release/index.html"))
+        self.assertFalse(release.allowed("examples/Example.Arena/Example.Arena.Host/client/index.html.bak"))
