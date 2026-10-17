@@ -29,6 +29,13 @@
     </ItemGroup>
     <Copy SourceFiles="@(ArenaPluginFiles)" DestinationFiles="@(ArenaPluginFiles-&gt;'$(OutDir)arena-plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
+  <Target Name="StageRedisPlugin" AfterTargets="Build">
+    <RemoveDir Directories="$(OutDir)redis-plugin-fixture" />
+    <ItemGroup>
+      <RedisPluginFiles Include="$(MSBuildThisFileDirectory)../../plugins/Burbuja.Plugins.Realtime.Redis/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(RedisPluginFiles)" DestinationFiles="@(RedisPluginFiles-&gt;'$(OutDir)redis-plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="StageBlastPlugin" AfterTargets="Build">
     <RemoveDir Directories="$(OutDir)blast-plugin-fixture" />
     <ItemGroup>

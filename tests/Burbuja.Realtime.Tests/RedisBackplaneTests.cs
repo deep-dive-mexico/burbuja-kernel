@@ -168,6 +168,10 @@ public sealed class RedisFixture : IAsyncLifetime
     private string? _containerId;
     private static IConnectionMultiplexer? _sharedMux;
 
+    /// <summary>The configuration string of the server <see cref="TryGetMultiplexerAsync"/> connected to, for
+    /// hosts that open their own connection.</summary>
+    public static string? ConnectionString { get; private set; }
+
     /// <summary>Returns a connected multiplexer, or null when Redis cannot be reached and Docker is unavailable.</summary>
     public static async Task<IConnectionMultiplexer?> TryGetMultiplexerAsync()
     {
@@ -184,6 +188,7 @@ public sealed class RedisFixture : IAsyncLifetime
                 opts.AbortOnConnectFail = true;
                 opts.ConnectTimeout = 5000;
                 _sharedMux = await ConnectionMultiplexer.ConnectAsync(opts);
+                ConnectionString = envConnStr;
                 await _sharedMux.GetDatabase().PingAsync();
                 return _sharedMux;
             }
@@ -219,6 +224,7 @@ public sealed class RedisFixture : IAsyncLifetime
                     var mux = await ConnectionMultiplexer.ConnectAsync(opts);
                     await mux.GetDatabase().PingAsync();
                     _sharedMux = mux;
+                    ConnectionString = connStr;
                     return _sharedMux;
                 }
                 catch
