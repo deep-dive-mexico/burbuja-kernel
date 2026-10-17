@@ -81,6 +81,7 @@ public sealed class Lobby
         Id = spec.LobbyId;
         Game = spec.Game;
         Rules = spec.Game.Rules;
+        NodeId = spec.NodeId;
         ServerId = spec.ServerId;
         Region = spec.Region;
         Visibility = spec.Visibility;
@@ -107,6 +108,7 @@ public sealed class Lobby
     public IRealtimeGame Game { get; }
     public string GameId => Game.Id;
     public GameRules Rules { get; }
+    public string NodeId { get; }
     public string ServerId { get; }
     public string Region { get; }
     public LobbyVisibility Visibility { get; }
@@ -221,6 +223,8 @@ public sealed class Lobby
             {
                 Tick = Tick,
                 Performance = Performance,
+                NodeId = NodeId,
+                SeatHolders = _seats.Keys.ToList(),
             };
         }
     }

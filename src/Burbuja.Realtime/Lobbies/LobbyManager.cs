@@ -7,22 +7,26 @@ using Microsoft.Extensions.Options;
 
 namespace Burbuja.Realtime.Lobbies;
 
+/// <param name="ServerId">Place on this server only. The fleet sets it once it has chosen a server, which may
+/// be on another node; null lets this node's balancer choose among its own servers.</param>
+/// <param name="LobbyId">The new lobby's id; null generates one. The fleet chooses it before asking another node,
+/// so a call that times out can still close whatever it created.</param>
 public sealed record CreateLobbyRequest(
     string GameId,
     LobbyVisibility Visibility,
     LobbyOrigin Origin,
     string? Region = null,
-    IReadOnlyDictionary<string, string>? Settings = null);
+    IReadOnlyDictionary<string, string>? Settings = null,
+    string? ServerId = null,
+    string? LobbyId = null);
 
 public sealed record LobbyCreation(Lobby? Lobby, string? Error);
 
 /// <summary>
-/// The lifecycle manager of every lobby on this node: creation through the balancer, join codes, seat
-/// reservations, admission of transport connections, and release of capacity when a lobby closes.
-///
-/// <para><b>One lobby per player.</b> A player holds at most one seat across the node. A finished match
-/// releases its players at once (they may queue again from the results screen); a seat in a lobby that is
-/// still playing must be left before another can be taken.</para>
+/// The lifecycle manager of every lobby on this node: creation on one of its servers, join codes, seat
+/// reservations, admission of transport connections, and release of capacity when a lobby closes. It knows
+/// nothing of other nodes; <see cref="Fleet.RealtimeFleet"/> routes requests here and keeps the fleet-wide
+/// facts, such as one seat per player, from the events this manager raises.
 /// </summary>
 public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
 {
@@ -30,7 +34,6 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
 
     private readonly ConcurrentDictionary<string, Lobby> _lobbies = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _codes = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> _occupancy = new(StringComparer.Ordinal);
     private readonly RealtimeGames _games;
     private readonly LobbyBalancer _balancer;
     private readonly LobbyLimits _limits;
@@ -43,9 +46,10 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         RealtimeGames games,
         LobbyBalancer balancer,
         IOptions<RealtimeOptions> options,
+        RealtimeNode node,
         TimeProvider time,
         ILoggerFactory logs)
-        : this(games, balancer, options.Value, time, logs, runLoops: true)
+        : this(games, balancer, options.Value, node.NodeId, time, logs, runLoops: true)
     {
     }
 
@@ -55,10 +59,12 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         RealtimeGames games,
         LobbyBalancer balancer,
         RealtimeOptions options,
+        string nodeId,
         TimeProvider time,
         ILoggerFactory logs,
         bool runLoops)
     {
+        NodeId = nodeId;
         _games = games;
         _balancer = balancer;
         _limits = LobbyLimits.From(options);
@@ -67,6 +73,16 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         _log = logs.CreateLogger<LobbyManager>();
         _runLoops = runLoops;
     }
+
+    /// <summary>Raised when a lobby gives up a player's seat: they left, were removed, or the match ended. Called
+    /// from the lobby's loop under its lock, so a handler must not block.</summary>
+    public event Action<Lobby, string>? SeatReleased;
+
+    /// <summary>Raised once when a lobby has closed and released its server slot. Same rules as
+    /// <see cref="SeatReleased"/>.</summary>
+    public event Action<Lobby>? LobbyClosed;
+
+    public string NodeId { get; }
 
     public RealtimeGames Games => _games;
 
@@ -80,28 +96,49 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
     public Lobby? FindByCode(string? code) =>
         code is not null && _codes.TryGetValue(code.Trim().ToUpperInvariant(), out var id) ? Find(id) : null;
 
-    /// <summary>The lobby holding this player's seat, if it is still being played.</summary>
-    public Lobby? LobbyOf(string playerId) =>
-        _occupancy.TryGetValue(playerId, out var id) && Find(id) is { State: < LobbyState.Ended } lobby
-        && lobby.HasSeat(playerId) ? lobby : null;
+    /// <summary>A fresh lobby id.</summary>
+    public static string NewLobbyId() => "lby-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
 
-    /// <summary>Places a new dedicated lobby. Hosted lobbies get a shareable join code; matchmade ones do not.</summary>
-    public LobbyCreation Create(CreateLobbyRequest request)
+    /// <summary>A random six-character join code from an alphabet without look-alike characters.</summary>
+    public static string NewJoinCode() => string.Create(6, 0, static (span, _) =>
+    {
+        for (var i = 0; i < span.Length; i++)
+            span[i] = CodeAlphabet[RandomNumberGenerator.GetInt32(CodeAlphabet.Length)];
+    });
+
+    /// <summary>
+    /// Places a new dedicated lobby on one of this node's servers. Hosted lobbies get a shareable join code:
+    /// <paramref name="joinCode"/> when the fleet has already claimed one, otherwise one unique on this node.
+    /// Matchmade lobbies have none.
+    /// </summary>
+    public LobbyCreation Create(CreateLobbyRequest request, string? joinCode = null)
     {
         var game = _games.Find(request.GameId);
         if (game is null)
             return new LobbyCreation(null, "unknown_game");
-        var server = _balancer.Allocate(new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers));
+        LobbyServer? server;
+        if (request.ServerId is { } pinned)
+            server = Server(pinned) is { } named && named.TryAllocate() ? named : null;
+        else
+            server = _balancer.Allocate(new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers));
         if (server is null)
             return new LobbyCreation(null, "no_capacity");
 
-        var id = "lby-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
-        var code = request.Origin == LobbyOrigin.Hosted ? ClaimCode(id) : null;
+        var id = request.LobbyId ?? NewLobbyId();
+        if (_lobbies.ContainsKey(id))
+        {
+            server.Release();
+            return new LobbyCreation(null, "lobby_exists");
+        }
+
+        var code = request.Origin != LobbyOrigin.Hosted ? null
+            : joinCode is not null && _codes.TryAdd(joinCode, id) ? joinCode
+            : ClaimCode(id);
         try
         {
             var settings = request.Settings ?? new Dictionary<string, string>();
             var lobby = new Lobby(
-                new LobbySpec(id, game, server.Id, server.Region, server.PublicUrl, request.Visibility, request.Origin,
+                new LobbySpec(id, game, NodeId, server.Id, server.Region, server.PublicUrl, request.Visibility, request.Origin,
                     code, settings, RandomNumberGenerator.GetInt32(int.MaxValue)),
                 _limits, _time.GetUtcNow(), this, _logs.CreateLogger<Lobby>());
             _lobbies[id] = lobby;
@@ -120,26 +157,9 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         }
     }
 
-    /// <summary>Reserves a seat in <paramref name="lobby"/>, refusing a player already playing elsewhere.</summary>
-    public ReservationResult Reserve(Lobby lobby, PlayerIdentity identity)
-    {
-        var playerId = identity.PlayerId;
-        var held = _occupancy.GetOrAdd(playerId, lobby.Id);
-        if (held != lobby.Id)
-        {
-            if (LobbyOf(playerId) is not null)
-                return ReservationResult.Fail("already_in_lobby");
-            // The recorded lobby closed or finished: take over the stale entry, unless another reservation
-            // raced us to it.
-            if (!_occupancy.TryUpdate(playerId, lobby.Id, held))
-                return ReservationResult.Fail("already_in_lobby");
-        }
-
-        var result = lobby.Reserve(identity, _time.GetUtcNow());
-        if (result.Reservation is null)
-            _occupancy.TryRemove(new KeyValuePair<string, string>(playerId, lobby.Id));
-        return result;
-    }
+    /// <summary>Reserves a seat in <paramref name="lobby"/>. One seat per player is the fleet's to enforce:
+    /// reserve through <see cref="Fleet.RealtimeFleet.ReserveAsync"/>, which claims it first.</summary>
+    internal ReservationResult Reserve(Lobby lobby, PlayerIdentity identity) => lobby.Reserve(identity, _time.GetUtcNow());
 
     /// <summary>Frees a player's seat at the lobby's next step.</summary>
     public bool Leave(Lobby lobby, string playerId)
@@ -158,16 +178,6 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         return lobby.Admit(reservationToken, connection, _time.GetUtcNow());
     }
 
-    /// <summary>Public matchmade lobbies of <paramref name="gameId"/> that can still take a player.</summary>
-    public IReadOnlyList<BackfillCandidate> BackfillCandidates(string gameId) =>
-        _lobbies.Values
-            .Where(l => l.GameId == gameId && l.Visibility == LobbyVisibility.Public && l.Origin == LobbyOrigin.Matchmaking)
-            .Select(l => l.Snapshot())
-            .Where(s => s.OpenSeats > 0 && (s.State is LobbyState.Open or LobbyState.Countdown
-                || (s.State == LobbyState.Running && _games.Find(s.GameId)!.Rules.AllowJoinInProgress)))
-            .Select(s => new BackfillCandidate(s.LobbyId, s.Region, s.State, s.OpenSeats, s.AverageSkill))
-            .ToList();
-
     public LobbyServer? Server(string serverId) => _balancer.Servers.FirstOrDefault(s => s.Id == serverId);
 
     /// <summary>Steps every lobby once. Only for hosts that run without loops (tests).</summary>
@@ -183,8 +193,7 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
             await server.StopAsync();
     }
 
-    void ILobbyObserver.SeatReleased(Lobby lobby, string playerId) =>
-        _occupancy.TryRemove(new KeyValuePair<string, string>(playerId, lobby.Id));
+    void ILobbyObserver.SeatReleased(Lobby lobby, string playerId) => SeatReleased?.Invoke(lobby, playerId);
 
     void ILobbyObserver.Closed(Lobby lobby)
     {
@@ -197,17 +206,15 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
             server.Forget(lobby);
             server.Release();
         }
+
+        LobbyClosed?.Invoke(lobby);
     }
 
     private string ClaimCode(string lobbyId)
     {
         while (true)
         {
-            var code = string.Create(6, 0, static (span, _) =>
-            {
-                for (var i = 0; i < span.Length; i++)
-                    span[i] = CodeAlphabet[RandomNumberGenerator.GetInt32(CodeAlphabet.Length)];
-            });
+            var code = NewJoinCode();
             if (_codes.TryAdd(code, lobbyId))
                 return code;
         }

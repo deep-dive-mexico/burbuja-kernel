@@ -34,6 +34,29 @@ public sealed class RealtimeOptions
     public GuestOptions Guests { get; set; } = new();
 
     public MatchmakingOptions Matchmaking { get; set; } = new();
+
+    public FleetOptions Fleet { get; set; } = new();
+}
+
+/// <summary>
+/// How this node takes part in a fleet. A fleet is every node sharing one backplane: the in-process default
+/// makes a fleet of one, and a shared backplane (the <c>Realtime.Redis</c> plugin) joins nodes on other machines.
+/// </summary>
+public sealed class FleetOptions
+{
+    /// <summary>How often this node republishes its servers, lobbies and seat claims.</summary>
+    public int HeartbeatMilliseconds { get; set; } = 1000;
+
+    /// <summary>How long a node's records outlive its last heartbeat. A node silent for this long is gone: the
+    /// balancer stops placing there, and its lobbies' players may take seats elsewhere.</summary>
+    public int NodeTtlSeconds { get; set; } = 5;
+
+    /// <summary>How long a seat claim lasts without a refresh. It is long on purpose: a claim whose lobby record
+    /// has expired is taken over at once, so this only bounds a claim the backplane failed to release.</summary>
+    public int SeatTtlSeconds { get; set; } = 120;
+
+    /// <summary>How long a call to another node (create a lobby, reserve seats) waits for its reply.</summary>
+    public int CallTimeoutMilliseconds { get; set; } = 3000;
 }
 
 /// <summary>One in-process lobby server: a capacity unit the balancer places dedicated lobbies on.</summary>
@@ -46,7 +69,8 @@ public sealed class LobbyServerOptions
     public int MaxLobbies { get; set; } = 100;
 
     /// <summary>The base URL players connect to (<c>wss://eu-1.example.com</c>). Null hands out a path
-    /// relative to the API the player called.</summary>
+    /// relative to the API the player called, which is only right when that API is this node, so a distributed
+    /// fleet requires it.</summary>
     public string? PublicUrl { get; set; }
 }
 

@@ -92,6 +92,8 @@ internal sealed class RecordingGame(GameRules? rules = null, string id = "test",
 
     public System.Text.Json.JsonSerializerOptions? SerializerOptions { get; init; }
 
+    public IMatchmakingStrategy? Matchmaking { get; init; }
+
     public IGameSession CreateSession(GameSessionOptions options)
     {
         if (session is not null)
@@ -149,26 +151,48 @@ internal sealed class RecordingSession : GameSession, IDisposable
     public void Dispose() => Disposed = true;
 }
 
-/// <summary>A lobby manager and queue with no loops: the test owns the clock and every step.</summary>
+/// <summary>
+/// One fleet node with no loops: a lobby manager, its fleet and queue over an in-process backplane, where the test
+/// owns the clock and every step. <see cref="Join"/> adds another node of the same fleet (same clock, same
+/// backplane), so a multi-node fleet runs in one process.
+/// </summary>
 internal sealed class Harness
 {
     public Harness(RecordingGame? game = null, RealtimeOptions? options = null, params LobbyServer[] servers)
+        : this(game, options, null, null, "node-1", servers)
     {
+    }
+
+    private Harness(RecordingGame? game, RealtimeOptions? options, FakeTimeProvider? time, LocalBackplane? backplane, string nodeId,
+        LobbyServer[] servers)
+    {
+        Time = time ?? new FakeTimeProvider(new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.Zero));
+        Backplane = backplane ?? new LocalBackplane(Time);
         Game = game ?? new RecordingGame();
         Options = options ?? new RealtimeOptions { Enabled = true };
         if (servers.Length == 0)
-            servers = [Server("s1", maxLobbies: 4)];
+            servers = [Server(nodeId == "node-1" ? "s1" : nodeId + "-s1", maxLobbies: 4)];
+        Node = RealtimeNode.Create(nodeId);
         Manager = new LobbyManager(new RealtimeGames([Game]), new LobbyBalancer(servers, new LeastLoadedPlacement(), true),
-            Options, Time, NullLoggerFactory.Instance, runLoops: false);
-        Queue = new MatchmakingQueue(Manager, Microsoft.Extensions.Options.Options.Create(Options), Time,
-            NullLogger<MatchmakingQueue>.Instance);
+            Options, nodeId, Time, NullLoggerFactory.Instance, runLoops: false);
+        Fleet = new RealtimeFleet(Manager, Backplane, Node, Options, Time, NullLogger.Instance);
+        Queue = new MatchmakingQueue(Fleet, Options, Node.InstanceId, Time, NullLogger.Instance);
+        Sync(Fleet.StartAsync(TestContext.Current.CancellationToken));
+        Sync(Queue.StartAsync(TestContext.Current.CancellationToken));
     }
 
-    public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.Zero));
+    public FakeTimeProvider Time { get; }
+    public LocalBackplane Backplane { get; }
+    public RealtimeNode Node { get; }
     public RecordingGame Game { get; }
     public RealtimeOptions Options { get; }
     public LobbyManager Manager { get; }
+    public RealtimeFleet Fleet { get; }
     public MatchmakingQueue Queue { get; }
+
+    /// <summary>Another node of this fleet, with its own game instance and servers.</summary>
+    public Harness Join(string nodeId, RecordingGame? game = null, RealtimeOptions? options = null, params LobbyServer[] servers) =>
+        new(game ?? new RecordingGame(Game.Rules, Game.Id), options ?? Options, Time, Backplane, nodeId, servers);
 
     public LobbyServer Server(string id, int maxLobbies, string region = "local") =>
         new(id, region, maxLobbies, null, Time, NullLogger.Instance);
@@ -176,15 +200,21 @@ internal sealed class Harness
     public static PlayerIdentity Player(string id, int? skill = null) => new(id, id.ToUpperInvariant(),
         skill is null ? null : new Dictionary<string, string> { [PlayerAttributes.Skill] = skill.Value.ToString() });
 
+    /// <summary>A lobby placed by the fleet (it may land on another node), as this node's object when it is here.</summary>
     public Lobby CreateLobby(LobbyVisibility visibility = LobbyVisibility.Public, LobbyOrigin origin = LobbyOrigin.Hosted)
     {
-        var created = Manager.Create(new CreateLobbyRequest(Game.Id, visibility, origin));
-        return created.Lobby ?? throw new InvalidOperationException(created.Error);
+        var created = Sync(Fleet.CreateAsync(new CreateLobbyRequest(Game.Id, visibility, origin), [], TestContext.Current.CancellationToken));
+        return Manager.Find(created.Lobby?.LobbyId) ?? throw new InvalidOperationException(created.Error ?? "placed on another node");
     }
+
+    public ReservationResult Reserve(Lobby lobby, string playerId) => Reserve(lobby.Id, playerId);
+
+    public ReservationResult Reserve(string lobbyId, string playerId) =>
+        Sync(Fleet.ReserveAsync(lobbyId, Player(playerId), TestContext.Current.CancellationToken));
 
     public FakeConnection Connect(Lobby lobby, string playerId)
     {
-        var reservation = Manager.Reserve(lobby, Player(playerId)).Reservation
+        var reservation = Reserve(lobby, playerId).Reservation
             ?? throw new InvalidOperationException("no reservation");
         return Admit(reservation);
     }
@@ -210,4 +240,17 @@ internal sealed class Harness
     }
 
     public void Step() => Manager.StepAll(Time.GetUtcNow());
+
+    /// <summary>Completes a call on the in-process backplane, which answers synchronously.</summary>
+    public static T Sync<T>(Task<T> task)
+    {
+        Assert.True(task.IsCompleted, "an in-process fleet call did not complete synchronously");
+        return task.GetAwaiter().GetResult();
+    }
+
+    public static void Sync(Task task)
+    {
+        Assert.True(task.IsCompleted, "an in-process fleet call did not complete synchronously");
+        task.GetAwaiter().GetResult();
+    }
 }

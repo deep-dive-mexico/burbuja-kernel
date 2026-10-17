@@ -18,18 +18,22 @@ public static class RealtimeServiceCollectionExtensions
     /// <summary>
     /// Registers the realtime module. Inert until <c>Realtime:Enabled</c> is true; games come from every
     /// <see cref="IRealtimeGame"/> service, typically contributed by plugins. A host may add its own
-    /// <see cref="IPlayerAuthenticator"/> or <see cref="ILobbyPlacementStrategy"/> services alongside.
+    /// <see cref="IPlayerAuthenticator"/> or <see cref="ILobbyPlacementStrategy"/> services alongside, and a
+    /// plugin may replace the in-process <see cref="IRealtimeBackplane"/> with a shared one to form a fleet.
     /// </summary>
     public static IServiceCollection AddBurbujaRealtime(this IServiceCollection services)
     {
         services.AddOptions<RealtimeOptions>()
             .Configure<IConfiguration>((o, cfg) => cfg.GetSection(RealtimeOptions.Section).Bind(o));
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton(sp => RealtimeNode.Create(NodeId(sp)));
+        services.TryAddSingleton<IRealtimeBackplane>(sp => new LocalBackplane(sp.GetRequiredService<TimeProvider>()));
         services.TryAddSingleton<RealtimeGames>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ILobbyPlacementStrategy, LeastLoadedPlacement>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ILobbyPlacementStrategy, PackedPlacement>());
         services.TryAddSingleton(CreateBalancer);
         services.TryAddSingleton<LobbyManager>();
+        services.TryAddSingleton<RealtimeFleet>();
         services.TryAddSingleton<IRealtimeGateway>(sp => sp.GetRequiredService<LobbyManager>());
         services.TryAddSingleton<MatchmakingQueue>();
         services.TryAddSingleton<GuestTokens>();
@@ -88,47 +92,67 @@ public static class RealtimeServiceCollectionExtensions
         var node = sp.GetService<IOptions<KernelOptions>>()?.Value.NodeId;
         return string.IsNullOrWhiteSpace(node) ? "local" : node;
     }
+
+    private static string NodeId(IServiceProvider sp)
+    {
+        var node = sp.GetService<IOptions<KernelOptions>>()?.Value.NodeId;
+        return string.IsNullOrWhiteSpace(node) ? KernelOptions.FallbackNodeId() : node;
+    }
 }
 
-/// <summary>Boot validation, the matchmaking cycle, and an orderly end of every lobby on shutdown.</summary>
+/// <summary>Boot validation, joining the fleet, the heartbeat and matchmaking loops, and an orderly end of
+/// every lobby on shutdown.</summary>
 internal sealed class RealtimeHostedService(
     IServiceProvider services,
     IOptions<RealtimeOptions> options,
     TimeProvider time,
     ILogger<RealtimeHostedService> log) : BackgroundService
 {
-    public override Task StartAsync(CancellationToken cancellationToken)
-    {
-        if (!options.Value.Enabled)
-            return Task.CompletedTask;
-
-        // Resolving these validates every game and the fleet; a mistake stops the host here, not at the
-        // first player's request.
-        var manager = services.GetRequiredService<LobbyManager>();
-        log.LogInformation("Realtime enabled: games [{Games}], servers [{Servers}], placement {Placement}.",
-            string.Join(", ", manager.Games.All.Select(g => g.Id)),
-            string.Join(", ", manager.Balancer.Servers.Select(s => $"{s.Id}@{s.Region}x{s.MaxLobbies}")),
-            manager.Balancer.Strategy.Name);
-        return base.StartAsync(cancellationToken);
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public override async Task StartAsync(CancellationToken cancellationToken)
     {
         if (!options.Value.Enabled)
             return;
+
+        // Resolving these validates every game and the fleet; a mistake stops the host here, not at the
+        // first player's request.
+        var fleet = services.GetRequiredService<RealtimeFleet>();
+        await fleet.StartAsync(cancellationToken);
+        await services.GetRequiredService<MatchmakingQueue>().StartAsync(cancellationToken);
+        var manager = fleet.Local;
+        log.LogInformation("Realtime enabled on node {NodeId}: games [{Games}], servers [{Servers}], placement {Placement}, backplane {Backplane}.",
+            fleet.NodeId,
+            string.Join(", ", manager.Games.All.Select(g => g.Id)),
+            string.Join(", ", manager.Balancer.Servers.Select(s => $"{s.Id}@{s.Region}x{s.MaxLobbies}")),
+            manager.Balancer.Strategy.Name,
+            fleet.Backplane.GetType().Name);
+        await base.StartAsync(cancellationToken);
+    }
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (!options.Value.Enabled)
+            return Task.CompletedTask;
+        var fleet = services.GetRequiredService<RealtimeFleet>();
         var queue = services.GetRequiredService<MatchmakingQueue>();
-        using var timer = new PeriodicTimer(queue.Interval, time);
+        return Task.WhenAll(
+            RepeatAsync(fleet.HeartbeatInterval, fleet.HeartbeatAsync, "Fleet heartbeat", stoppingToken),
+            RepeatAsync(queue.Interval, ct => queue.RunCycleAsync(time.GetUtcNow(), ct), "Matchmaking cycle", stoppingToken));
+    }
+
+    private async Task RepeatAsync(TimeSpan interval, Func<CancellationToken, Task> work, string name, CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(interval, time);
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
                 try
                 {
-                    queue.RunCycle(time.GetUtcNow());
+                    await work(stoppingToken);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    log.LogError(ex, "Matchmaking cycle failed.");
+                    log.LogError(ex, "{Work} failed.", name);
                 }
             }
         }
@@ -140,7 +164,11 @@ internal sealed class RealtimeHostedService(
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
-        if (options.Value.Enabled)
-            await services.GetRequiredService<LobbyManager>().ShutdownAsync();
+        if (!options.Value.Enabled)
+            return;
+        await services.GetRequiredService<MatchmakingQueue>().DisposeAsync();
+        var fleet = services.GetRequiredService<RealtimeFleet>();
+        await fleet.Local.ShutdownAsync();
+        await fleet.DisposeAsync();
     }
 }

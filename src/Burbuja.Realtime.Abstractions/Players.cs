@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Burbuja.Realtime.Abstractions;
 
 /// <summary>Who a caller is, as an <see cref="IPlayerAuthenticator"/> established it.</summary>
@@ -10,6 +12,7 @@ public sealed record PlayerIdentity(
     IReadOnlyDictionary<string, string>? Attributes = null,
     bool IsGuest = false)
 {
+    [JsonIgnore]
     public IReadOnlyDictionary<string, string> AttributesOrEmpty =>
         Attributes ?? (IReadOnlyDictionary<string, string>)new Dictionary<string, string>();
 }
