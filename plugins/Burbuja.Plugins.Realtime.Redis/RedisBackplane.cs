@@ -174,7 +174,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [node.InstanceId, node.Payload, (long)ttl.TotalMilliseconds, node.NodeId]);
             return (long)result == 1L;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to publish node.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to publish node.", ex); }
     }
 
     /// <inheritdoc/>
@@ -186,7 +186,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [K("node:" + nodeId), K("nodes")],
                 [instanceId, nodeId]);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to remove node.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to remove node.", ex); }
     }
 
     /// <inheritdoc/>
@@ -218,7 +218,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
 
             return result.OrderBy(n => n.NodeId, StringComparer.Ordinal).ToList();
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to list nodes.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to list nodes.", ex); }
     }
 
     // ─── Lobbies ─────────────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             batch.Execute();
             await Task.WhenAll(tasks);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to publish lobbies.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to publish lobbies.", ex); }
     }
 
     /// <inheritdoc/>
@@ -267,7 +267,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [K("lobby:" + lobby.LobbyId), K("listed:" + lobby.GameId), K("code:" + lobby.JoinCode)],
                 [lobby.LobbyId, lobby.JoinCode ?? "", lobby.GameId]);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to remove lobby.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to remove lobby.", ex); }
     }
 
     /// <inheritdoc/>
@@ -278,7 +278,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             var fields = await Db().HashGetAllAsync(K("lobby:" + lobbyId));
             return fields.Length == 0 ? null : LobbyFromHash(lobbyId, fields);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to find lobby.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to find lobby.", ex); }
     }
 
     /// <inheritdoc/>
@@ -311,7 +311,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
 
             return result;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to list lobbies.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to list lobbies.", ex); }
     }
 
     /// <inheritdoc/>
@@ -324,7 +324,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [lobbyId, (long)ttl.TotalMilliseconds]);
             return (long)result == 1L;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to claim join code.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to claim join code.", ex); }
     }
 
     /// <inheritdoc/>
@@ -335,7 +335,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             var val = await Db().StringGetAsync(K("code:" + code));
             return val.IsNullOrEmpty ? null : (string?)val;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to find join code.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to find join code.", ex); }
     }
 
     // ─── Seats ───────────────────────────────────────────────────────────────────
@@ -351,7 +351,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             var arr = (RedisResult[])result!;
             return (string)arr[1]!;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to claim seat.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to claim seat.", ex); }
     }
 
     /// <inheritdoc/>
@@ -365,7 +365,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [fromLobbyId, toLobbyId, (long)ttl.TotalMilliseconds]);
             return (long)result == 1L;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to transfer seat.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to transfer seat.", ex); }
     }
 
     /// <inheritdoc/>
@@ -377,7 +377,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [K("seat:" + playerId)],
                 [lobbyId]);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to release seat.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to release seat.", ex); }
     }
 
     /// <inheritdoc/>
@@ -388,7 +388,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             var val = await Db().StringGetAsync(K("seat:" + playerId));
             return val.IsNullOrEmpty ? null : (string?)val;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to get seat.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to get seat.", ex); }
     }
 
     // ─── Matchmaking tickets ─────────────────────────────────────────────────────
@@ -416,7 +416,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
 
             throw new RealtimeBackplaneException($"Player '{ticket.PlayerId}' kept racing for a queue slot.");
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to add ticket.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to add ticket.", ex); }
     }
 
     /// <inheritdoc/>
@@ -427,7 +427,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             var fields = await Db().HashGetAllAsync(K("ticket:" + ticketId));
             return fields.Length == 0 ? null : TicketFromHash(ticketId, fields);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to get ticket.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to get ticket.", ex); }
     }
 
     /// <inheritdoc/>
@@ -463,7 +463,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 .ThenBy(t => t.TicketId, StringComparer.Ordinal)
                 .ToList();
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to list queued tickets.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to list queued tickets.", ex); }
     }
 
     /// <inheritdoc/>
@@ -494,7 +494,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
 
             return true;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to update ticket.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to update ticket.", ex); }
     }
 
     /// <inheritdoc/>
@@ -513,7 +513,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             return new Disposer(async () => await sub.UnsubscribeAsync(
                 RedisChannel.Literal(K("tickets")), OnMessage));
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to subscribe to tickets.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to subscribe to tickets.", ex); }
     }
 
     // ─── Coordination (leases) ───────────────────────────────────────────────────
@@ -528,7 +528,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [owner, (long)ttl.TotalMilliseconds]);
             return (long)result == 1L;
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to hold lease.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to hold lease.", ex); }
     }
 
     /// <inheritdoc/>
@@ -540,7 +540,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 [K("lease:" + name)],
                 [owner]);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to release lease.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to release lease.", ex); }
     }
 
     // ─── RPC (calls between nodes) ───────────────────────────────────────────────
@@ -563,7 +563,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         {
             await sub.SubscribeAsync(channel, OnMessage);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException($"Failed to serve node '{nodeId}'.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException($"Failed to serve node '{nodeId}'.", ex); }
 
         return new Disposer(async () =>
         {
@@ -616,15 +616,14 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         try
         {
             var envelope = JsonSerializer.Serialize(new RpcEnvelope(correlationId, _replyChannel.ToString(), request));
-            long receivers;
+            // PUBLISH's receiver count covers only the shard that took it, so on a cluster zero proves nothing;
+            // a node that is gone shows up as the timeout below.
             try
             {
-                receivers = await Sub().PublishAsync(RedisChannel.Literal(K("rpc:" + nodeId)), envelope);
+                await Sub().PublishAsync(RedisChannel.Literal(K("rpc:" + nodeId)), envelope);
             }
-            catch (RedisException ex) { throw new RealtimeBackplaneException($"Failed to call node '{nodeId}'.", ex); }
+            catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException($"Failed to call node '{nodeId}'.", ex); }
 
-            if (receivers == 0)
-                throw new TimeoutException($"No node '{nodeId}' answers calls.");
             try
             {
                 return await pending.Task.WaitAsync(timeout, ct);
@@ -672,7 +671,7 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
             });
             Volatile.Write(ref _listening, true);
         }
-        catch (RedisException ex) { throw new RealtimeBackplaneException("Failed to listen for call replies.", ex); }
+        catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to listen for call replies.", ex); }
         finally
         {
             _replySubscription.Release();
@@ -736,6 +735,10 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         return new BackplaneTicket(ticketId, playerId, gameId, queued,
             DateTimeOffset.FromUnixTimeMilliseconds(eatMs), payload);
     }
+
+    /// <summary>StackExchange.Redis reports a timeout as <see cref="RedisTimeoutException"/>, a
+    /// <see cref="TimeoutException"/> rather than a <see cref="RedisException"/>; both mean the backplane failed.</summary>
+    private static bool IsRedisFailure(Exception ex) => ex is RedisException or RedisTimeoutException;
 
     private sealed class Disposer(Func<ValueTask> dispose) : IAsyncDisposable
     {

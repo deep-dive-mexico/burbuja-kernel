@@ -200,20 +200,26 @@ regions and strategy as above), then asks the owner, which alone claims its capa
 since its last heartbeat answers `no_capacity` and the next is tried
 (`A_server_that_filled_since_its_heartbeat_refuses_and_placement_moves_on`). A node publishes its record
 again whenever it places a lobby, so a burst of placements sees servers fill. A node that does not answer is
-told to close whatever it may have created, using the lobby id the caller chose beforehand, and the
-placement fails with `node_unavailable` for this cycle.
+told to close whatever it may have created, using the lobby id the caller chose beforehand. A close that
+overtakes the slow create is remembered, so the lobby closes itself once it exists. The placement fails
+with `node_unavailable` for this cycle.
 
 **One seat per player, fleet-wide.** A reservation claims the player's seat on the backplane, reserves
 locally, then confirms the claim still names its lobby. So two nodes seating the same player at once leave
 exactly one seat (`Racing_reservations_on_two_nodes_leave_each_player_exactly_one_seat`). A claim naming a
 lobby whose record is gone (closed, or its node died) or that no longer seats the player is taken over. A
-heartbeat refreshes a claim and never revives one released meanwhile.
+heartbeat refreshes a claim and never revives one released meanwhile. If the claim's node does not answer
+the "do you seat this player?" call, the seat is neither taken over nor reported as held. The reservation
+answers `503 seat_unconfirmed`, and a matchmaking ticket stays queued
+(`A_node_that_does_not_answer_neither_loses_nor_turns_away_its_players`).
 
 **Matchmaking.** Tickets live on the backplane, so a player may queue through any node and meets players who
 queued through others (`Players_who_queue_through_different_nodes_meet_in_one_lobby`). Every node runs the
 cycle. Only the holder of a game's lease matches that game, and a node competes only for the games it
 registers. When the holder stops renewing, another node takes over within the lease
-(`When_the_matchmaker_stops_renewing_another_node_takes_over`). A ticket changes only while queued, so a
+(`When_the_matchmaker_stops_renewing_another_node_takes_over`). The lease outlasts two calls that time out
+(`2 × Fleet:CallTimeoutMilliseconds` plus the interval, at least 2 s). The holder renews it before every
+decision and stops matching once it is lost, so a slow cycle never runs alongside its successor. A ticket changes only while queued, so a
 cancel on one node and a match on another have one winner. A match that loses to a cancel gives the seat
 back (`A_cancel_that_beats_the_match_gets_the_seat_back`). A long-poll on any node answers as soon as the
 ticket settles anywhere, and re-reads every second in case a notification is lost.
@@ -314,7 +320,7 @@ casual browser games, WebTransport or UDP for lower latency) is an adapter, not 
 
 Errors are `{"error":{"code","message"}}` with stable codes: `unknown_game` 404, `no_capacity` 503,
 `lobby_full`/`match_in_progress`/`already_in_lobby` 409, `lobby_closed` 410, `unauthenticated` 401,
-`operator_required` 403, `node_unavailable` and `fleet_unavailable` 503.
+`operator_required` 403, `node_unavailable`, `seat_unconfirmed` and `fleet_unavailable` 503.
 
 ## Verification
 

@@ -75,8 +75,8 @@ Redis exceptions (`RedisException`, `RedisTimeoutException`, `RedisConnectionExc
 wrapped in `RealtimeBackplaneException`; the HTTP API answers `503 fleet_unavailable`, and lobbies
 already running keep running. Each backplane instance subscribes one reply channel once and matches
 replies by correlation id; requests are handed to the thread pool rather than run on the subscriber
-callback. A PUBLISH to a node with no active server returns zero subscribers, which throws
-`TimeoutException` at once. Pub/Sub delivery is at most once: a lost reply is a timeout, and a lost
+callback. A call to a node that is gone fails with `TimeoutException` after the call timeout; PUBLISH's receiver count
+is not used, because on a cluster it covers only one shard. Pub/Sub delivery is at most once: a lost reply is a timeout, and a lost
 ticket notification is covered by the waiter's own re-read.
 
 ## Compatibility notes

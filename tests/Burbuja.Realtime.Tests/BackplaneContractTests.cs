@@ -107,6 +107,7 @@ public abstract class BackplaneContractTests
 
         await bp.ReleaseSeatAsync("p", "l2", Ct);
         Assert.Null(await bp.SeatOfAsync("p", Ct));
+        Assert.False(await bp.TransferSeatAsync("p", "l2", "l3", Long, Ct));
         Assert.Equal("l3", await bp.ClaimSeatAsync("p", "l3", Long, Ct));
     }
 

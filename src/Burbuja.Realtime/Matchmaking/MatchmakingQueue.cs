@@ -43,6 +43,7 @@ public sealed class MatchmakingQueue : IAsyncDisposable
     private readonly RealtimeFleet _fleet;
     private readonly IRealtimeBackplane _backplane;
     private readonly MatchmakingOptions _options;
+    private readonly TimeSpan _callTimeout;
     private readonly IMatchmakingStrategy _default;
     private readonly string _owner;
     private readonly TimeProvider _time;
@@ -62,6 +63,7 @@ public sealed class MatchmakingQueue : IAsyncDisposable
         _fleet = fleet;
         _backplane = fleet.Backplane;
         _options = options.Matchmaking;
+        _callTimeout = TimeSpan.FromMilliseconds(Math.Max(100, options.Fleet.CallTimeoutMilliseconds));
         _default = new SkillWindowMatchmaker(_options);
         _owner = owner;
         _time = time;
@@ -70,8 +72,10 @@ public sealed class MatchmakingQueue : IAsyncDisposable
 
     public TimeSpan Interval => TimeSpan.FromMilliseconds(Math.Clamp(_options.IntervalMilliseconds, 20, 5000));
 
-    /// <summary>A matchmaker that stops renewing is replaced after this long.</summary>
-    private TimeSpan LeaseTtl => TimeSpan.FromTicks(Math.Clamp(Interval.Ticks * 8, TimeSpan.FromSeconds(2).Ticks, TimeSpan.FromSeconds(30).Ticks));
+    /// <summary>A matchmaker that stops renewing is replaced after this long. It outlasts a cycle whose
+    /// placement waits out a call to a slow node, and the lease is renewed before every decision too.</summary>
+    private TimeSpan LeaseTtl => TimeSpan.FromTicks(Math.Clamp(
+        Math.Max(Interval.Ticks * 8, (_callTimeout * 2 + Interval).Ticks), TimeSpan.FromSeconds(2).Ticks, TimeSpan.FromSeconds(120).Ticks));
 
     private TimeSpan Timeout => TimeSpan.FromSeconds(Math.Max(1, _options.TicketTimeoutSeconds));
 
@@ -141,8 +145,9 @@ public sealed class MatchmakingQueue : IAsyncDisposable
             var remaining = deadline - _time.GetUtcNow();
             if (ticket is null || ticket.State != TicketState.Queued || remaining <= TimeSpan.Zero)
             {
-                if (ticket is null)
-                    _waiters.TryRemove(ticketId, out _);
+                // A waiter left behind by a ticket that never settles would never be removed. Another poll of the
+                // same ticket loses at most one wake and re-reads within a second.
+                _waiters.TryRemove(new KeyValuePair<string, TaskCompletionSource>(ticketId, waiter));
                 return ticket;
             }
 
@@ -222,6 +227,13 @@ public sealed class MatchmakingQueue : IAsyncDisposable
             {
                 _log.LogWarning("Matchmaking for {GameId} returned an invalid decision; skipped.", game.Id);
                 continue;
+            }
+
+            // A slow placement can outlast the lease; stop rather than match alongside a new holder.
+            if (!await _backplane.HoldLeaseAsync(LeasePrefix + game.Id, _owner, LeaseTtl, ct))
+            {
+                _leading.TryRemove(game.Id, out _);
+                return;
             }
 
             await ApplyAsync(game, decision, decision.TicketIds.Select(id => queued[id]).ToList(), now, ct);

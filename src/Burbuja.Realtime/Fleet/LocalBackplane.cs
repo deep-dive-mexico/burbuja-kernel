@@ -133,7 +133,7 @@ public sealed class LocalBackplane(TimeProvider time) : IRealtimeBackplane
     {
         lock (_gate)
         {
-            if (Live(_seats, playerId) is { } holder && holder != fromLobbyId)
+            if (Live(_seats, playerId) != fromLobbyId)
                 return ValueTask.FromResult(false);
             _seats[playerId] = new(toLobbyId, Until(ttl));
             return ValueTask.FromResult(true);

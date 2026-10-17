@@ -78,6 +78,10 @@ public static class RealtimeEndpoints
         {
             return Error(StatusCodes.Status503ServiceUnavailable, "fleet_unavailable", "The lobby fleet cannot be reached right now.");
         }
+        catch (TimeoutException)
+        {
+            return Failure("node_unavailable");
+        }
     };
 
     // ─── players ─────────────────────────────────────────────────────────────────────────────
@@ -475,6 +479,7 @@ public static class RealtimeEndpoints
         "match_in_progress" => Error(StatusCodes.Status409Conflict, code, "The match started and this game does not take players mid-match."),
         "lobby_closed" => Error(StatusCodes.Status410Gone, code, "The lobby's match is over."),
         "node_unavailable" => Error(StatusCodes.Status503ServiceUnavailable, code, "The node hosting that lobby did not answer; try again."),
+        "seat_unconfirmed" => Error(StatusCodes.Status503ServiceUnavailable, code, "The node holding this player's seat did not answer; try again."),
         _ => Error(StatusCodes.Status500InternalServerError, code, "The lobby could not be created."),
     };
 

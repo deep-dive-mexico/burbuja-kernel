@@ -57,7 +57,8 @@ public sealed class RealtimeFleet : IAsyncDisposable
     private readonly ILogger _log;
     private readonly ConcurrentDictionary<Task, byte> _pending = new();
     private readonly DateTimeOffset _startedAt;
-    private (IReadOnlyList<FleetNodeInfo> Nodes, DateTimeOffset ReadAt)? _nodes;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _abandoned = new(StringComparer.Ordinal);
+    private NodeView? _nodes;
     private IAsyncDisposable? _serving;
 
     public RealtimeFleet(
@@ -125,6 +126,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
         if (errors.Count > 0)
             throw new InvalidOperationException("Realtime fleet configuration is invalid: " + string.Join("; ", errors));
 
+        // Serving only after the record proves this id is ours, so a duplicate never takes a live node's calls.
         _serving = await _backplane.ServeAsync(NodeId, HandleAsync, ct);
         _nodes = null;
     }
@@ -244,7 +246,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     {
         if (await _backplane.SeatOfAsync(playerId, ct) is not { } lobbyId)
             return null;
-        return await HoldsAsync(lobbyId, playerId, ct) ? lobbyId : null;
+        return await HoldsAsync(lobbyId, playerId, ct) is false ? null : lobbyId;
     }
 
     /// <summary>Every lobby on every live node, by node: what operators see. A node that does not answer maps to
@@ -417,6 +419,13 @@ public sealed class RealtimeFleet : IAsyncDisposable
         }
 
         var created = _manager.Create(request with { LobbyId = lobbyId }, code);
+        if (created.Lobby is { } abandoned && _abandoned.TryRemove(lobbyId, out _))
+        {
+            // The caller gave up and asked us to close this before it existed.
+            abandoned.RequestClose("placement_abandoned");
+            return FleetCreation.Fail("node_unavailable");
+        }
+
         if (created.Lobby is not { } lobby)
         {
             if (code is not null)
@@ -441,11 +450,22 @@ public sealed class RealtimeFleet : IAsyncDisposable
     private async Task<ReservationResult> ReserveHereAsync(Lobby lobby, PlayerIdentity identity, CancellationToken ct)
     {
         var playerId = identity.PlayerId;
-        var holder = await _backplane.ClaimSeatAsync(playerId, lobby.Id, SeatTtl, ct);
-        if (holder != lobby.Id
-            && (await HoldsAsync(holder, playerId, ct)
-                || !await _backplane.TransferSeatAsync(playerId, holder, lobby.Id, SeatTtl, ct)))
-            return ReservationResult.Fail("already_in_lobby");
+        // A stale claim is taken over; one retry covers a release landing between the read and the transfer.
+        for (var attempt = 0; ; attempt++)
+        {
+            var holder = await _backplane.ClaimSeatAsync(playerId, lobby.Id, SeatTtl, ct);
+            if (holder == lobby.Id)
+                break;
+            var holds = await HoldsAsync(holder, playerId, ct);
+            if (holds is null)
+                return ReservationResult.Fail("seat_unconfirmed");
+            if (holds.Value)
+                return ReservationResult.Fail("already_in_lobby");
+            if (await _backplane.TransferSeatAsync(playerId, holder, lobby.Id, SeatTtl, ct))
+                break;
+            if (attempt > 0)
+                return ReservationResult.Fail("already_in_lobby");
+        }
 
         var seated = lobby.HasSeat(playerId);
         var result = _manager.Reserve(lobby, identity);
@@ -467,9 +487,9 @@ public sealed class RealtimeFleet : IAsyncDisposable
     }
 
     /// <summary>Whether a lobby still being played seats the player: asked of this node directly, of another
-    /// node by a call. A lobby with no record is gone. A node that does not answer is assumed to hold the seat,
-    /// so a slow node never loses a player to a double seat.</summary>
-    private async Task<bool> HoldsAsync(string lobbyId, string playerId, CancellationToken ct)
+    /// node by a call. A lobby with no record is gone. Null when its node does not answer: the seat is neither
+    /// taken over (no double seat) nor reported as held (the player is not turned away for a slow node).</summary>
+    private async Task<bool?> HoldsAsync(string lobbyId, string playerId, CancellationToken ct)
     {
         if (_manager.Find(lobbyId) is { } lobby)
             return lobby.State < LobbyState.Ended && lobby.HasSeat(playerId);
@@ -481,7 +501,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
         }
         catch (Exception ex) when (ex is TimeoutException or RealtimeBackplaneException)
         {
-            return true;
+            return null;
         }
     }
 
@@ -524,7 +544,12 @@ public sealed class RealtimeFleet : IAsyncDisposable
         }
 
         if (_manager.Find(call.LobbyId) is not { } lobby)
+        {
+            // A close can overtake the slow create it abandons; remember it so the create closes itself.
+            if (call.Op == "close" && call.LobbyId is { } abandonedId)
+                Abandon(abandonedId);
             return new FleetReply { Error = "lobby_not_found" };
+        }
         switch (call.Op)
         {
             case "reserve":
@@ -548,10 +573,20 @@ public sealed class RealtimeFleet : IAsyncDisposable
 
     // ─── plumbing ────────────────────────────────────────────────────────────────────────────
 
+    private void Abandon(string lobbyId)
+    {
+        var now = _time.GetUtcNow();
+        foreach (var (id, at) in _abandoned)
+            if (now - at > CallTimeout * 4)
+                _abandoned.TryRemove(id, out _);
+        _abandoned[lobbyId] = now;
+    }
+
     private async Task<bool> RemoteDoneAsync(string lobbyId, FleetCall call, CancellationToken ct)
     {
         if (await _backplane.FindLobbyAsync(lobbyId, ct) is not { } record || record.NodeId == NodeId)
             return false;
+        // A timeout propagates: the HTTP API answers node_unavailable rather than claiming the lobby is unknown.
         return (await CallAsync(record.NodeId, call, ct)).Done;
     }
 
@@ -565,10 +600,10 @@ public sealed class RealtimeFleet : IAsyncDisposable
     {
         // Placement reads the fleet on every decision; a fraction of a heartbeat is fresh enough.
         var maxAge = TimeSpan.FromTicks(Math.Min(HeartbeatInterval.Ticks, TimeSpan.FromMilliseconds(500).Ticks));
-        if (_nodes is { } cached && _time.GetUtcNow() - cached.ReadAt < maxAge)
+        if (Volatile.Read(ref _nodes) is { } cached && _time.GetUtcNow() - cached.ReadAt < maxAge)
             return cached.Nodes;
         var nodes = await ReadNodesAsync(ct);
-        _nodes = (nodes, _time.GetUtcNow());
+        Volatile.Write(ref _nodes, new NodeView(nodes, _time.GetUtcNow()));
         return nodes;
     }
 
@@ -664,6 +699,9 @@ public sealed class RealtimeFleet : IAsyncDisposable
         return options;
     }
 }
+
+/// <summary>The fleet as last read, shared by request threads and swapped whole.</summary>
+internal sealed record NodeView(IReadOnlyList<FleetNodeInfo> Nodes, DateTimeOffset ReadAt);
 
 /// <summary>What a node publishes about itself on every heartbeat.</summary>
 internal sealed record FleetNodeInfo(

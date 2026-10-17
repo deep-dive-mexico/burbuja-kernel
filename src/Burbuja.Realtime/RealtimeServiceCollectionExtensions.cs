@@ -166,9 +166,23 @@ internal sealed class RealtimeHostedService(
         await base.StopAsync(cancellationToken);
         if (!options.Value.Enabled)
             return;
-        await services.GetRequiredService<MatchmakingQueue>().DisposeAsync();
+        // Each step runs whatever the one before it threw: players must get their close frames and the node must
+        // leave the fleet even when the backplane is failing.
         var fleet = services.GetRequiredService<RealtimeFleet>();
-        await fleet.Local.ShutdownAsync();
-        await fleet.DisposeAsync();
+        await StepAsync("Stopping matchmaking", () => services.GetRequiredService<MatchmakingQueue>().DisposeAsync().AsTask());
+        await StepAsync("Ending this node's lobbies", fleet.Local.ShutdownAsync);
+        await StepAsync("Leaving the fleet", () => fleet.DisposeAsync().AsTask());
+    }
+
+    private async Task StepAsync(string name, Func<Task> step)
+    {
+        try
+        {
+            await step();
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "{Step} failed during shutdown.", name);
+        }
     }
 }

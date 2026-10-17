@@ -157,6 +157,10 @@ public sealed class FleetTests
         await b.Queue.RunCycleAsync(a.Time.GetUtcNow(), Ct);
         Assert.Equal(TicketState.Queued, (await b.Queue.GetAsync(q.TicketId, Ct))!.State);
 
+        // The lease outlasts two slow calls (2 × 3 s + the interval) before another node may take it.
+        a.Time.Advance(TimeSpan.FromSeconds(4));
+        await b.Queue.RunCycleAsync(a.Time.GetUtcNow(), Ct);
+        Assert.Equal(TicketState.Queued, (await b.Queue.GetAsync(q.TicketId, Ct))!.State);
         a.Time.Advance(TimeSpan.FromSeconds(3));
         await b.Queue.RunCycleAsync(a.Time.GetUtcNow(), Ct);
         Assert.Equal(TicketState.Matched, (await b.Queue.GetAsync(q.TicketId, Ct))!.State);
@@ -204,6 +208,25 @@ public sealed class FleetTests
         Assert.Equal(there.LobbyId, await a.Backplane.SeatOfAsync("p", Ct));
         Assert.NotNull(a.Reserve(here, "p").Reservation);
         Assert.Equal(here.Id, await a.Backplane.SeatOfAsync("p", Ct));
+    }
+
+    [Fact]
+    public async Task A_node_that_does_not_answer_neither_loses_nor_turns_away_its_players()
+    {
+        var (a, b) = TwoNodes(lobbiesEach: 2);
+        var there = (await b.Fleet.CreateAsync(new CreateLobbyRequest("test", LobbyVisibility.Public, LobbyOrigin.Hosted, ServerId: "b1"), [], Ct)).Lobby!;
+        Assert.NotNull(b.Reserve(there.LobbyId, "p").Reservation);
+        var here = a.CreateLobby();
+
+        // Node 2 stops answering while its records are still alive: nobody can tell whether it seats p.
+        await b.Fleet.DisposeAsync();
+        await b.Backplane.PublishLobbiesAsync([new BackplaneLobby(there.LobbyId, "node-2", "test", true, null, ["p"], "{}")],
+            TimeSpan.FromSeconds(5), TimeSpan.FromMinutes(2), Ct);
+        Assert.Equal("seat_unconfirmed", a.Reserve(here, "p").Error);
+        Assert.Equal(there.LobbyId, await a.Fleet.LobbyOfAsync("p", Ct));
+
+        a.Time.Advance(TimeSpan.FromSeconds(6));
+        Assert.NotNull(a.Reserve(here, "p").Reservation);
     }
 
     [Fact]
