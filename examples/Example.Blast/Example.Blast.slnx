@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Example.Blast.Host/Example.Blast.Host.csproj" />
+  <Project Path="Example.Blast.Plugin/Example.Blast.Plugin.csproj" />
+</Solution>

@@ -1,6 +1,8 @@
 <Solution>
   <Project Path="examples/Example.Arena/Example.Arena.Host/Example.Arena.Host.csproj" />
   <Project Path="examples/Example.Arena/Example.Arena.Plugin/Example.Arena.Plugin.csproj" />
+  <Project Path="examples/Example.Blast/Example.Blast.Host/Example.Blast.Host.csproj" />
+  <Project Path="examples/Example.Blast/Example.Blast.Plugin/Example.Blast.Plugin.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Host/Example.Workbench.Host.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" />
   <Project Path="plugins/Burbuja.Plugins.HostFacts.MacOs/Burbuja.Plugins.HostFacts.MacOs.csproj" />
