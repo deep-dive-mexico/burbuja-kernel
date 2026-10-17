@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Buffers.Binary;
 using System.Text.Json.Nodes;
 using Burbuja.Realtime.Abstractions;
 
@@ -6,9 +6,10 @@ namespace Example.Arena.Plugin;
 
 /// <summary>
 /// A small server-authoritative top-down shooter. Clients send only intent (<c>input</c>: a move vector, an aim
-/// angle and a trigger); the server moves everyone, simulates bullets, resolves hits against walls and
-/// players, and broadcasts a whole snapshot every tick. First to <see cref="KillsToWin"/> or the leader when
-/// the round clock runs out wins.
+/// angle and a trigger), as JSON or as a 13-byte binary frame; the server moves everyone, simulates bullets,
+/// resolves hits against walls and players, and broadcasts a whole snapshot every tick, with each player's
+/// last applied input sequence as <c>ack</c>. First to <see cref="KillsToWin"/> or the leader when the round
+/// clock runs out wins.
 /// </summary>
 public sealed class ArenaSession : GameSession
 {
@@ -89,13 +90,27 @@ public sealed class ArenaSession : GameSession
 
     public override void OnMessage(ISessionContext context, RealtimePlayer player, InboundMessage message)
     {
-        if (message.Type != "input" || message.Data.ValueKind != JsonValueKind.Object
-            || !_fighters.TryGetValue(player.PlayerId, out var fighter))
+        if (message.Type != "input" || !_fighters.TryGetValue(player.PlayerId, out var fighter))
             return;
 
+        // The same intent in either encoding: JSON {x,y,aim,fire}, or binary f32 x, f32 y, f32 aim, u8 fire.
+        Input input;
+        if (message.Format == FrameFormat.Binary)
+        {
+            var bytes = message.Binary.Span;
+            if (bytes.Length < InputBytes)
+                return;
+            input = new Input(BinaryPrimitives.ReadSingleLittleEndian(bytes), BinaryPrimitives.ReadSingleLittleEndian(bytes[4..]),
+                BinaryPrimitives.ReadSingleLittleEndian(bytes[8..]), bytes[12] != 0);
+        }
+        else if (!message.TryRead(out input))
+        {
+            return;
+        }
+
         // Never trust the client beyond its intent: clamp and normalise everything it sends.
-        var x = Number(message.Data, "x");
-        var y = Number(message.Data, "y");
+        var x = Finite(input.X);
+        var y = Finite(input.Y);
         var length = MathF.Sqrt(x * x + y * y);
         if (length > 1)
         {
@@ -103,10 +118,11 @@ public sealed class ArenaSession : GameSession
             y /= length;
         }
 
-        var aim = Number(message.Data, "aim");
-        fighter.Input = new Input(x, y, float.IsFinite(aim) ? aim : fighter.Input.Aim,
-            message.Data.TryGetProperty("fire", out var fire) && fire.ValueKind == JsonValueKind.True);
+        fighter.Input = new Input(x, y, float.IsFinite(input.Aim) ? Finite(input.Aim) : fighter.Input.Aim, input.Fire);
     }
+
+    /// <summary>The binary input frame's payload size.</summary>
+    public const int InputBytes = 13;
 
     public override void OnTick(ISessionContext context)
     {
@@ -195,6 +211,7 @@ public sealed class ArenaSession : GameSession
             shield = f.Shield > 0,
             kills = f.Kills,
             deaths = f.Deaths,
+            ack = context.LastSequence(f.Id),
         }),
         bullets = _bullets.Select(b => new[] { MathF.Round(b.X), MathF.Round(b.Y) }),
     });
@@ -245,12 +262,9 @@ public sealed class ArenaSession : GameSession
     private static bool Inside((float X, float Y, float W, float H) wall, float x, float y) =>
         x >= wall.X && x <= wall.X + wall.W && y >= wall.Y && y <= wall.Y + wall.H;
 
-    private static float Number(JsonElement data, string name) =>
-        data.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetSingle(out var number)
-            && float.IsFinite(number)
-            ? Math.Clamp(number, -1000, 1000)
-            : 0;
+    private static float Finite(float value) => float.IsFinite(value) ? Math.Clamp(value, -1000, 1000) : 0;
 
+    /// <summary>The game's own input datatype, read straight from the JSON frame by the kernel.</summary>
     private readonly record struct Input(float X, float Y, float Aim, bool Fire);
 
     private sealed class Fighter(string id, int slot)

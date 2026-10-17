@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Burbuja.Realtime.Abstractions;
@@ -37,6 +38,9 @@ public sealed class Lobby
     /// than spiral: a late tick is worse than a skipped one in an action game.</summary>
     internal const int MaxCatchUpTicks = 5;
 
+    /// <summary>How often <see cref="Performance"/> is republished, in lobby time.</summary>
+    internal static readonly TimeSpan PerformanceWindow = TimeSpan.FromSeconds(1);
+
     private readonly object _gate = new();
     private readonly ConcurrentQueue<Inbound> _inbox = new();
     private readonly Dictionary<string, Seat> _seats = new(StringComparer.Ordinal);
@@ -49,6 +53,7 @@ public sealed class Lobby
     private readonly SessionContext _context;
     private readonly string? _publicUrl;
     private readonly TimeSpan _tickInterval;
+    private readonly JsonSerializerOptions _json;
     private List<RealtimePlayer>? _roster;
     private MatchResult? _pendingEnd;
     private bool _lobbyChanged;
@@ -57,6 +62,19 @@ public sealed class Lobby
     private DateTimeOffset _closeAt;
     private DateTimeOffset? _emptySince;
     private volatile LobbyState _state = LobbyState.Open;
+    private int _seatCount;
+
+    // Performance: cumulative counters plus one window of timings, published as an immutable record so the
+    // balancer and operators read it without the lock.
+    private LobbyPerformance _performance = LobbyPerformance.Idle;
+    private DateTimeOffset _windowStart;
+    private TimeSpan _windowBusy;
+    private TimeSpan _windowTickTime;
+    private TimeSpan _windowTickMax;
+    private int _windowTicks;
+    private long _overruns;
+    private long _droppedTicks;
+    private bool _overrunLogged;
 
     internal Lobby(LobbySpec spec, LobbyLimits limits, DateTimeOffset now, ILobbyObserver observer, ILogger log)
     {
@@ -76,6 +94,8 @@ public sealed class Lobby
         _log = log;
         _now = now;
         _emptySince = now;
+        _windowStart = now;
+        _json = spec.Game.SerializerOptions ?? RealtimeJson.Default;
         _tickInterval = Rules.TickRate > 0 ? TimeSpan.FromSeconds(1.0 / Rules.TickRate) : TimeSpan.Zero;
         StepInterval = _tickInterval > TimeSpan.Zero && _tickInterval < MaxStepInterval ? _tickInterval : MaxStepInterval;
         _context = new SessionContext(this, new Random(spec.Seed));
@@ -106,6 +126,9 @@ public sealed class Lobby
     /// <summary>The current state; safe to read without the lock, exact only inside a snapshot.</summary>
     public LobbyState State => _state;
 
+    /// <summary>How the simulation kept up over its last window. Lock-free.</summary>
+    public LobbyPerformance Performance => Volatile.Read(ref _performance);
+
     // ─── called from API threads ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -131,6 +154,7 @@ public sealed class Lobby
                 slot++;
             seat = new Seat(new RealtimePlayer(identity.PlayerId, identity.DisplayName, slot, identity.AttributesOrEmpty));
             _seats.Add(identity.PlayerId, seat);
+            Volatile.Write(ref _seatCount, _seats.Count);
             _emptySince = null;
             return IssueToken(seat, now);
         }
@@ -172,15 +196,9 @@ public sealed class Lobby
     public void RequestClose(string reason) =>
         _inbox.Enqueue(new Inbound(InboundKind.Close, "", null) { Reason = reason });
 
-    /// <summary>Seats held, counting unclaimed reservations.</summary>
-    public int SeatCount
-    {
-        get
-        {
-            lock (_gate)
-                return _seats.Count;
-        }
-    }
+    /// <summary>Seats held, counting unclaimed reservations. Lock-free, so a placement decision that reads
+    /// every lobby never waits on a running tick.</summary>
+    public int SeatCount => Volatile.Read(ref _seatCount);
 
     public bool HasSeat(string playerId)
     {
@@ -199,7 +217,11 @@ public sealed class Lobby
                 ? PlayerAttributes.DefaultSkill
                 : _seats.Values.Average(s => PlayerAttributes.SkillOf(s.Player.Attributes));
             return new LobbySnapshot(Id, GameId, ServerId, Region, _state, Visibility, Origin, JoinCode, CreatedAt,
-                CountdownEndsAt, StartedAt, _seats.Count, Rules.MaxPlayers, skill, members, Result);
+                CountdownEndsAt, StartedAt, _seats.Count, Rules.MaxPlayers, skill, members, Result)
+            {
+                Tick = Tick,
+                Performance = Performance,
+            };
         }
     }
 
@@ -238,6 +260,7 @@ public sealed class Lobby
             if (_state == LobbyState.Closed)
                 return false;
             _now = now;
+            var started = Stopwatch.GetTimestamp();
             try
             {
                 ExpireReservations(now);
@@ -254,6 +277,9 @@ public sealed class Lobby
                 CloseCore(RealtimeCloseCode.InternalError, "lobby_faulted", faulted: true);
             }
 
+            _windowBusy += Stopwatch.GetElapsedTime(started);
+            if (now - _windowStart >= PerformanceWindow)
+                PublishPerformance(now);
             return _state != LobbyState.Closed;
         }
     }
@@ -306,7 +332,7 @@ public sealed class Lobby
                     OnConnected(seat, now);
                     break;
                 case InboundKind.Frame:
-                    OnFrame(seat, item.Frame!, now);
+                    OnFrame(seat, item.Frame!, item.Format, now);
                     break;
                 case InboundKind.Disconnected:
                     OnDisconnected(seat, now);
@@ -321,6 +347,7 @@ public sealed class Lobby
         seat.DisconnectedAt = null;
         seat.Allowance = Rules.MaxInboundMessagesPerSecond;
         seat.AllowanceAt = now;
+        seat.LastSequence = null;
         var rejoin = seat.Joined;
         if (!rejoin)
         {
@@ -333,6 +360,8 @@ public sealed class Lobby
             playerId = seat.Player.PlayerId,
             slot = seat.Player.Slot,
             tickRate = Rules.TickRate,
+            tickIntervalMs = _tickInterval.TotalMilliseconds,
+            tick = Tick,
             serverTime = now.ToUnixTimeMilliseconds(),
             lobby = LobbyPayload(),
         });
@@ -359,7 +388,7 @@ public sealed class Lobby
         }
     }
 
-    private void OnFrame(Seat seat, byte[] frame, DateTimeOffset now)
+    private void OnFrame(Seat seat, byte[] frame, FrameFormat format, DateTimeOffset now)
     {
         if (!seat.Live)
             return;
@@ -381,6 +410,30 @@ public sealed class Lobby
         }
 
         seat.Allowance -= 1;
+        if (format == FrameFormat.Binary)
+        {
+            // Binary is the game's own encoding; the kernel's messages stay JSON, so sys.* is refused here.
+            if (!RealtimeBinary.TryDecode(frame, out var binaryType, out var binarySequence, out var offset)
+                || RealtimeProtocol.IsSystemType(binaryType))
+            {
+                SendTo(seat, RealtimeProtocol.Error, new { code = "bad_frame" });
+                return;
+            }
+
+            if (_state < LobbyState.Ended)
+            {
+                Acknowledge(seat, binarySequence);
+                _session.OnMessage(_context, seat.Player, new InboundMessage(binaryType, default, binarySequence, now)
+                {
+                    Binary = frame.AsMemory(offset),
+                    Format = FrameFormat.Binary,
+                    SerializerOptions = _json,
+                });
+            }
+
+            return;
+        }
+
         if (!Frames.TryDecode(frame, out var type, out var data, out var sequence))
         {
             SendTo(seat, RealtimeProtocol.Error, new { code = "bad_frame" });
@@ -410,7 +463,19 @@ public sealed class Lobby
         }
 
         if (_state < LobbyState.Ended)
-            _session.OnMessage(_context, seat.Player, new InboundMessage(type, data, sequence, now));
+        {
+            if (sequence is { } seq)
+                Acknowledge(seat, seq);
+            _session.OnMessage(_context, seat.Player, new InboundMessage(type, data, sequence, now) { SerializerOptions = _json });
+        }
+    }
+
+    /// <summary>The acknowledgement only moves forward, so a message numbered 0 or out of order (a chat line
+    /// beside numbered inputs) never makes a predicting client replay inputs the server already applied.</summary>
+    private static void Acknowledge(Seat seat, long sequence)
+    {
+        if (sequence > (seat.LastSequence ?? long.MinValue))
+            seat.LastSequence = sequence;
     }
 
     private void Advance(DateTimeOffset now)
@@ -484,13 +549,63 @@ public sealed class Lobby
         while (now >= _nextTickAt && ran < MaxCatchUpTicks && _pendingEnd is null && _pendingKicks.Count == 0)
         {
             Tick++;
-            _session.OnTick(_context);
+            var started = Stopwatch.GetTimestamp();
+            try
+            {
+                _session.OnTick(_context);
+            }
+            finally
+            {
+                MeasureTick(Stopwatch.GetElapsedTime(started));
+            }
+
             _nextTickAt += _tickInterval;
             ran++;
         }
 
         if (now >= _nextTickAt && _pendingEnd is null && _pendingKicks.Count == 0)
+        {
+            // Still behind after the catch-up budget: the ticks due up to now are skipped, and the schedule
+            // restarts from now.
+            _droppedTicks += (now - _nextTickAt).Ticks / _tickInterval.Ticks + 1;
             _nextTickAt = now + _tickInterval;
+        }
+    }
+
+    private void MeasureTick(TimeSpan elapsed)
+    {
+        _windowTicks++;
+        _windowTickTime += elapsed;
+        if (elapsed > _windowTickMax)
+            _windowTickMax = elapsed;
+        if (elapsed <= _tickInterval)
+            return;
+        _overruns++;
+        if (_overrunLogged)
+            return;
+        _overrunLogged = true;
+        _log.LogWarning("Lobby {LobbyId} ({GameId}) tick {Tick} took {Elapsed:F1} ms, over its {Budget:F1} ms budget.",
+            Id, GameId, Tick, elapsed.TotalMilliseconds, _tickInterval.TotalMilliseconds);
+    }
+
+    /// <summary>Publishes the window and starts the next. At close the lobby consumes nothing more, so its
+    /// final record keeps the counters with a busy fraction of zero rather than one of a partial window.</summary>
+    private void PublishPerformance(DateTimeOffset now, bool closing = false)
+    {
+        var window = now - _windowStart;
+        Volatile.Write(ref _performance, new LobbyPerformance(
+            !closing && window > TimeSpan.Zero ? _windowBusy / window : 0,
+            _windowTicks,
+            _windowTicks > 0 ? (_windowTickTime / _windowTicks).TotalMilliseconds : 0,
+            _windowTickMax.TotalMilliseconds,
+            _overruns,
+            _droppedTicks));
+        _windowStart = now;
+        _windowBusy = TimeSpan.Zero;
+        _windowTickTime = TimeSpan.Zero;
+        _windowTickMax = TimeSpan.Zero;
+        _windowTicks = 0;
+        _overrunLogged = false;
     }
 
     private void ApplyPending(DateTimeOffset now)
@@ -556,6 +671,7 @@ public sealed class Lobby
         }
 
         _seats.Clear();
+        Volatile.Write(ref _seatCount, 0);
         _tokens.Clear();
         _roster = null;
         while (_inbox.TryDequeue(out _))
@@ -574,6 +690,7 @@ public sealed class Lobby
             }
         }
 
+        PublishPerformance(_now, closing: true);
         _log.LogInformation("Lobby {LobbyId} ({GameId}) closed: {Reason}.", Id, GameId, reason);
         _observer.Closed(this);
     }
@@ -582,6 +699,7 @@ public sealed class Lobby
     {
         var playerId = seat.Player.PlayerId;
         _seats.Remove(playerId);
+        Volatile.Write(ref _seatCount, _seats.Count);
         if (seat.Token is not null)
             _tokens.Remove(seat.Token);
         _roster = null;
@@ -649,21 +767,34 @@ public sealed class Lobby
     private static object EndedPayload(MatchResult result) =>
         new { reason = result.Reason, winners = result.Winners, details = result.Details };
 
-    private void SendTo<T>(Seat seat, string type, T payload)
+    /// <summary>Kernel messages use the kernel's options; a game's own pass <paramref name="options"/>.</summary>
+    private void SendTo<T>(Seat seat, string type, T payload, JsonSerializerOptions? options = null)
     {
         if (seat.Connection is { } connection)
-            connection.TrySend(Frames.Encode(type, Tick, payload));
+            connection.TrySend(Frames.Encode(type, Tick, payload, options), FrameFormat.Text);
     }
 
-    private void Broadcast<T>(string type, T payload, string? exceptPlayerId)
+    private void Broadcast<T>(string type, T payload, string? exceptPlayerId, JsonSerializerOptions? options = null)
     {
         byte[]? frame = null;
         foreach (var seat in _seats.Values)
         {
             if (!seat.Live || string.Equals(seat.Player.PlayerId, exceptPlayerId, StringComparison.Ordinal))
                 continue;
-            frame ??= Frames.Encode(type, Tick, payload);
-            seat.Connection!.TrySend(frame);
+            frame ??= Frames.Encode(type, Tick, payload, options);
+            seat.Connection!.TrySend(frame, FrameFormat.Text);
+        }
+    }
+
+    private void BroadcastBinary(string type, ReadOnlySpan<byte> payload, string? exceptPlayerId)
+    {
+        byte[]? frame = null;
+        foreach (var seat in _seats.Values)
+        {
+            if (!seat.Live || string.Equals(seat.Player.PlayerId, exceptPlayerId, StringComparison.Ordinal))
+                continue;
+            frame ??= RealtimeBinary.Encode(type, Tick, payload);
+            seat.Connection!.TrySend(frame, FrameFormat.Binary);
         }
     }
 
@@ -691,6 +822,7 @@ public sealed class Lobby
         public double Allowance { get; set; }
         public DateTimeOffset AllowanceAt { get; set; }
         public DateTimeOffset LastRateNotice { get; set; }
+        public long? LastSequence { get; set; }
         public bool Live => Connection is not null && Welcomed;
     }
 
@@ -706,6 +838,7 @@ public sealed class Lobby
     private sealed record Inbound(InboundKind Kind, string PlayerId, IPlayerConnection? Connection)
     {
         public byte[]? Frame { get; init; }
+        public FrameFormat Format { get; init; }
         public string? Reason { get; init; }
         public SeatInbox? Source { get; init; }
     }
@@ -717,7 +850,7 @@ public sealed class Lobby
         private int _queued;
         private int _gone;
 
-        public void Receive(ReadOnlySpan<byte> utf8Frame)
+        public void Receive(ReadOnlySpan<byte> frame, FrameFormat format)
         {
             if (Volatile.Read(ref _gone) != 0)
                 return;
@@ -727,7 +860,12 @@ public sealed class Lobby
                 return;
             }
 
-            lobby.Enqueue(new Inbound(InboundKind.Frame, playerId, connection) { Frame = utf8Frame.ToArray(), Source = this });
+            lobby.Enqueue(new Inbound(InboundKind.Frame, playerId, connection)
+            {
+                Frame = frame.ToArray(),
+                Format = format,
+                Source = this,
+            });
         }
 
         public void Disconnected()
@@ -754,17 +892,33 @@ public sealed class Lobby
 
         public bool IsConnected(string playerId) => lobby._seats.TryGetValue(playerId, out var seat) && seat.Live;
 
+        public long? LastSequence(string playerId) =>
+            lobby._seats.TryGetValue(playerId, out var seat) ? seat.LastSequence : null;
+
         public void Send<T>(string playerId, string type, T payload)
         {
             Guard(type);
             if (lobby._seats.TryGetValue(playerId, out var seat) && seat.Live)
-                lobby.SendTo(seat, type, payload);
+                lobby.SendTo(seat, type, payload, lobby._json);
         }
 
         public void Broadcast<T>(string type, T payload, string? exceptPlayerId = null)
         {
             Guard(type);
-            lobby.Broadcast(type, payload, exceptPlayerId);
+            lobby.Broadcast(type, payload, exceptPlayerId, lobby._json);
+        }
+
+        public void SendBinary(string playerId, string type, ReadOnlySpan<byte> payload)
+        {
+            Guard(type);
+            if (lobby._seats.TryGetValue(playerId, out var seat) && seat.Live)
+                seat.Connection!.TrySend(RealtimeBinary.Encode(type, lobby.Tick, payload), FrameFormat.Binary);
+        }
+
+        public void BroadcastBinary(string type, ReadOnlySpan<byte> payload, string? exceptPlayerId = null)
+        {
+            Guard(type);
+            lobby.BroadcastBinary(type, payload, exceptPlayerId);
         }
 
         public void EndMatch(MatchResult result)

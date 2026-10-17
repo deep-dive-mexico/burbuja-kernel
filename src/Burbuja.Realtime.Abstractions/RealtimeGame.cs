@@ -27,6 +27,14 @@ public interface IRealtimeGame
 
     /// <summary>The game's own grouping policy. Null uses the kernel's skill-window matchmaker.</summary>
     IMatchmakingStrategy? Matchmaking => null;
+
+    /// <summary>
+    /// How this game's JSON payloads are written (<see cref="ISessionContext.Send{T}"/>) and read
+    /// (<see cref="InboundMessage.Read{T}"/>): extend <see cref="RealtimeJson.CreateOptions"/> with the game's
+    /// own converters or a source-generated context. Null uses <see cref="RealtimeJson.Default"/>. Kernel
+    /// messages keep the kernel's options, so a game cannot change the <c>sys.*</c> shapes.
+    /// </summary>
+    System.Text.Json.JsonSerializerOptions? SerializerOptions => null;
 }
 
 /// <summary>What a lobby tells the game when it creates the session.</summary>

@@ -68,7 +68,7 @@ const ctx = ui.canvas.getContext("2d");
 let guest = JSON.parse(sessionStorage.getItem("arena.guest") || "null");
 let ws = null, me = null, lobby = null, map = null, ended = null, joinCode = null;
 let prev = null, cur = null, tickMs = 1000 / 30, ping = null, feed = [], busy = false, searching = null, hudHtml = "";
-const keys = new Set(); let mouse = { x: 600, y: 360, down: false }; let lastSent = "", lastSentAt = 0;
+const keys = new Set(); let mouse = { x: 600, y: 360, down: false }; let lastSent = "", lastSentAt = 0, inputSeq = 0;
 
 ui.name.value = guest?.displayName || localStorage.getItem("arena.name") || "";
 const setStatus = text => ui.status.textContent = text;
@@ -225,7 +225,7 @@ setInterval(() => {
   const aim = self ? Math.atan2(mouse.y - self.y, mouse.x - self.x) : 0;
   const input = { x, y, aim: Math.round(aim * 1000) / 1000, fire: mouse.down };
   const key = JSON.stringify(input); const now = performance.now();
-  if (key !== lastSent || now - lastSentAt > 100) { ws.send(JSON.stringify({ t: "input", d: input })); lastSent = key; lastSentAt = now; }
+  if (key !== lastSent || now - lastSentAt > 100) { ws.send(JSON.stringify({ t: "input", d: input, s: ++inputSeq })); lastSent = key; lastSentAt = now; }
 }, 1000 / 30);
 setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "sys.ping", d: { t: performance.now() } })); }, 2000);
 

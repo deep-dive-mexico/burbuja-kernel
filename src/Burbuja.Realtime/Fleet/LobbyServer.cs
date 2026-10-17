@@ -35,9 +35,11 @@ public sealed class LobbyServer
     public LobbyServerState State => _state;
     public IEnumerable<Lobby> Lobbies => _lobbies.Values.Select(v => v.Lobby);
 
+    /// <summary>Lock-free: it reads each lobby's published counts, never waiting on a tick.</summary>
     public LobbyServerStatus Status() => new(
         Id, Region, _state, Volatile.Read(ref _allocated), MaxLobbies,
-        _lobbies.Values.Sum(v => v.Lobby.SeatCount), PublicUrl);
+        _lobbies.Values.Sum(v => v.Lobby.SeatCount), PublicUrl,
+        _lobbies.Values.Sum(v => v.Lobby.Performance.Busy));
 
     public void Drain() => _state = LobbyServerState.Draining;
 

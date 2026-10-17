@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -104,10 +105,20 @@ public sealed class ArenaHostTests : IAsyncDisposable
 
         // Intent only: hold "right" and let the server move us. 60 Arena ticks later we are well right of the start
         // (or stopped by a wall), and every state frame is the server's.
-        await SendAsync(anaSocket, """{"t":"input","d":{"x":1,"y":0,"aim":0,"fire":false}}""");
+        await SendAsync(anaSocket, """{"t":"input","d":{"x":1,"y":0,"aim":0,"fire":false},"s":1}""");
         var later = await NextAsync(anaSocket, "state", f => (long)f["k"]! >= (long)first["k"]! + 60, TimeSpan.FromSeconds(5));
         var moved = later["d"]!["players"]!.AsArray().Single(p => (string?)p!["id"] == (string?)anaSeat["playerId"])!;
         Assert.True((double)moved["x"]! > startX + 20, $"expected to move right from {startX}, got {moved["x"]}");
+        Assert.Equal(1, (long)moved["ack"]!);
+
+        // The same intent in the game's own 13-byte binary encoding (f32 x, y, aim, u8 fire): hold "left" as
+        // input 2. The server acknowledges it in the snapshot and moves us back.
+        var left = new byte[13];
+        BinaryPrimitives.WriteSingleLittleEndian(left, -1);
+        await anaSocket.SendAsync(RealtimeBinary.Encode("input", 2, left), WebSocketMessageType.Binary, true, Ct);
+        var back = await NextAsync(anaSocket, "state", f => Me(f, anaSeat)["ack"] is { } ack && (long)ack == 2
+            && (double)Me(f, anaSeat)["x"]! < (double)moved["x"]! - 20, TimeSpan.FromSeconds(5));
+        Assert.True((long)back["k"]! > (long)later["k"]!);
 
         await SendAsync(benSocket, """{"t":"sys.ping","d":{"t":1}}""");
         Assert.Equal(1, (int)(await NextAsync(benSocket, "sys.pong"))["d"]!["echo"]!["t"]!);
@@ -118,6 +129,10 @@ public sealed class ArenaHostTests : IAsyncDisposable
         Assert.Equal("least-loaded", (string?)fleet["placement"]);
         var hosting = fleet["value"]!.AsArray().Single(s => s!["hosted"]!.AsArray().Count == 1)!;
         Assert.Equal(2, (int)hosting["players"]!);
+        Assert.True((double)hosting["load"]! >= 0);
+        var hosted = hosting["hosted"]![0]!;
+        Assert.True((long)hosted["tick"]! > 0);
+        Assert.Equal(0, (long)hosted["performance"]!["droppedTicks"]!);
         await Json(await Http("arena-player-key").GetAsync("/realtime/v1/servers", Ct), HttpStatusCode.Forbidden);
         await Json(await Http().GetAsync("/realtime/v1/servers", Ct), HttpStatusCode.Unauthorized);
 
@@ -206,6 +221,9 @@ public sealed class ArenaHostTests : IAsyncDisposable
         return await server.CreateWebSocketClient().ConnectAsync(new Uri(server.BaseAddress, (string)reservation["connectUrl"]!), Ct);
     }
 
+    private static JsonNode Me(JsonObject state, JsonObject seat) =>
+        state["d"]!["players"]!.AsArray().Single(p => (string?)p!["id"] == (string?)seat["playerId"])!;
+
     private static Task SendAsync(WebSocket socket, string json) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, Ct);
 
@@ -227,6 +245,8 @@ public sealed class ArenaHostTests : IAsyncDisposable
                 count += result.Count;
             }
             while (!result.EndOfMessage);
+            if (result.MessageType != WebSocketMessageType.Text)
+                continue;
             var frame = JsonNode.Parse(buffer.AsSpan(0, count))!.AsObject();
             if ((string?)frame["t"] == type && (match is null || match(frame)))
                 return frame;

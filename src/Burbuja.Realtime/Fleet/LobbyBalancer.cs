@@ -54,13 +54,15 @@ public sealed class LobbyBalancer
     }
 }
 
-/// <summary>Spread: the least utilised server, so every lobby has the most headroom. The default.</summary>
+/// <summary>Spread: the least utilised server, so every lobby has the most headroom. The default. Among
+/// equally allocated servers the one doing the least measured simulation work wins, then the fewest players.</summary>
 public sealed class LeastLoadedPlacement : ILobbyPlacementStrategy
 {
     public string Name => "least-loaded";
 
     public string? Choose(IReadOnlyList<LobbyServerStatus> candidates, PlacementRequest request) =>
-        candidates.OrderBy(s => s.Utilization).ThenBy(s => s.Players).ThenBy(s => s.ServerId, StringComparer.Ordinal)
+        candidates.OrderBy(s => s.Utilization).ThenBy(s => s.Load).ThenBy(s => s.Players)
+            .ThenBy(s => s.ServerId, StringComparer.Ordinal)
             .First().ServerId;
 }
 

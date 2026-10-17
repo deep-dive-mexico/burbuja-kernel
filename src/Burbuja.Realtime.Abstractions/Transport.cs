@@ -1,9 +1,10 @@
 namespace Burbuja.Realtime.Abstractions;
 
 /// <summary>
-/// The wire contract shared by every transport. Each frame is one UTF-8 JSON object:
+/// The wire contract shared by every transport. A text frame is one UTF-8 JSON object:
 /// <c>{"t":"type","d":payload,"s":clientSeq}</c> inbound and <c>{"t":"type","k":tick,"d":payload}</c> outbound.
-/// Types starting with <see cref="SystemPrefix"/> belong to the kernel; a game's own types must not.
+/// A binary frame carries a game's own encoding in the <see cref="RealtimeBinary"/> envelope. Types starting
+/// with <see cref="SystemPrefix"/> belong to the kernel and are always text; a game's own types must not.
 /// </summary>
 public static class RealtimeProtocol
 {
@@ -35,6 +36,13 @@ public static class RealtimeProtocol
     public static bool IsSystemType(string type) => type.StartsWith(SystemPrefix, StringComparison.Ordinal);
 }
 
+/// <summary>How a frame travels: UTF-8 JSON text, or a <see cref="RealtimeBinary"/> envelope.</summary>
+public enum FrameFormat
+{
+    Text,
+    Binary,
+}
+
 /// <summary>
 /// One open transport connection, as the lobby uses it. Both methods are non-blocking: the lobby loop calls
 /// them inside its tick and must never wait on a client's network.
@@ -43,9 +51,9 @@ public interface IPlayerConnection
 {
     string ConnectionId { get; }
 
-    /// <summary>Queues one complete, already-encoded UTF-8 text frame. The buffer is shared between
-    /// connections and must not be modified. Returns false once the connection is closing.</summary>
-    bool TrySend(ReadOnlyMemory<byte> utf8Frame);
+    /// <summary>Queues one complete, already-encoded frame. The buffer is shared between connections and must
+    /// not be modified. Returns false once the connection is closing.</summary>
+    bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format);
 
     /// <summary>Starts an orderly close after the queued frames.</summary>
     void Close(RealtimeCloseCode code, string reason);
@@ -55,7 +63,7 @@ public interface IPlayerConnection
 public interface IConnectionInbox
 {
     /// <summary>One complete inbound frame. The span is only valid during the call.</summary>
-    void Receive(ReadOnlySpan<byte> utf8Frame);
+    void Receive(ReadOnlySpan<byte> frame, FrameFormat format);
 
     /// <summary>The connection is gone (closed by either side or broken). Idempotent.</summary>
     void Disconnected();
@@ -87,7 +95,6 @@ public enum RealtimeCloseCode
 {
     Normal = 1000,
     GoingAway = 1001,
-    UnsupportedData = 1003,
     PolicyViolation = 1008,
     MessageTooBig = 1009,
     InternalError = 1011,

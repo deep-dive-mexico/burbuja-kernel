@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Text;
 using System.Threading.Channels;
 using Burbuja.Realtime.Abstractions;
 
@@ -7,15 +8,18 @@ namespace Burbuja.Realtime.Transport;
 /// <summary>
 /// The WebSocket transport for one admitted player. Outbound frames go through a bounded buffer that drops
 /// its OLDEST frame when full: a client that cannot keep up gets the newest state instead of stalling the
-/// lobby or growing the server's memory. Inbound frames are reassembled up to the game's bound and handed to
-/// the lobby's inbox; a larger frame closes the connection before it is buffered.
+/// lobby or growing the server's memory. Inbound frames, text or binary, are reassembled up to the game's bound
+/// and handed to the lobby's inbox; a larger frame closes the connection before it is buffered.
 /// </summary>
 internal sealed class WebSocketPlayerConnection : IPlayerConnection
 {
     private static readonly TimeSpan CloseHandshake = TimeSpan.FromSeconds(5);
 
+    /// <summary>RFC 6455 allows 123 bytes of close reason.</summary>
+    private const int MaxCloseReasonBytes = 123;
+
     private readonly WebSocket _socket;
-    private readonly Channel<ReadOnlyMemory<byte>> _outbound;
+    private readonly Channel<(ReadOnlyMemory<byte> Frame, FrameFormat Format)> _outbound;
     private int _closing;
     private RealtimeCloseCode _closeCode = RealtimeCloseCode.Normal;
     private string _closeReason = "";
@@ -23,7 +27,7 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
     public WebSocketPlayerConnection(WebSocket socket, int sendBufferFrames)
     {
         _socket = socket;
-        _outbound = Channel.CreateBounded<ReadOnlyMemory<byte>>(new BoundedChannelOptions(sendBufferFrames)
+        _outbound = Channel.CreateBounded<(ReadOnlyMemory<byte>, FrameFormat)>(new BoundedChannelOptions(sendBufferFrames)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
@@ -32,17 +36,35 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
 
     public string ConnectionId { get; } = Guid.NewGuid().ToString("N");
 
-    public bool TrySend(ReadOnlyMemory<byte> utf8Frame) =>
-        Volatile.Read(ref _closing) == 0 && _outbound.Writer.TryWrite(utf8Frame);
+    public bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format) =>
+        Volatile.Read(ref _closing) == 0 && _outbound.Writer.TryWrite((frame, format));
 
     public void Close(RealtimeCloseCode code, string reason)
     {
         if (Interlocked.Exchange(ref _closing, 1) != 0)
             return;
         _closeCode = code;
-        // A close reason is at most 123 bytes on the wire.
-        _closeReason = reason.Length > 100 ? reason[..100] : reason;
+        _closeReason = CloseReason(reason);
         _outbound.Writer.TryComplete();
+    }
+
+    /// <summary>The reason cut to what a close frame carries, by UTF-8 bytes and never inside a character: a
+    /// game's kick reason may be any text, and an oversized one would make the close itself throw.</summary>
+    internal static string CloseReason(string reason)
+    {
+        if (Encoding.UTF8.GetByteCount(reason) <= MaxCloseReasonBytes)
+            return reason;
+        var length = 0;
+        var bytes = 0;
+        foreach (var rune in reason.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > MaxCloseReasonBytes)
+                break;
+            bytes += rune.Utf8SequenceLength;
+            length += rune.Utf16SequenceLength;
+        }
+
+        return reason[..length];
     }
 
     /// <summary>Runs both directions until the socket is done. Returns once the close handshake finished or
@@ -99,13 +121,8 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
             }
             while (!result.EndOfMessage);
 
-            if (result.MessageType != WebSocketMessageType.Text)
-            {
-                Close(RealtimeCloseCode.UnsupportedData, "text_frames_only");
-                return;
-            }
-
-            inbox.Receive(buffer.AsSpan(0, count));
+            inbox.Receive(buffer.AsSpan(0, count),
+                result.MessageType == WebSocketMessageType.Binary ? FrameFormat.Binary : FrameFormat.Text);
         }
     }
 
@@ -113,8 +130,9 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
     {
         try
         {
-            await foreach (var frame in _outbound.Reader.ReadAllAsync(ct))
-                await _socket.SendAsync(frame, WebSocketMessageType.Text, true, ct);
+            await foreach (var (frame, format) in _outbound.Reader.ReadAllAsync(ct))
+                await _socket.SendAsync(frame,
+                    format == FrameFormat.Binary ? WebSocketMessageType.Binary : WebSocketMessageType.Text, true, ct);
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -40,6 +40,30 @@ public sealed record LobbySnapshot(
     MatchResult? Result)
 {
     public int OpenSeats => Math.Max(0, MaxPlayers - Seats);
+
+    /// <summary>Ticks simulated since the match started.</summary>
+    public long Tick { get; init; }
+
+    public LobbyPerformance Performance { get; init; } = LobbyPerformance.Idle;
+}
+
+/// <summary>
+/// How a lobby's simulation kept up. The window values cover its last measurement window (about one second of
+/// lobby time); <paramref name="Overruns"/> and <paramref name="DroppedTicks"/> count since it was created.
+/// </summary>
+/// <param name="Busy">Time spent in the lobby's steps (game code and the kernel's own work), measured by the
+/// stopwatch, per second of lobby time: 0.25 is a quarter of a core. Zero once the lobby has closed.</param>
+/// <param name="Overruns">Ticks whose <see cref="IGameSession.OnTick"/> took longer than the tick interval.</param>
+/// <param name="DroppedTicks">Ticks skipped because the lobby fell further behind than its catch-up budget.</param>
+public sealed record LobbyPerformance(
+    double Busy,
+    int TicksInWindow,
+    double AverageTickMilliseconds,
+    double MaxTickMilliseconds,
+    long Overruns,
+    long DroppedTicks)
+{
+    public static readonly LobbyPerformance Idle = new(0, 0, 0, 0, 0, 0);
 }
 
 /// <summary>What a lobby needs from whoever hosts it, given at creation.</summary>

@@ -43,8 +43,8 @@ Data lives in memory and disappears on restart. The credentials are public devel
 | Arena (`ArenaSession`) | Kernel realtime module |
 |---|---|
 | Movement, walls, bullets, hits, respawns, score, win condition | Queue, matchmaking, placement on a lobby server, seat reservations |
-| Clamps and normalises the client's `input` intent | Lifecycle (`open → countdown → running → ended → closed`), the 30 Hz fixed tick |
-| Broadcasts a `state` snapshot each tick and a `kill` feed | WebSocket transport, rate and size limits, reconnect grace, ping |
+| Reads `input` as its own `Input` type, from JSON or a 13-byte binary frame, then clamps and normalises it | Lifecycle (`open → countdown → running → ended → closed`), the 30 Hz fixed tick, tick-budget accounting |
+| Broadcasts a `state` snapshot each tick, with each player's `ack` (last applied input sequence), and a `kill` feed | WebSocket transport (text and binary), rate and size limits, reconnect grace, ping, `LastSequence` |
 | Builds the result scoreboard | Results broadcast, capacity release, isolation if the game throws |
 
 `tests/Burbuja.Realtime.Tests/ArenaHostTests.cs` runs this host with the plugin installed dynamically,

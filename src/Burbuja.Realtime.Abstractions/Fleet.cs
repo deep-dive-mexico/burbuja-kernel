@@ -10,6 +10,9 @@ public enum LobbyServerState
 }
 
 /// <summary>One lobby server's load as the balancer sees it at a decision.</summary>
+/// <param name="Load">Measured compute: the time its lobbies spent in their steps (game code and kernel work)
+/// per second of lobby time over their last measurement window, summed — roughly the cores in use. Unlike
+/// <paramref name="Lobbies"/> it tells a 60 Hz eight-player match from an idle quiz room.</param>
 public sealed record LobbyServerStatus(
     string ServerId,
     string Region,
@@ -17,7 +20,8 @@ public sealed record LobbyServerStatus(
     int Lobbies,
     int MaxLobbies,
     int Players,
-    string? PublicUrl)
+    string? PublicUrl,
+    double Load = 0)
 {
     public bool HasCapacity => State == LobbyServerState.Active && Lobbies < MaxLobbies;
 

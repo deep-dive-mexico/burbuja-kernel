@@ -15,6 +15,16 @@ and [standalone deployment evidence](docs/aws-deployment.md).
   reconnect grace, inbound limits, guest players and a WebSocket transport at `/realtime/v1`.
   Off unless `Realtime:Enabled`. The `examples/Example.Arena` shooter is the proof of concept
   ([guide](docs/realtime-lobbies.md)).
+- Games bring their own datatypes and encodings:
+  - typed reads of client input (`InboundMessage.TryRead<T>`);
+  - per-game serializer options (`IRealtimeGame.SerializerOptions`, from `RealtimeJson.CreateOptions()`);
+  - `System.Numerics` vectors and quaternions as `{x,y,z}`;
+  - binary frames in both directions (`SendBinary`/`BroadcastBinary`, the `RealtimeBinary` envelope).
+
+  For netcode, the kernel adds per-player input acknowledgement (`ISessionContext.LastSequence`) and
+  tick timing in `sys.welcome`. Each lobby records tick performance (busy fraction, overruns, dropped
+  ticks), and servers report a measured `Load` that placement uses to break ties. `GET /servers` shows
+  both.
 
 ### Delivery
 

@@ -81,6 +81,8 @@ public static class RealtimeEndpoints
                 maxMatchSeconds = g.Rules.MaxMatchDuration.TotalSeconds,
                 allowJoinInProgress = g.Rules.AllowJoinInProgress,
                 reconnectGraceSeconds = g.Rules.ReconnectGrace.TotalSeconds,
+                maxInboundMessagesPerSecond = g.Rules.MaxInboundMessagesPerSecond,
+                maxMessageBytes = g.Rules.MaxMessageBytes,
             },
         });
         return Task.FromResult(Results.Json(new { value = games }, Frames.Json));
@@ -283,6 +285,7 @@ public static class RealtimeEndpoints
                 maxLobbies = status.MaxLobbies,
                 players = status.Players,
                 utilization = status.Utilization,
+                load = status.Load,
                 publicUrl = status.PublicUrl,
                 hosted = server.Lobbies.Select(l => l.Snapshot()).Select(s => new
                 {
@@ -291,6 +294,8 @@ public static class RealtimeEndpoints
                     state = s.State.ToString().ToLowerInvariant(),
                     seats = s.Seats,
                     maxPlayers = s.MaxPlayers,
+                    tick = s.Tick,
+                    performance = s.Performance,
                 }),
             };
         });

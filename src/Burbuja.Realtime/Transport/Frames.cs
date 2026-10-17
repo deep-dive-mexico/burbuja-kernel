@@ -1,14 +1,16 @@
 using System.Buffers;
 using System.Text.Json;
+using Burbuja.Realtime.Abstractions;
 
 namespace Burbuja.Realtime.Transport;
 
 /// <summary>Encodes the outbound envelope <c>{"t":type,"k":tick,"d":payload}</c> once per message.</summary>
 public static class Frames
 {
-    public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    /// <summary>The kernel's own options, for <c>sys.*</c> payloads and the HTTP API.</summary>
+    public static JsonSerializerOptions Json => RealtimeJson.Default;
 
-    public static byte[] Encode<T>(string type, long tick, T payload)
+    public static byte[] Encode<T>(string type, long tick, T payload, JsonSerializerOptions? options = null)
     {
         var buffer = new ArrayBufferWriter<byte>(256);
         using (var writer = new Utf8JsonWriter(buffer))
@@ -17,7 +19,7 @@ public static class Frames
             writer.WriteString("t", type);
             writer.WriteNumber("k", tick);
             writer.WritePropertyName("d");
-            JsonSerializer.Serialize(writer, payload, Json);
+            JsonSerializer.Serialize(writer, payload, options ?? Json);
             writer.WriteEndObject();
         }
 

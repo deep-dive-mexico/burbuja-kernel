@@ -15,6 +15,7 @@ namespace Burbuja.Realtime.Tests;
 internal sealed class FakeConnection : IPlayerConnection
 {
     private readonly List<JsonObject> _frames = [];
+    private readonly List<byte[]> _binary = [];
 
     public string ConnectionId { get; } = Guid.NewGuid().ToString("N");
     public RealtimeCloseCode? ClosedWith { get; private set; }
@@ -30,14 +31,30 @@ internal sealed class FakeConnection : IPlayerConnection
         }
     }
 
+    /// <summary>Binary frames as sent, envelope included.</summary>
+    public IReadOnlyList<byte[]> BinaryFrames
+    {
+        get
+        {
+            lock (_frames)
+                return _binary.ToList();
+        }
+    }
+
     public IEnumerable<JsonObject> OfType(string type) => Frames.Where(f => (string?)f["t"] == type);
 
-    public bool TrySend(ReadOnlyMemory<byte> utf8Frame)
+    public bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format)
     {
         if (ClosedWith is not null)
             return false;
         lock (_frames)
-            _frames.Add(JsonNode.Parse(utf8Frame.Span)!.AsObject());
+        {
+            if (format == FrameFormat.Binary)
+                _binary.Add(frame.ToArray());
+            else
+                _frames.Add(JsonNode.Parse(frame.Span)!.AsObject());
+        }
+
         return true;
     }
 
@@ -47,11 +64,16 @@ internal sealed class FakeConnection : IPlayerConnection
         CloseReason ??= reason;
     }
 
-    public void Send(string json) => Inbox.Receive(Encoding.UTF8.GetBytes(json));
+    public void Send(string json) => Inbox.Receive(Encoding.UTF8.GetBytes(json), FrameFormat.Text);
+
+    public void SendBinary(string type, long sequence, byte[] payload) =>
+        Inbox.Receive(RealtimeBinary.Encode(type, sequence, payload), FrameFormat.Binary);
+
+    public void SendRawBinary(byte[] frame) => Inbox.Receive(frame, FrameFormat.Binary);
 }
 
 /// <summary>A game whose session records every callback and obeys a few test commands.</summary>
-internal sealed class RecordingGame(GameRules? rules = null, string id = "test") : IRealtimeGame
+internal sealed class RecordingGame(GameRules? rules = null, string id = "test", Func<IGameSession>? session = null) : IRealtimeGame
 {
     public string Id => id;
     public string DisplayName => "Test";
@@ -68,11 +90,15 @@ internal sealed class RecordingGame(GameRules? rules = null, string id = "test")
 
     public List<RecordingSession> Sessions { get; } = [];
 
+    public System.Text.Json.JsonSerializerOptions? SerializerOptions { get; init; }
+
     public IGameSession CreateSession(GameSessionOptions options)
     {
-        var session = new RecordingSession();
-        Sessions.Add(session);
-        return session;
+        if (session is not null)
+            return session();
+        var recording = new RecordingSession();
+        Sessions.Add(recording);
+        return recording;
     }
 }
 
