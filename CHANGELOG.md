@@ -25,6 +25,26 @@ and [standalone deployment evidence](docs/aws-deployment.md).
   tick timing in `sys.welcome`. Each lobby records tick performance (busy fraction, overruns, dropped
   ticks), and servers report a measured `Load` that placement uses to break ties. `GET /servers` shows
   both.
+- Lobby nodes on many machines form one fleet ([guide](docs/realtime-lobbies.md#fleet-many-nodes)). Nodes
+  share an `IRealtimeBackplane`: the in-process default, or Redis/Valkey through the new dynamic plugin
+  `Burbuja.Plugins.Realtime.Redis`. The API on any node then serves the whole fleet:
+  - placement ranks every live server, and the owning node claims its own capacity;
+  - each player holds one seat fleet-wide, even when two nodes seat them at once;
+  - one matchmaking pool spans the nodes, with one matchmaker per game holding a lease and failing over;
+  - join codes resolve on every node, and operators see and drive every server.
+
+  A node that stops heartbeating drops out and frees its players. A distributed fleet requires each
+  server's `PublicUrl`. Single-node hosts behave as before.
+- A session with CPU players may start below `GameRules.MinPlayers` (`IGameSession.MinPlayersToStart`).
+- `examples/Example.Blast`: a 3D battle game for 2–8 players after Bomberman 64's Battle mode. It has
+  kick, throw, pump, spherical chain blasts, items, ghosts, sudden death, CPU players and a three.js
+  client, and it is the fleet's two-node end-to-end proof.
+
+### Changed
+
+- `LobbyManager` is node-local. One seat per player, lobby lookup by id or code, backfill candidates and
+  the matchmaking queue go through `RealtimeFleet`, and the queue's methods are asynchronous
+  (`EnqueueAsync`, `GetAsync`, `CancelAsync`, `RunCycleAsync`).
 
 ### Delivery
 

@@ -1,8 +1,21 @@
 # Burbuja.Plugins.Realtime.Redis
 
-Redis/Valkey backplane for the Burbuja realtime fleet. Implements `IRealtimeBackplane` so lobby
-nodes on different machines form one fleet: they share node records, lobby listings, join codes,
-seat claims, matchmaking tickets and RPC calls through a common Redis server or cluster.
+Redis/Valkey backplane for the Burbuja realtime fleet ([guide](../../docs/realtime-lobbies.md#fleet-many-nodes)).
+It implements `IRealtimeBackplane`, so lobby nodes on different machines form one fleet. They share node
+records, lobby listings, join codes, seat claims, matchmaking tickets and calls between nodes through one
+Redis or Valkey server or cluster.
+
+## Install
+
+It is a dynamic plugin, so a host references nothing. Publish it into each node's plugins directory and
+configure it:
+
+```sh
+dotnet publish plugins/Burbuja.Plugins.Realtime.Redis -c Release -o <host>/plugins/Realtime.Redis
+```
+
+Every node of a fleet then needs the same `Realtime:Redis:*` settings, its own `Kernel:NodeId`, a
+`PublicUrl` on every server, and a shared `Realtime:Guests:SigningKey` if guests are enabled.
 
 ## Configuration
 
@@ -41,15 +54,17 @@ With `P` = key prefix (e.g. `{burbuja-rt}:`)
 | `P queued:{playerId}` | String | ticket TTL | ticketId (while ticket is queued) |
 | `P lease:{name}` | String | lease TTL | owner |
 | `P rpc:{nodeId}` | Pub/Sub channel | — | Incoming RPC envelopes for a node |
-| `P reply:{guid}:{correlationId}` | Pub/Sub channel | — | Single-call reply channel |
+| `P reply:{guid}` | Pub/Sub channel | — | One per backplane instance; replies carry the call's correlation id |
 | `P tickets` | Pub/Sub channel | — | Settled ticket IDs (best-effort notifications) |
 
 ## Atomicity guarantees
 
 All compare-and-set operations (node publish, join-code claim, seat claim/transfer/release,
 ticket add, ticket update/settle, lease acquire/renew/release) are implemented as Lua scripts
-evaluated atomically on the Redis server. The `{burbuja-rt}` hash tag ensures all keys involved
-in each script are in the same slot, satisfying Redis Cluster's cross-key script restriction.
+evaluated atomically on the Redis server. Each script touches only the keys it declares, and the
+`{burbuja-rt}` hash tag puts them in one slot, satisfying Redis Cluster's cross-key script rule.
+Adding a ticket first reads the player's queue slot and passes the queued ticket as a declared key;
+a slot that changed in between makes the script ask for a retry.
 
 Lobby batch publishes are pipelined (one round trip); each lobby's upsert and its join-code
 refresh are individually atomic. Seat TTL refresh is a compare-and-extend, never a revive.
@@ -57,16 +72,23 @@ refresh are individually atomic. Seat TTL refresh is a compare-and-extend, never
 ## Failure behaviour
 
 Redis exceptions (`RedisException`, `RedisTimeoutException`, `RedisConnectionException`) are
-wrapped in `RealtimeBackplaneException`. RPC reply channels use a per-instance prefix so
-parallel backplane instances in one process do not interfere. A PUBLISH to a node with no active
-server returns zero subscribers, which immediately throws `TimeoutException`. Pub/Sub unsubscribe
-on dispose is best-effort.
+wrapped in `RealtimeBackplaneException`; the HTTP API answers `503 fleet_unavailable`, and lobbies
+already running keep running. Each backplane instance subscribes one reply channel once and matches
+replies by correlation id; requests are handed to the thread pool rather than run on the subscriber
+callback. A PUBLISH to a node with no active server returns zero subscribers, which throws
+`TimeoutException` at once. Pub/Sub delivery is at most once: a lost reply is a timeout, and a lost
+ticket notification is covered by the waiter's own re-read.
 
 ## Compatibility notes
 
 - **Valkey 8+**: fully supported; Valkey is Redis-compatible at the protocol level.
 - **Redis 7.x / 6.x**: supported; all commands and scripts used are available in Redis 6+.
 - **ElastiCache cluster mode**: supported when the hash-tag prefix is used (the default).
-- **ElastiCache serverless**: uses a single endpoint; disable cluster mode; otherwise identical.
-- **Sentinel / replica**: StackExchange.Redis handles transparent failover; configure the
-  connection string with Sentinel endpoints.
+- **ElastiCache Serverless for Valkey**: a cluster-compatible endpoint; the hash-tag prefix keeps every
+  script on one slot.
+- **Sentinel / replicas**: StackExchange.Redis follows a failover; configure the connection string with
+  the Sentinel endpoints. Writes acknowledged by a primary that fails before replicating can be lost;
+  the fleet repairs node and lobby records on the next heartbeat, and a lost seat claim or ticket is
+  the one gap.
+- **Scale**: all keys share one slot, so one shard serves the fleet. Fleet state is small (a record per
+  node, lobby and queued player) and heartbeats are batched, so a single shard covers a large fleet.

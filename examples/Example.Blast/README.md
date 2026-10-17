@@ -25,14 +25,39 @@ dotnet artifacts/host/Example.Blast.Host.dll
 
 Open <http://127.0.0.1:18496/blast> in two or more browser windows. Enter a name and press
 **Quick play** to enter the matchmaking queue; both windows will land in the same lobby. Or use
-**Create private lobby** to pick settings (stage, win target, bots, round duration), then share
-the displayed join code.
+**Create private lobby** to pick settings (stage, win target, bots, round duration). The lobby's
+join code shows while it waits for players. A lobby with bots starts with you alone, as in the original.
 
 Operator view (development key from `appsettings.json`):
 
 ```bash
 curl -s -H 'x-api-key: blast-operator-dev-key' http://127.0.0.1:18496/realtime/v1/servers
 ```
+
+## Run a two-node fleet on one machine
+
+The same host becomes a fleet node by installing the Redis backplane plugin next to the game. This runs two
+nodes, `east` on :18496 and `west` on :18497, over a throwaway Valkey:
+
+```bash
+docker run -d --rm --name blast-valkey -p 127.0.0.1:16379:6379 valkey/valkey:8-alpine
+dotnet publish ../../plugins/Burbuja.Plugins.Realtime.Redis -c Release -o artifacts/plugin-redis
+for node in east:18496 west:18497; do
+  id=${node%%:*}; port=${node##*:}
+  cp -R artifacts/host artifacts/$id && cp -R artifacts/plugin-redis artifacts/$id/plugins/Realtime.Redis
+  (cd artifacts/$id && urls=http://127.0.0.1:$port Kernel__NodeId=$id \
+    Realtime__Servers__0__Id=$id-1 Realtime__Servers__0__PublicUrl=ws://127.0.0.1:$port \
+    Realtime__Servers__1__Id=$id-2 Realtime__Servers__1__PublicUrl=ws://127.0.0.1:$port \
+    Realtime__Redis__Configuration=127.0.0.1:16379 \
+    Realtime__Guests__SigningKey=local-fleet-guest-signing-key-0123456789 \
+    dotnet Example.Blast.Host.dll &)
+done
+```
+
+Press **Quick play** in one window on <http://127.0.0.1:18496/blast> and another on
+<http://127.0.0.1:18497/blast>. Both players land in one match on whichever node the fleet placed it, and
+each browser connects to that node. `GET /realtime/v1/servers` on either node lists all four servers. Each
+node needs its own server ids and `PublicUrl`, and every node shares the guest signing key.
 
 ## Controls
 

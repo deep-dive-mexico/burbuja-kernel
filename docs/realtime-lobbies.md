@@ -1,17 +1,19 @@
 # Real-time lobbies
 
-[Kernel wiki](wiki/OVERVIEW.md) · [Runtime capabilities](runtime-capabilities.md) · [Arena PoC](../examples/Example.Arena/README.md)
+[Kernel wiki](wiki/OVERVIEW.md) · [Runtime capabilities](runtime-capabilities.md) · [Arena PoC](../examples/Example.Arena/README.md) · [Blast example](../examples/Example.Blast/README.md) · [Redis backplane](../plugins/Burbuja.Plugins.Realtime.Redis/README.md)
 
 The realtime module hosts **dedicated, server-authoritative lobbies** for multiplayer games and other
 room-shaped, low-latency uses (live quizzes, shared boards). It owns the parts every such server
-repeats: matchmaking, placement across lobby servers, the lobby lifecycle, the fixed-tick loop, seat
-reservations, reconnects, inbound limits and the transport. A game supplies only its simulation.
+repeats: matchmaking, placement across lobby servers and nodes, the lobby lifecycle, the fixed-tick loop,
+seat reservations, reconnects, inbound limits and the transport. A game supplies only its simulation.
 
 | Project | Owns |
 |---|---|
-| `src/Burbuja.Realtime.Abstractions` | Contracts with no dependencies: `IRealtimeGame`, `GameRules`, `IGameSession`/`GameSession`, `ISessionContext`, players and `IPlayerAuthenticator`, `IPlayerConnection`/`IConnectionInbox`/`IRealtimeGateway`, `ILobbyPlacementStrategy`, `IMatchmakingStrategy`, the wire protocol, `RealtimeJson` (game JSON options with numerics vectors) and `RealtimeBinary` (the binary envelope) |
-| `src/Burbuja.Realtime` | `Lobby` (state machine and loop), `LobbyManager` (lifecycle, codes, reservations, admission), `LobbyServer`/`LobbyBalancer` (fleet and placement), `MatchmakingQueue`/`SkillWindowMatchmaker`, guest and API-key players, the WebSocket transport and `/realtime/v1` |
+| `src/Burbuja.Realtime.Abstractions` | Contracts with no dependencies: `IRealtimeGame`, `GameRules`, `IGameSession`/`GameSession`, `ISessionContext`, players and `IPlayerAuthenticator`, `IPlayerConnection`/`IConnectionInbox`/`IRealtimeGateway`, `ILobbyPlacementStrategy`, `IMatchmakingStrategy`, `IRealtimeBackplane` (what a fleet shares), the wire protocol, `RealtimeJson` (game JSON options with numerics vectors) and `RealtimeBinary` (the binary envelope) |
+| `src/Burbuja.Realtime` | `Lobby` (state machine and loop), `LobbyManager` (this node's lifecycle, codes, reservations, admission), `LobbyServer`/`LobbyBalancer` (capacity and placement), `RealtimeFleet` (routing between nodes, one seat per player), `LocalBackplane` (the in-process default), `MatchmakingQueue`/`SkillWindowMatchmaker`, guest and API-key players, the WebSocket transport and `/realtime/v1` |
+| `plugins/Burbuja.Plugins.Realtime.Redis` | The shared backplane: nodes on many machines form one fleet over Redis or Valkey |
 | `examples/Example.Arena` | The PoC: a 2–8 player arena shooter installed as a dynamic plugin, and a host with a browser client |
+| `examples/Example.Blast` | A 3D battle game for 2–8 players after Bomberman 64's Battle mode, with CPU players and a three.js client; the fleet's end-to-end proof |
 
 `Burbuja.Hosting` registers the module for every host (`AddBurbujaRealtime`) and maps it for every
 role, like plugin ingress: a player connects to the node hosting the lobby. **It is inert unless
@@ -45,6 +47,11 @@ plain fields and no locks. A call must not block or await I/O: it spends every p
 `EndMatch` and `Kick` take effect after the callback returns. An exception from game code ends that
 lobby (`sys.ended` with reason `faulted`, close code 1011) and nothing else
 (`A_faulting_game_closes_only_its_own_lobby`).
+
+**CPU players.** Rules fix the minimum a matchmade lobby is grouped at. A session whose own settings add CPU
+players may start with fewer humans by answering `MinPlayersToStart` (read once, kept between 1 and
+`GameRules.MinPlayers`); Blast starts with one human when its lobby has bots
+(`A_session_with_cpu_players_may_start_below_the_rules_minimum_but_never_below_one`).
 
 **Authority.** Clients send intent; the session decides outcomes. The kernel enforces what the rules
 declare (seats, rate, frame size, durations); the game validates what only it understands, as Arena
@@ -141,7 +148,8 @@ default `SkillWindowMatchmaker`:
 - regions are compatible when equal or when either side has none.
 
 Skill is the identity attribute `skill`, set by the authenticator; a client cannot claim it. Strategies
-are pure: the queue rejects decisions that reuse or invent tickets. When no server has room, tickets stay
+are pure: the queue rejects decisions that reuse or invent tickets, or name a lobby that was not a backfill
+candidate. When no server has room, tickets stay
 queued with `detail: "waiting_for_capacity"`; they expire after `TicketTimeoutSeconds` (120).
 
 **Lobby servers.** `Realtime:Servers` lists the capacity units this node hosts
@@ -155,7 +163,84 @@ lobbies (the sum of their busy fractions, roughly cores in use). A 60 Hz eight-p
 quiz room weigh differently there. `least-loaded` uses it to break ties between equally allocated
 servers, and a custom strategy may rank by it. Status reads are lock-free, so placement never waits on a
 running tick (`Placement_reads_never_wait_on_a_running_tick`). Register more `ILobbyPlacementStrategy` services and select them by name with
-`Realtime:Placement`.
+`Realtime:Placement`. Across a fleet the balancer ranks every live server, as described next.
+
+## Fleet: many nodes
+
+A **fleet** is every node sharing one `IRealtimeBackplane`. The default `LocalBackplane` is in-process, so a
+single node is a fleet of one and runs the same code. Installing the `Realtime.Redis` plugin
+([README](../plugins/Burbuja.Plugins.Realtime.Redis/README.md)) makes nodes on different machines one fleet
+over Redis or Valkey (on AWS, ElastiCache for Valkey). Each lobby still lives on exactly one node, with its
+loop and connections. The API on any node serves the whole fleet.
+
+**Why Redis.** Fleet state is small, short-lived and contended: heartbeats with lifetimes, one seat per
+player, a shared queue, per-game leases, and request/reply between nodes. Redis gives each of these one
+atomic primitive (keys with lifetimes, Lua compare-and-set, sorted sets, pub/sub) at sub-millisecond latency,
+and it is one piece of infrastructure with no node-to-node networking. Colyseus scales rooms the same way:
+presence and room calls over Redis, players connecting to the process hosting the room. Open Match keeps
+its matchmaking state in Redis. A relational store would need polling for notifications and leases. The
+backplane is a contract, so another store is a plugin, not a change to the fleet.
+
+| Shared on the backplane | Owner and lifetime |
+|---|---|
+| Node record: servers with load and capacity, games it registers | The node, refreshed every `Fleet:HeartbeatMilliseconds` (1 s), gone after `Fleet:NodeTtlSeconds` (5) |
+| Lobby record: location, state, seats, listing; join code | The hosting node, published at creation and every heartbeat, removed at close |
+| Seat claim: the one lobby holding each player | The hosting node; refreshed while the seat is held, released when it is given up |
+| Matchmaking tickets and each game's queue | Any node adds or cancels; the game's matchmaker settles |
+| Matchmaker lease per game | The node running that game's matchmaking |
+
+**Routing.** `RealtimeFleet` runs an operation on a local lobby or server directly. Anything else becomes a
+call to the owning node over the backplane, which runs the same local code: place a lobby with its seats,
+reserve, leave, close, read a lobby exactly, drain or activate a server. The WebSocket door alone is local, so
+a reservation's `connectUrl` is the hosting server's `PublicUrl`. In a distributed fleet every server needs
+one, and boot fails without it.
+
+**Placement.** The balancer filters every live server whose node registers the game (same eligibility,
+regions and strategy as above), then asks the owner, which alone claims its capacity. A server that filled
+since its last heartbeat answers `no_capacity` and the next is tried
+(`A_server_that_filled_since_its_heartbeat_refuses_and_placement_moves_on`). A node publishes its record
+again whenever it places a lobby, so a burst of placements sees servers fill. A node that does not answer is
+told to close whatever it may have created, using the lobby id the caller chose beforehand, and the
+placement fails with `node_unavailable` for this cycle.
+
+**One seat per player, fleet-wide.** A reservation claims the player's seat on the backplane, reserves
+locally, then confirms the claim still names its lobby. So two nodes seating the same player at once leave
+exactly one seat (`Racing_reservations_on_two_nodes_leave_each_player_exactly_one_seat`). A claim naming a
+lobby whose record is gone (closed, or its node died) or that no longer seats the player is taken over. A
+heartbeat refreshes a claim and never revives one released meanwhile.
+
+**Matchmaking.** Tickets live on the backplane, so a player may queue through any node and meets players who
+queued through others (`Players_who_queue_through_different_nodes_meet_in_one_lobby`). Every node runs the
+cycle. Only the holder of a game's lease matches that game, and a node competes only for the games it
+registers. When the holder stops renewing, another node takes over within the lease
+(`When_the_matchmaker_stops_renewing_another_node_takes_over`). A ticket changes only while queued, so a
+cancel on one node and a match on another have one winner. A match that loses to a cancel gives the seat
+back (`A_cancel_that_beats_the_match_gets_the_seat_back`). A long-poll on any node answers as soon as the
+ticket settles anywhere, and re-reads every second in case a notification is lost.
+
+**Failure.** A node silent for `NodeTtlSeconds` drops out. Nothing more is placed there, and its players
+may seat elsewhere at once (`A_node_that_stops_heartbeating_drops_out_and_its_players_may_seat_elsewhere`).
+A node that stops cleanly removes its records immediately. If the backplane is unreachable, lobbies keep
+running and fleet calls answer `503 fleet_unavailable`. Boot refuses a server id another node hosts, and a
+node id another live process heartbeats. A node restarted after a crash waits out its old record and joins.
+
+**Running a fleet.** On every node, set the same backplane settings and guest `SigningKey`, give the node
+its own `Kernel:NodeId`, and give its servers unique ids and a `PublicUrl` players can reach:
+
+```json
+{
+  "Kernel": { "NodeId": "eu-1" },
+  "Realtime": {
+    "Enabled": true,
+    "Servers": [ { "Id": "eu-1-a", "Region": "eu", "MaxLobbies": 50, "PublicUrl": "wss://eu-1.example.com" } ],
+    "Guests": { "Enabled": true, "SigningKey": "<the same 32+ characters on every node>" },
+    "Redis": { "Configuration": "valkey.internal:6379,ssl=true,abortConnect=false" }
+  }
+}
+```
+
+Put the HTTP API behind any load balancer. Players' WebSockets go to `PublicUrl`, so each node needs an
+address of its own. The Blast README runs a two-node fleet on one machine.
 
 ## Players and credentials
 
@@ -224,12 +309,12 @@ casual browser games, WebTransport or UDP for lower latency) is an adapter, not 
 | `POST /lobbies` `{game, visibility?, region?, settings?}` | player | 201 `{lobby (with joinCode), reservation}` for a hosted lobby; private by default |
 | `POST /lobbies/join` `{code}` · `POST /lobbies/{id}/join` | player | A reservation; also the reconnect path |
 | `GET /lobbies/{id}` · `POST /lobbies/{id}/leave` | player | Snapshot (code only for members) · 204 |
-| `GET /servers` · `POST /servers/{id}/drain|activate` · `POST /lobbies/{id}/close` | API key with a role in `Realtime:OperatorRoles` (default `Owner`) | Fleet utilization, measured `load`, hosted lobbies with `tick` and `performance` · state change · 202 |
+| `GET /servers` · `POST /servers/{id}/drain|activate` · `POST /lobbies/{id}/close` | API key with a role in `Realtime:OperatorRoles` (default `Owner`) | Every live server in the fleet with its `nodeId`, `games`, utilization, measured `load` and hosted lobbies (`tick`, `performance`; `null` when its node does not answer) · state change on whichever node owns the server · 202 |
 | `GET /connect?token=` | reservation holder | WebSocket |
 
 Errors are `{"error":{"code","message"}}` with stable codes: `unknown_game` 404, `no_capacity` 503,
 `lobby_full`/`match_in_progress`/`already_in_lobby` 409, `lobby_closed` 410, `unauthenticated` 401,
-`operator_required` 403.
+`operator_required` 403, `node_unavailable` and `fleet_unavailable` 503.
 
 ## Verification
 
@@ -251,6 +336,17 @@ long-poll) and guest tokens. `GameDataAndNetcodeTests` cover these with a small 
 - dropped-tick and overrun accounting, published load (zero once closed) and lock-free status;
 - close-reason bounds.
 
+`BackplaneContractTests` state the backplane contract once and run it against `LocalBackplane` and, through
+`RedisBackplaneTests`, a real Valkey. The tests use `BURBUJA_REDIS` when set, or start a throwaway
+container with the local Docker, and skip with a reason when neither is available. `FleetTests` run several
+nodes in one process under a fake clock: placement across nodes and refusal of a server that filled,
+fleet-wide single seats under racing reservations, one matchmaking pool across nodes, matchmaker failover,
+cancel-versus-match, a dead node's players seating elsewhere, operator routing, boot refusals and crash
+restarts. `FleetHostTests` boots two real Blast hosts that install the game and the Redis backplane as
+dynamic plugins. Four guests queue through different nodes and play one match on the node the fleet chose.
+The other node answers for the lobby, the seats and the operator view, and a node leaving removes its
+servers at once.
+
 `ArenaHostTests` boots the real Arena host with the game installed as a
 dynamic plugin in its own load context. Two guests queue, get one placed lobby and play over real
 WebSocket frames: the server moves a player from JSON input and then from binary input, acknowledging
@@ -260,9 +356,15 @@ and a disabled host.
 
 ## Limits and next steps (not implemented)
 
-- **Single node.** Lobby servers are in-process capacity units on the node that serves the API.
-  `PublicUrl` and the placement seam are ready for a fleet, but there is no cross-node server registry,
-  heartbeat or shared ticket queue. Tickets and lobbies are in memory and do not survive a restart.
+- **A match lives and dies with its node.** Lobbies are not migrated. If a node dies, its matches end,
+  its players are freed within `NodeTtlSeconds`, and they queue again. Drain a node
+  (`POST /servers/{id}/drain`) before stopping it, so its matches finish first.
+- **No autoscaler.** The fleet publishes what one needs: per-server allocation, measured `load` and
+  draining, plus `packed` placement so idle nodes empty out. Starting and stopping nodes is the platform's
+  job (ECS, Kubernetes, Agones-style fleets).
+- **The backplane is the queue's only copy.** Use a Redis or Valkey with persistence or replicas if queued
+  tickets must survive its restart. Otherwise players simply queue again. All fleet keys share one slot, so
+  one shard serves the fleet.
 - **No persistence or events.** Results are not written to the kernel event log or a store, and there
   are no metrics exporter yet beyond logs and `/servers` (with per-lobby `performance`). A consumer that
   needs match history records it from `OnMatchEnded`.
