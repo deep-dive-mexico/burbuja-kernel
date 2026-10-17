@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arena · Burbuja realtime</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; --bg:#0f1218; --panel:#171c25; --line:#2a3240; --text:#e7ebf2; --muted:#8b95a7; --accent:#4f9dff; --danger:#ff5d6c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 12px 0 0; letter-spacing:.02em; }
+  input, button { font:inherit; color:var(--text); background:#0c0f14; border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+  input { width:150px; } input.code { width:96px; text-transform:uppercase; }
+  button { cursor:pointer; background:#1f2735; } button:hover:not(:disabled) { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#06101f; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { color:var(--muted); margin-left:auto; min-width:200px; text-align:right; }
+  main { display:flex; flex-direction:column; align-items:center; padding:12px; gap:8px; }
+  .hud { width:min(100%, 1200px); min-height:24px; display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; font-size:13px; }
+  .hud .clock { font-weight:700; font-size:16px; font-variant-numeric:tabular-nums; }
+  .hud .score { font-variant-numeric:tabular-nums; }
+  .hud .meta { margin-left:auto; color:var(--muted); }
+  .stage { position:relative; width:min(100%, 1200px); aspect-ratio: 1200 / 720; }
+  canvas { width:100%; height:100%; display:block; background:#121722; border:1px solid var(--line); border-radius:8px; cursor:crosshair; }
+  .overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px;
+             background:rgba(8,10,14,.72); border-radius:8px; text-align:center; padding:16px; }
+  .overlay.show { display:flex; }
+  .overlay h2 { margin:0; font-size:28px; }
+  table { border-collapse:collapse; min-width:260px; } td, th { padding:4px 12px; border-bottom:1px solid var(--line); text-align:left; }
+  footer { color:var(--muted); text-align:center; padding:0 12px 16px; font-size:12px; }
+  kbd { border:1px solid var(--line); border-radius:4px; padding:0 4px; }
+  .touch-note { display:none; color:var(--text); margin-top:6px; }
+  @media (pointer: coarse) { .touch-note { display:block; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ Arena</h1>
+  <input id="name" maxlength="24" autocomplete="off" placeholder="Your name" aria-label="Display name">
+  <button id="quick" class="primary">Quick play</button>
+  <button id="host">Create private lobby</button>
+  <input id="code" class="code" maxlength="6" autocomplete="off" placeholder="CODE" aria-label="Join code">
+  <button id="join">Join</button>
+  <button id="rejoin" hidden>Rejoin match</button>
+  <button id="leave" disabled>Leave</button>
+  <span id="status">Pick a name and play.</span>
+</header>
+<main>
+  <div id="hud" class="hud" aria-live="off"></div>
+  <div class="stage">
+    <canvas id="view" width="1200" height="720"></canvas>
+    <div id="overlay" class="overlay"></div>
+  </div>
+</main>
+<footer>Move <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · aim with the mouse · hold click to fire. Server-authoritative at 30 Hz over a raw WebSocket.
+  <div class="touch-note">This proof of concept needs a keyboard and mouse; touch controls are not implemented.</div></footer>
+<script>
+"use strict";
+const API = "/realtime/v1";
+const COLORS = ["#4f9dff", "#ff6b6b", "#ffd166", "#06d6a0", "#c77dff", "#ff9f1c", "#2ec4b6", "#f15bb5"];
+const $ = id => document.getElementById(id);
+const ui = { name: $("name"), quick: $("quick"), host: $("host"), code: $("code"), join: $("join"),
+             rejoin: $("rejoin"), leave: $("leave"), status: $("status"), overlay: $("overlay"), canvas: $("view"), hud: $("hud") };
+const ctx = ui.canvas.getContext("2d");
+
+let guest = JSON.parse(sessionStorage.getItem("arena.guest") || "null");
+let ws = null, me = null, lobby = null, map = null, ended = null, joinCode = null;
+let prev = null, cur = null, tickMs = 1000 / 30, ping = null, feed = [], busy = false, searching = null, hudHtml = "";
+const keys = new Set(); let mouse = { x: 600, y: 360, down: false }; let lastSent = "", lastSentAt = 0;
+
+ui.name.value = guest?.displayName || localStorage.getItem("arena.name") || "";
+const setStatus = text => ui.status.textContent = text;
+const names = () => Object.fromEntries((lobby?.players || []).map(p => [p.playerId, p.displayName]));
+
+async function call(path, method = "GET", body) {
+  const headers = { "content-type": "application/json" };
+  if (guest) headers["x-player-token"] = guest.token;
+  const res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function ensureGuest() {
+  const name = ui.name.value.trim();
+  if (!name) { ui.name.focus(); throw new Error("Enter a name first."); }
+  localStorage.setItem("arena.name", name);
+  if (guest && guest.displayName === name && Date.parse(guest.expiresAt) > Date.now() + 60_000) return;
+  const r = await call("/guests", "POST", { displayName: name });
+  if (!r.ok) throw new Error(r.data?.error?.message || "Could not sign in.");
+  guest = r.data; sessionStorage.setItem("arena.guest", JSON.stringify(guest));
+}
+
+async function guarded(action) {
+  if (busy) return; busy = true; setButtons();
+  try { await action(); } catch (e) { setStatus(e.message); } finally { busy = false; setButtons(); }
+}
+
+function setButtons() {
+  const inGame = ws && ws.readyState <= 1;
+  for (const b of [ui.quick, ui.host, ui.join]) b.disabled = busy || inGame;
+  ui.leave.disabled = !inGame && !searching;
+  ui.leave.textContent = searching ? "Cancel search" : "Leave";
+}
+
+async function quickPlay() {
+  await ensureGuest();
+  let r = await call("/queue", "POST", { game: "arena" });
+  if (r.status === 409 && r.data?.ticket) r = { ok: true, data: r.data.ticket };
+  if (!r.ok) throw new Error(r.data?.error?.message || "Could not queue.");
+  let ticket = r.data; const started = Date.now();
+  searching = ticket.ticketId; setButtons();
+  try {
+    while (ticket.state === "queued") {
+      setStatus(`Searching for players… ${Math.round((Date.now() - started) / 1000)}s` + (ticket.detail ? ` (${ticket.detail})` : ""));
+      const next = await call(`/queue/${ticket.ticketId}?waitSeconds=2`);
+      if (!next.ok) throw new Error("Lost the ticket; queue again.");
+      ticket = next.data;
+    }
+  } finally {
+    searching = null;
+  }
+  if (ticket.state === "cancelled" && ticket.detail === "cancelled") { setStatus("Search cancelled."); return; }
+  if (ticket.state !== "matched") throw new Error(`Matchmaking ${ticket.state}: ${ticket.detail || ""}`);
+  connect(ticket.reservation);
+}
+
+async function hostLobby() {
+  await ensureGuest();
+  const r = await call("/lobbies", "POST", { game: "arena", visibility: "private" });
+  if (!r.ok) throw new Error(r.data?.error?.message || "Could not create a lobby.");
+  joinCode = r.data.lobby.joinCode;
+  connect(r.data.reservation);
+}
+
+async function joinByCode() {
+  await ensureGuest();
+  const code = ui.code.value.trim().toUpperCase();
+  if (!code) { ui.code.focus(); throw new Error("Enter a join code."); }
+  const r = await call("/lobbies/join", "POST", { code });
+  if (!r.ok) throw new Error(r.data?.error?.message || "Could not join.");
+  joinCode = code; connect(r.data);
+}
+
+async function rejoin() {
+  const meNow = await call("/me");
+  if (!meNow.ok || !meNow.data.lobbyId) { ui.rejoin.hidden = true; throw new Error("No match to rejoin."); }
+  const r = await call(`/lobbies/${meNow.data.lobbyId}/join`, "POST");
+  if (!r.ok) throw new Error(r.data?.error?.message || "Could not rejoin.");
+  const lobbyNow = await call(`/lobbies/${meNow.data.lobbyId}`);
+  joinCode = lobbyNow.data?.joinCode || null;
+  ui.rejoin.hidden = true; connect(r.data);
+}
+
+function connect(reservation) {
+  const url = reservation.connectUrl.startsWith("/")
+    ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host + reservation.connectUrl
+    : reservation.connectUrl.replace(/^http/, "ws");
+  ended = null; prev = cur = null; feed = []; map = null; showOverlay(null);
+  ws = new WebSocket(url);
+  setStatus(`Connecting to ${reservation.serverId}…`);
+  ws.onopen = setButtons;
+  ws.onmessage = ev => onFrame(JSON.parse(ev.data));
+  ws.onclose = ev => {
+    setButtons();
+    if (!ended) setStatus(ev.code === 1000 || ev.code === 4005 ? "Left the lobby." : `Disconnected (${ev.code} ${ev.reason || ""}).`);
+    ws = null;
+  };
+}
+
+function onFrame(msg) {
+  const d = msg.d;
+  switch (msg.t) {
+    case "sys.welcome": me = d.playerId; lobby = d.lobby; tickMs = d.tickRate ? 1000 / d.tickRate : tickMs; break;
+    case "sys.lobby": lobby = d; break;
+    case "map": map = d; break;
+    case "state": prev = cur; cur = { s: d, at: performance.now() }; break;
+    case "kill": feed.unshift({ ...d, at: performance.now() }); feed = feed.slice(0, 5); break;
+    case "sys.pong": ping = Math.round(performance.now() - d.echo.t); break;
+    case "sys.ended": ended = d; showResults(d); break;
+    case "sys.error": console.warn("server refused a message", d); break;
+  }
+  if (lobby && !ended) {
+    const n = lobby.players.length;
+    const where = `${lobby.lobbyId} on ${lobby.serverId}` + (joinCode ? ` · code ${joinCode}` : "");
+    if (lobby.state === "open") setStatus(`Waiting for players (${n}/${lobby.minPlayers} to start) · ${where}`);
+    else if (lobby.state === "countdown") setStatus(`Starting… · ${n} players · ${where}`);
+    else if (lobby.state === "running") setStatus(`Fight! · ${n} players · ${where}`);
+  }
+}
+
+function showOverlay(html) { ui.overlay.innerHTML = html || ""; ui.overlay.classList.toggle("show", !!html); }
+
+function showResults(result) {
+  const n = names(); const esc = s => String(s).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+  const rows = (result.details?.scoreboard || []).map(r =>
+    `<tr><td>${esc(n[r.id] || r.id)}${r.id === me ? " (you)" : ""}</td><td>${r.kills}</td><td>${r.deaths}</td></tr>`).join("");
+  const won = (result.winners || []).includes(me);
+  const reason = { kill_limit: "Kill limit reached", time_up: "Time's up", abandoned: "Everyone left", faulted: "The server stopped this match" }[result.reason] || result.reason;
+  showOverlay(`<h2>${won ? "🏆 You win!" : (result.winners?.length ? "Match over" : "No winner")}</h2><div>${esc(reason)}</div>
+    <table><tr><th>Player</th><th>Kills</th><th>Deaths</th></tr>${rows}</table>
+    <button class="primary" id="again">Play again</button>`);
+  $("again").onclick = () => { if (ws) ws.close(1000); guarded(quickPlay); };
+  setStatus("Match over.");
+}
+
+// ─── input ─────────────────────────────────────────────────────────────────
+addEventListener("keydown", e => { if (e.target.tagName !== "INPUT") keys.add(e.key.toLowerCase()); });
+addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => { keys.clear(); mouse.down = false; });
+ui.canvas.addEventListener("mousemove", e => {
+  const r = ui.canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * (1200 / r.width); mouse.y = (e.clientY - r.top) * (720 / r.height);
+});
+ui.canvas.addEventListener("mousedown", () => mouse.down = true);
+addEventListener("mouseup", () => mouse.down = false);
+ui.canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+setInterval(() => {
+  if (!ws || ws.readyState !== 1 || !cur) return;
+  const self = cur.s.players.find(p => p.id === me);
+  const x = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
+  const y = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+  const aim = self ? Math.atan2(mouse.y - self.y, mouse.x - self.x) : 0;
+  const input = { x, y, aim: Math.round(aim * 1000) / 1000, fire: mouse.down };
+  const key = JSON.stringify(input); const now = performance.now();
+  if (key !== lastSent || now - lastSentAt > 100) { ws.send(JSON.stringify({ t: "input", d: input })); lastSent = key; lastSentAt = now; }
+}, 1000 / 30);
+setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "sys.ping", d: { t: performance.now() } })); }, 2000);
+
+// ─── render ────────────────────────────────────────────────────────────────
+function lerp(a, b, t) { return a + (b - a) * t; }
+function draw() {
+  requestAnimationFrame(draw);
+  ctx.clearRect(0, 0, 1200, 720);
+  ctx.strokeStyle = "#1b2230"; ctx.lineWidth = 1;
+  for (let x = 0; x <= 1200; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 720); ctx.stroke(); }
+  for (let y = 0; y <= 720; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1200, y); ctx.stroke(); }
+  if (map) { ctx.fillStyle = "#2b3546"; for (const [x, y, w, h] of map.walls) ctx.fillRect(x, y, w, h); }
+  if (!cur) {
+    const text = !lobby ? "Quick play, or host a private lobby and share its code."
+      : joinCode && lobby.state === "open" ? `Share code ${joinCode} to invite a friend`
+      : "Waiting for the match to start…";
+    ctx.font = "20px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const w = ctx.measureText(text).width + 40;
+    ctx.fillStyle = "rgba(15,18,24,.92)"; ctx.beginPath(); ctx.roundRect(600 - w / 2, 330, w, 44, 10); ctx.fill();
+    ctx.fillStyle = joinCode && lobby?.state === "open" ? "#e7ebf2" : "#8b95a7"; ctx.fillText(text, 600, 352);
+    ctx.textBaseline = "alphabetic";
+    setHud(""); drawLobbyBanner(); return;
+  }
+  const t = Math.min(1, (performance.now() - cur.at) / tickMs);
+  const before = prev ? Object.fromEntries(prev.s.players.map(p => [p.id, p])) : {};
+  const n = names();
+  ctx.fillStyle = "#ffe08a";
+  for (const [x, y] of cur.s.bullets) { ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill(); }
+  for (const p of cur.s.players) {
+    const q = before[p.id] || p; const x = lerp(q.x, p.x, t), y = lerp(q.y, p.y, t);
+    const color = COLORS[p.slot % COLORS.length];
+    if (!p.alive) { ctx.globalAlpha = .25; }
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, map?.playerRadius || 16, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(p.aim) * 26, y + Math.sin(p.aim) * 26); ctx.stroke();
+    if (p.shield) { ctx.strokeStyle = "#9fd0ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 22, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#e7ebf2"; ctx.font = "12px system-ui"; ctx.textAlign = "center";
+    ctx.fillText((n[p.id] || "?") + (p.id === me ? " (you)" : ""), x, y - 30);
+    ctx.fillStyle = "#3a1d22"; ctx.fillRect(x - 18, y - 25, 36, 4);
+    ctx.fillStyle = p.hp > 40 ? "#06d6a0" : "#ff5d6c"; ctx.fillRect(x - 18, y - 25, 36 * Math.max(0, p.hp) / 100, 4);
+  }
+  const esc = v => String(v).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+  const secs = Math.ceil(cur.s.time);
+  const board = [...cur.s.players].sort((a, b) => b.kills - a.kills).map(p =>
+    `<span class="score" style="color:${COLORS[p.slot % COLORS.length]}">${esc(n[p.id] || "?")} ${p.kills}/${p.deaths}</span>`).join("");
+  const last = feed.find(f => performance.now() - f.at < 4000);
+  setHud(`<span class="clock">${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</span>${board}` +
+    `<span class="meta">${last ? `${esc(n[last.killer] || "?")} ✕ ${esc(n[last.victim] || "?")} · ` : ""}ping ${ping ?? "–"} ms · first to ${map?.killsToWin ?? 10}</span>`);
+  drawLobbyBanner();
+}
+function setHud(html) { if (html !== hudHtml) { hudHtml = html; ui.hud.innerHTML = html; } }
+function drawLobbyBanner() {
+  if (!lobby || lobby.state !== "countdown" || ended) return;
+  const left = Math.max(0, Math.ceil((lobby.countdownEndsAt - Date.now()) / 1000));
+  ctx.textAlign = "center"; ctx.fillStyle = "#4f9dff"; ctx.font = "bold 48px system-ui";
+  ctx.fillText(left > 0 ? String(left) : "GO", 600, 300);
+}
+requestAnimationFrame(draw);
+
+ui.quick.onclick = () => guarded(quickPlay);
+ui.host.onclick = () => guarded(hostLobby);
+ui.join.onclick = () => guarded(joinByCode);
+ui.rejoin.onclick = () => guarded(rejoin);
+ui.leave.onclick = () => {
+  if (searching) { const id = searching; setStatus("Cancelling…"); call(`/queue/${id}`, "DELETE"); return; }
+  if (ws) ws.send(JSON.stringify({ t: "sys.leave" }));
+};
+ui.code.addEventListener("keydown", e => { if (e.key === "Enter") guarded(joinByCode); });
+
+// After a refresh mid-match, offer to take the held seat back within the reconnect grace.
+if (guest) call("/me").then(r => { if (r.ok && r.data.lobbyId) { ui.rejoin.hidden = false; setStatus("You have a match in progress."); } });
+setButtons();
+</script>
+</body>
+</html>

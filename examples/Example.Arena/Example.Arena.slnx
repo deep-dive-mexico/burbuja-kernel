@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Example.Arena.Host/Example.Arena.Host.csproj" />
+  <Project Path="Example.Arena.Plugin/Example.Arena.Plugin.csproj" />
+</Solution>

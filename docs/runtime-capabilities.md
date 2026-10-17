@@ -25,6 +25,7 @@ test counts are not current kernel instructions. Paths below are relative to thi
 | MCP server for external drivers | `src/Burbuja.Mcp/`, `src/Burbuja.Mcp.Abstractions/` | `tests/Burbuja.Mcp.UnitTests` |
 | Mail, browser bridge and Notion callers | `src/Burbuja.Integrations/{MailIntegration,BrowserIntegration,NotionIntegration}.cs` | `MailIntegrationTests`, `BrowserBridgeTests`, `NotionIntegrationTests`, `IntegrationCallTests` |
 | Outbound MCP over stdio/Streamable HTTP and durable job continuation | `Integrations/McpIntegration.cs`; `Agents/Runtime/{Orchestration,JobToolJournal,JobExecutionScope}.cs` | `tests/Burbuja.E2E.Tests/{OutboundMcpE2ETests,JobRecoveryE2ETests}.cs` |
+| Dedicated real-time lobbies: matchmaking, lobby-server placement, fixed-tick sessions, WebSocket transport | `src/Burbuja.Realtime/`, contracts in `src/Burbuja.Realtime.Abstractions/`; [guide](realtime-lobbies.md) | `tests/Burbuja.Realtime.Tests` (fake-clock lifecycle; dynamic Arena plugin over WebSockets) |
 | Operator portal and replaceable consumer portal | `src/Burbuja.Portal/`; `BurbujaHostOptions.ConfigureBuilder`, portal registrations and Razor assemblies | Workbench `Consumer_portal_uses_its_own_assembly_and_real_cookie_policy_without_kernel_portal_access` |
 
 An agent job and a stateful agent are different lifecycles. A job starts via its

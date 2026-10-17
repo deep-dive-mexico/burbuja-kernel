@@ -1,0 +1,6 @@
+<Project>
+  <Target Name="ValidateBurbujaSource" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(BurbujaRoot)/src/Burbuja.Hosting/Burbuja.Hosting.csproj')"
+           Text="Set -p:BurbujaRoot=/absolute/path/to/a/pinned/burbuja-server checkout containing Burbuja.Hosting. The 0.4.0 packages do not provide Hosting." />
+  </Target>
+</Project>

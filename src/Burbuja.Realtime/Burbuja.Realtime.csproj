@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Realtime</RootNamespace>
+    <Description>Dedicated real-time lobbies: lifecycle, fixed-tick session loops, seat reservations, matchmaking, lobby-server balancing and the WebSocket transport.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <InternalsVisibleTo Include="Burbuja.Realtime.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Realtime.Abstractions/Burbuja.Realtime.Abstractions.csproj" />
+    <ProjectReference Include="../Burbuja.Core/Burbuja.Core.csproj" />
+  </ItemGroup>
+</Project>

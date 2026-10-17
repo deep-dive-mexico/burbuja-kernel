@@ -17,6 +17,7 @@
     <ProjectReference Include="../Burbuja.Mcp/Burbuja.Mcp.csproj" />
     <ProjectReference Include="../Burbuja.Integrations/Burbuja.Integrations.csproj" />
     <ProjectReference Include="../Burbuja.Portal/Burbuja.Portal.csproj" />
+    <ProjectReference Include="../Burbuja.Realtime/Burbuja.Realtime.csproj" />
     <ProjectReference Include="../../plugins/Burbuja.Plugins.Policy.Core/Burbuja.Plugins.Policy.Core.csproj" />
     <ProjectReference Include="../../plugins/Burbuja.Plugins.Llm.Scripted/Burbuja.Plugins.Llm.Scripted.csproj" />
     <ProjectReference Include="../../plugins/Burbuja.Plugins.Supervisor/Burbuja.Plugins.Supervisor.csproj" />

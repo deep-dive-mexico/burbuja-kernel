@@ -14,6 +14,7 @@ using Burbuja.Host.Worker;
 using Burbuja.Mcp;
 using Burbuja.Plugins.Llm.Scripted;
 using Burbuja.Portal;
+using Burbuja.Realtime;
 using Burbuja.Plugins.Policy.Core;
 using Burbuja.Plugins.Supervisor;
 using Burbuja.Plugins.Tools.Agents;
@@ -81,6 +82,9 @@ public static class BurbujaApplication
         builder.Services.AddBurbujaBrowserIntegration();
         // I3: the workspace instance of it — the report sink nightshift kept in its own process.
         builder.Services.AddBurbujaNotionIntegration();
+        // Dedicated real-time lobbies. Registered for every host and inert until Realtime:Enabled; games are
+        // IRealtimeGame services contributed by plugins.
+        builder.Services.AddBurbujaRealtime();
         builder.Services.AddOpenApi("v1", options => options.AddDocumentTransformer<ArmDocumentTransformer>());
         builder.Services.AddHostedService<KernelSeedHostedService>();
         builder.Services.AddHostedService<NodeHeartbeatService>();
@@ -108,6 +112,10 @@ public static class BurbujaApplication
         // boot check has nothing to check, which is the correct state for a node whose plugins ask for no
         // door. See `Ingress/IngressEndpoints.cs` for what the kernel does and does not do here.
         Burbuja.Host.Ingress.IngressEndpoints.Map(app);
+
+        // Realtime lobbies are mapped for every role, like ingress: players connect to the node that hosts
+        // the lobby, which need not be the node serving ARM. Nothing is mapped unless Realtime:Enabled.
+        Burbuja.Realtime.Transport.RealtimeEndpoints.Map(app);
 
         // Track 3a: /health/plugins answers one JSON document (status, host identity, one entry per
         // loaded plugin) instead of the old always-Healthy aggregate text. Unhealthy is the only

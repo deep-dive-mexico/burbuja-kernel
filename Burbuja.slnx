@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="examples/Example.Arena/Example.Arena.Host/Example.Arena.Host.csproj" />
+  <Project Path="examples/Example.Arena/Example.Arena.Plugin/Example.Arena.Plugin.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Host/Example.Workbench.Host.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" />
   <Project Path="plugins/Burbuja.Plugins.HostFacts.MacOs/Burbuja.Plugins.HostFacts.MacOs.csproj" />
@@ -25,6 +27,8 @@
   <Project Path="src/Burbuja.Mcp.Abstractions/Burbuja.Mcp.Abstractions.csproj" />
   <Project Path="src/Burbuja.Mcp/Burbuja.Mcp.csproj" />
   <Project Path="src/Burbuja.Portal/Burbuja.Portal.csproj" />
+  <Project Path="src/Burbuja.Realtime.Abstractions/Burbuja.Realtime.Abstractions.csproj" />
+  <Project Path="src/Burbuja.Realtime/Burbuja.Realtime.csproj" />
   <Project Path="src/Burbuja.TestKit/Burbuja.TestKit.csproj" />
   <Project Path="tests/Burbuja.Agents.UnitTests/Burbuja.Agents.UnitTests.csproj" />
   <Project Path="tests/Burbuja.Compute.UnitTests/Burbuja.Compute.UnitTests.csproj" />
@@ -36,6 +40,7 @@
   <Project Path="tests/Burbuja.Hosting.Tests/Burbuja.Hosting.Tests.csproj" />
   <Project Path="tests/Burbuja.Integrations.UnitTests/Burbuja.Integrations.UnitTests.csproj" />
   <Project Path="tests/Burbuja.Mcp.UnitTests/Burbuja.Mcp.UnitTests.csproj" />
+  <Project Path="tests/Burbuja.Realtime.Tests/Burbuja.Realtime.Tests.csproj" />
   <Project Path="tests/Burbuja.Store.UnitTests/Burbuja.Store.UnitTests.csproj" />
   <Project Path="tests/plugins/Burbuja.Plugins.Test.CoreRef/Burbuja.Plugins.Test.CoreRef.csproj" />
   <Project Path="tests/plugins/Burbuja.Plugins.Test.FakeDep/Burbuja.Plugins.Test.FakeDep.csproj" />

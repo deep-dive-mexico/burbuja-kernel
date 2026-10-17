@@ -6,6 +6,16 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+### Added
+
+- Dedicated real-time lobbies for multiplayer games (`Burbuja.Realtime`, contracts in
+  `Burbuja.Realtime.Abstractions`): a matchmaking queue with a widening skill window and
+  backfill, lobby-server placement (`least-loaded` or `packed`, region-aware, drainable),
+  the lobby lifecycle with a fixed-tick single-threaded session loop, seat reservations,
+  reconnect grace, inbound limits, guest players and a WebSocket transport at `/realtime/v1`.
+  Off unless `Realtime:Enabled`. The `examples/Example.Arena` shooter is the proof of concept
+  ([guide](docs/realtime-lobbies.md)).
+
 ### Delivery
 
 - Run the AKOS product's complete offline suite against every validated kernel
