@@ -463,8 +463,10 @@ public sealed class BlastSimTests
 
         var state = ctx.LastBroadcast("state")!;
         Assert.True((int)state["closedLeft"]! >= 1, "at least one column must be closed");
-        Assert.True(session.TestPlayer("b")!.Ghost,
+        Assert.False(session.TestPlayer("b")!.Alive,
             "p2 standing in closed column must be eliminated");
+        Assert.False(session.TestPlayer("b")!.Ghost,
+            "sudden death must not recreate a ghost after removing the existing ghosts");
     }
 
     // ─── 11. Ghost cannot place new bombs ────────────────────────────────────

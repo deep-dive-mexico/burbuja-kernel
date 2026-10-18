@@ -1047,8 +1047,8 @@ public sealed class BlastSession : GameSession
             if (g.Ghost && g.LatchedToId == p.Id)
                 DetachGhost(g);
 
-        if (!_ghostsEnabled || p.Ghost)
-            return; // already a ghost or ghosts disabled: just die
+        if (!_ghostsEnabled || p.Ghost || _phase == RoundPhase.Hurry)
+            return; // sudden death never creates a new interactive ghost
 
         // Become a ghost.
         p.Ghost = true;
