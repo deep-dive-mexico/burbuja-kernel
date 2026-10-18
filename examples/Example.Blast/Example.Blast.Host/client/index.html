@@ -246,9 +246,24 @@ function frameStage() {
   const { width, height } = stageData;
   const cx = width / 2, cz = height / 2;
   const fitWidth = width / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / camera.aspect;
-  const span = Math.max(Math.max(width, height), fitWidth * 0.95);
-  camera.position.set(cx, span * 0.9, cz + span * 0.5);
-  camera.lookAt(cx, 0, cz);
+  let span = Math.max(Math.max(width, height), fitWidth);
+  const top = Math.max(...stageData.cells.map(c => c.t)) + 1.5;
+  const corners = [0, width].flatMap(x => [-0.25, top].flatMap(y =>
+    [0, height].map(z => new THREE.Vector3(x, y, z))));
+  // Perspective makes the near corners wider than the stage's centre line.
+  // Fit the whole bounding box, including elevated pillars, with a small margin.
+  for (let attempt = 0; attempt < 40; attempt++) {
+    camera.position.set(cx, span * 0.9, cz + span * 0.5);
+    camera.lookAt(cx, 0, cz);
+    camera.updateMatrixWorld();
+    if (corners.every(c => {
+      const p = c.clone().project(camera);
+      return Math.abs(p.x) <= 0.94 && Math.abs(p.y) <= 0.94;
+    })) break;
+    span *= 1.08;
+  }
+  camera.far = Math.max(100, span * 4);
+  camera.updateProjectionMatrix();
   scene.fog.near = span * 1.4;
   scene.fog.far = span * 3;
 }

@@ -47,6 +47,8 @@ and [standalone deployment evidence](docs/aws-deployment.md).
   evict seats whose backplane claim moved or expired. Blast replaces a bot when a human takes
   its slot, counts the victim's controls for ghost shake-off, and removes ghost interactions
   during sudden death. Local/Valkey contracts and simulation regressions cover these cases.
+- The Blast camera fits the projected arena corners and elevated pillars on portrait screens;
+  a centre-line width estimate could still clip the near corners on a phone.
 
 - `LobbyManager` is node-local. One seat per player, lobby lookup by id or code, backfill candidates and
   the matchmaking queue go through `RealtimeFleet`, and the queue's methods are asynchronous
