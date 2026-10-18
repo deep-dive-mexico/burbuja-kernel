@@ -167,6 +167,14 @@ running tick (`Placement_reads_never_wait_on_a_running_tick`). Register more `IL
 
 ## Fleet: many nodes
 
+Fleet identity is generation-specific: a node publication atomically claims its node id and
+immutable server-id list. A rejected renewal permanently fences that process from new fleet
+mutations and publication; restart it with unique ids. Calls resolve the live instance and use
+its own RPC address, so an old subscriber cannot answer its replacement's calls. Existing
+matches can run during a backplane outage; on recovery, a seat whose claim moved or expired
+is removed at the next lobby step. This does not make disconnected game simulations atomic:
+a partition may temporarily leave an obsolete connected player until recovery reconciles it.
+
 A **fleet** is every node sharing one `IRealtimeBackplane`. The default `LocalBackplane` is in-process, so a
 single node is a fleet of one and runs the same code. Installing the `Realtime.Redis` plugin
 ([README](../plugins/Burbuja.Plugins.Realtime.Redis/README.md)) makes nodes on different machines one fleet
@@ -328,7 +336,7 @@ Errors are `{"error":{"code","message"}}` with stable codes: `unknown_game` 404,
 dotnet test tests/Burbuja.Realtime.Tests/Burbuja.Realtime.Tests.csproj -c Release
 ```
 
-93 tests, all run by `make test`. They cover the lifecycle under a fake clock (exact tick counts, the
+103 tests, all run by `make test`. They cover the lifecycle under a fake clock (exact tick counts, the
 countdown reverting, reservation expiry, reconnect grace and slot retention, single-use tokens, newer
 connections replacing older ones, rate limiting, system messages, fault isolation, seat bounds,
 join-in-progress, one seat per player, kicks, empty-lobby reaping, join codes). They also cover

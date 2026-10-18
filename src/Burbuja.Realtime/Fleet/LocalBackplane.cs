@@ -12,6 +12,7 @@ public sealed class LocalBackplane(TimeProvider time) : IRealtimeBackplane
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Expiring<BackplaneNode>> _nodes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Expiring<BackplaneNode>> _servers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Expiring<BackplaneLobby>> _lobbies = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Expiring<string>> _codes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Expiring<string>> _seats = new(StringComparer.Ordinal);
@@ -32,9 +33,17 @@ public sealed class LocalBackplane(TimeProvider time) : IRealtimeBackplane
     {
         lock (_gate)
         {
-            if (Live(_nodes, node.NodeId) is { } current && current.InstanceId != node.InstanceId)
+            var current = Live(_nodes, node.NodeId);
+            if (current is not null && current.InstanceId != node.InstanceId)
                 return ValueTask.FromResult(false);
+            if (current is not null && !current.ServerIds.SequenceEqual(node.ServerIds))
+                return ValueTask.FromResult(false);
+            foreach (var id in node.ServerIds)
+                if (Live(_servers, id) is { } owner && (owner.NodeId != node.NodeId || owner.InstanceId != node.InstanceId))
+                    return ValueTask.FromResult(false);
             _nodes[node.NodeId] = new(node, Until(ttl));
+            foreach (var id in node.ServerIds)
+                _servers[id] = new(node, Until(ttl));
             return ValueTask.FromResult(true);
         }
     }
@@ -44,7 +53,12 @@ public sealed class LocalBackplane(TimeProvider time) : IRealtimeBackplane
         lock (_gate)
         {
             if (Live(_nodes, nodeId) is { } current && current.InstanceId == instanceId)
+            {
+                foreach (var id in current.ServerIds)
+                    if (Live(_servers, id) is { } owner && owner.NodeId == nodeId && owner.InstanceId == instanceId)
+                        _servers.Remove(id);
                 _nodes.Remove(nodeId);
+            }
         }
 
         return ValueTask.CompletedTask;

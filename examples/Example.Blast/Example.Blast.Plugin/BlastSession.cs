@@ -76,6 +76,10 @@ public sealed class BlastSession : GameSession
 
     public override void OnPlayerJoined(ISessionContext context, RealtimePlayer player)
     {
+        // Bots fill slots outside the kernel's human-seat table. A late human owns
+        // their kernel slot and replaces its bot, keeping the eight-player limit.
+        foreach (var bot in _players.Values.Where(p => p.IsBot && p.Slot == player.Slot).ToArray())
+            OnPlayerLeft(context, new RealtimePlayer(bot.Id, bot.DisplayName, bot.Slot, new Dictionary<string, string>()), LeaveReason.Left);
         var p = new BlastPlayer
         {
             Id = player.PlayerId,
@@ -84,7 +88,7 @@ public sealed class BlastSession : GameSession
         };
 
         // A player who joins mid-match waits for the next round as a ghost spectator.
-        if (context.State == LobbyState.Running && _phase != RoundPhase.Ready)
+        if (context.State == LobbyState.Running)
         {
             p.Ghost = true;
             p.PendingRoundStart = true;
@@ -268,6 +272,8 @@ public sealed class BlastSession : GameSession
                 if (p.Ghost && !p.PendingRoundStart)
                 {
                     p.Alive = false;
+                    p.Ghost = false;
+                    DropCarriedBombs(p);
                     DetachIfLatched(p);
                 }
         }
@@ -349,22 +355,24 @@ public sealed class BlastSession : GameSession
 
     private void ProcessInputs(ISessionContext context, float dt)
     {
+        // Read each victim's own intent before applying the ghost's controls. Do
+        // this before the player loop so dictionary order cannot change shake-off.
+        foreach (var ghost in _players.Values)
+            if (ghost.Alive && ghost.Ghost && ghost.LatchedToId is { } victimId)
+            {
+                if (_players.TryGetValue(victimId, out var victim) && victim.Alive && !victim.Ghost)
+                    TrackLatch(ghost, victim, dt);
+                else
+                    DetachGhost(ghost);
+            }
         foreach (var p in _players.Values)
         {
-            if (!p.Alive && !p.Ghost)
+            if (!p.Alive || p.PendingRoundStart)
                 continue;
 
-            // Ghost latch: apply ghost input to victim, track shake-off.
-            if (p.Alive && p.LatchedToId is not null)
-            {
-                if (_players.TryGetValue(p.LatchedToId, out var victim))
-                    TrackLatch(p, victim, dt);
-                else
-                    p.LatchedToId = null;
-            }
-
             // Determine effective input (may be overridden by a latching ghost).
-            var input = p.Input;
+            var possessor = _players.Values.FirstOrDefault(g => g.Alive && g.Ghost && g.LatchedToId == p.Id);
+            var input = possessor is null ? p.Input : p.Input with { X = possessor.Input.X, Z = possessor.Input.Z };
 
             // Count down timers.
             if (p.StunTimer > 0) { p.StunTimer -= dt; continue; } // stunned: no action
@@ -975,6 +983,7 @@ public sealed class BlastSession : GameSession
             // Check if any player (or ghost) walks over it.
             foreach (var p in _players.Values)
             {
+                if (!p.Alive || p.PendingRoundStart) continue;
                 if (p.Ghost)
                 {
                     // Ghost touching an item destroys it without effect.
@@ -1100,15 +1109,12 @@ public sealed class BlastSession : GameSession
         ghost.Z = victim.Z;
         ghost.Tier = victim.Tier;
 
-        // Override victim's input with ghost's input.
-        victim.Input = ghost.Input;
-
         ghost.LatchTimer -= dt;
 
         // Track direction reversals for shake-off.
         ghost.LatchReverseCooldown -= dt;
-        var vdx = ghost.Input.X;
-        var vdz = ghost.Input.Z;
+        var vdx = victim.Input.X;
+        var vdz = victim.Input.Z;
         if (vdx * vdx + vdz * vdz > 0.2f && ghost.LatchReverseCooldown <= 0)
         {
             if (vdx * ghost.LatchPrevDX + vdz * ghost.LatchPrevDZ < -0.5f)
@@ -1130,6 +1136,7 @@ public sealed class BlastSession : GameSession
         ghost.LatchedToId = null;
         ghost.LatchTimer = 0;
         ghost.LatchReverseCount = 0;
+        ghost.StunTimer = 0.5f; // give the victim time to move away before another latch
     }
 
     private static void DetachIfLatched(BlastPlayer p)

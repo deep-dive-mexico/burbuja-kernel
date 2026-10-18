@@ -17,6 +17,55 @@ public sealed class FleetTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    [Fact]
+    public async Task Remote_backplane_failures_never_confirm_a_seat_is_free_or_report_a_false_not_found()
+    {
+        var time = new FakeTimeProvider();
+        var backplane = new DistributedBackplane(new LocalBackplane(time));
+        RealtimeFleet Node(string id)
+        {
+            var options = new RealtimeOptions { Enabled = true };
+            var manager = new LobbyManager(new RealtimeGames([new RecordingGame()]),
+                new LobbyBalancer([new LobbyServer(id + "-s", "local", 2, "ws://" + id + ".example.test", time, NullLogger.Instance)],
+                    new LeastLoadedPlacement(), true), options, id, time, NullLoggerFactory.Instance, runLoops: false);
+            return new RealtimeFleet(manager, backplane, RealtimeNode.Create(id), options, time, NullLogger.Instance);
+        }
+        await using var a = Node("a");
+        await using var b = Node("b");
+        await a.StartAsync(Ct);
+        await b.StartAsync(Ct);
+        var there = (await a.CreateAsync(new CreateLobbyRequest("test", LobbyVisibility.Public, LobbyOrigin.Hosted, ServerId: "a-s"),
+            [Harness.Player("p")], Ct)).Lobby!;
+        var here = (await b.CreateAsync(new CreateLobbyRequest("test", LobbyVisibility.Public, LobbyOrigin.Hosted, ServerId: "b-s"), [], Ct)).Lobby!;
+        backplane.FailedNode = "a";
+        Assert.Equal("node_unavailable", (await b.ReserveAsync(there.LobbyId, Harness.Player("q"), Ct)).Error);
+        Assert.Equal("seat_unconfirmed", (await b.ReserveAsync(here.LobbyId, Harness.Player("p"), Ct)).Error);
+        await Assert.ThrowsAsync<RealtimeBackplaneException>(() => b.LeaveAsync(there.LobbyId, "p", Ct));
+        await Assert.ThrowsAsync<RealtimeBackplaneException>(() => b.CloseAsync(there.LobbyId, "closed", Ct));
+        Assert.Equal(there.LobbyId, await backplane.SeatOfAsync("p", Ct));
+    }
+
+    [Fact]
+    public async Task An_expired_process_cannot_mutate_or_publish_after_its_identity_is_taken_over()
+    {
+        var old = new Harness();
+        var lobby = old.CreateLobby();
+        old.Time.Advance(TimeSpan.FromSeconds(6));
+        var replacement = old.Join("node-1");
+        var remote = replacement.Join("observer");
+        // Before the old process's next heartbeat, local admission must be fenced.
+        await Assert.ThrowsAsync<RealtimeBackplaneException>(() => old.Fleet.ReserveAsync(lobby.Id, Harness.Player("p"), Ct));
+        await Assert.ThrowsAsync<RealtimeBackplaneException>(() => old.Fleet.HeartbeatAsync(Ct));
+        await Assert.ThrowsAsync<RealtimeBackplaneException>(() => old.Fleet.CreateAsync(
+            new CreateLobbyRequest("test", LobbyVisibility.Public, LobbyOrigin.Hosted), [], Ct));
+        Assert.Null(await old.Backplane.FindLobbyAsync(lobby.Id, Ct));
+        await old.Fleet.DisposeAsync();
+        var created = await remote.Fleet.CreateAsync(new CreateLobbyRequest("test", LobbyVisibility.Public, LobbyOrigin.Hosted,
+            ServerId: "s1"), [], Ct);
+        Assert.NotNull(replacement.Manager.Find(created.Lobby!.LobbyId));
+        Assert.Null(old.Manager.Find(created.Lobby.LobbyId));
+    }
+
     private static (Harness A, Harness B) TwoNodes(int lobbiesEach = 1, RealtimeOptions? options = null)
     {
         var a = new Harness(null, options, new Harness().Server("a1", lobbiesEach));
@@ -92,11 +141,21 @@ public sealed class FleetTests
         Assert.Equal(here.Id, await b.Fleet.LobbyOfAsync("p", Ct));
 
         a.Run(TimeSpan.FromSeconds(3.1));
+        var sampled = here.SeatVersions();
         p.Send("""{"t":"end"}""");
         a.Step();
         await a.Fleet.FlushAsync();
         Assert.Null(await b.Fleet.LobbyOfAsync("p", Ct));
         Assert.NotNull(b.Reserve(there.LobbyId, "p").Reservation);
+        // End releases claims while keeping the results screen. Neither a fresh
+        // heartbeat nor an older in-flight reconciliation may truncate that screen.
+        foreach (var seat in sampled)
+            here.RequestLeave(seat.PlayerId, seat.Version);
+        await a.Fleet.HeartbeatAsync(Ct);
+        a.Step();
+        Assert.Equal(LobbyState.Ended, here.State);
+        Assert.True(here.HasSeat("p"));
+        Assert.True(here.HasSeat("q"));
     }
 
     [Fact]
@@ -208,6 +267,12 @@ public sealed class FleetTests
         Assert.Equal(there.LobbyId, await a.Backplane.SeatOfAsync("p", Ct));
         Assert.NotNull(a.Reserve(here, "p").Reservation);
         Assert.Equal(here.Id, await a.Backplane.SeatOfAsync("p", Ct));
+        // Recovery must evict the obsolete seat rather than keep two live seats.
+        await b.Fleet.HeartbeatAsync(Ct);
+        b.Step();
+        await b.Fleet.FlushAsync();
+        Assert.False(b.Manager.Find(there.LobbyId)!.HasSeat("p"));
+        Assert.Equal(here.Id, await a.Backplane.SeatOfAsync("p", Ct));
     }
 
     [Fact]
@@ -313,8 +378,10 @@ public sealed class FleetTests
     /// <summary>The in-process backplane presenting itself as shared, to exercise the distributed-fleet checks.</summary>
     private sealed class DistributedBackplane(LocalBackplane inner) : IRealtimeBackplane
     {
+        public string? FailedNode { get; set; }
         public bool IsDistributed => true;
-        public ValueTask<bool> PublishNodeAsync(BackplaneNode node, TimeSpan ttl, CancellationToken ct) => inner.PublishNodeAsync(node, ttl, ct);
+        public ValueTask<bool> PublishNodeAsync(BackplaneNode node, TimeSpan ttl, CancellationToken ct) =>
+            node.NodeId == FailedNode ? throw new RealtimeBackplaneException("injected write failure") : inner.PublishNodeAsync(node, ttl, ct);
         public ValueTask RemoveNodeAsync(string nodeId, string instanceId, CancellationToken ct) => inner.RemoveNodeAsync(nodeId, instanceId, ct);
         public ValueTask<IReadOnlyList<BackplaneNode>> ListNodesAsync(CancellationToken ct) => inner.ListNodesAsync(ct);
         public ValueTask PublishLobbiesAsync(IReadOnlyList<BackplaneLobby> lobbies, TimeSpan ttl, TimeSpan seatTtl, CancellationToken ct) => inner.PublishLobbiesAsync(lobbies, ttl, seatTtl, ct);

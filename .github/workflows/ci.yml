@@ -1,6 +1,10 @@
 name: Kernel source validation
 on:
   push:
+    # Feature branches validate through pull_request once; both events otherwise
+    # queue complete dev/main AKOS suites on the same host for one change.
+    branches: [dev, main, 'release/**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 permissions:

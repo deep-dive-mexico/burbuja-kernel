@@ -43,7 +43,8 @@ With `P` = key prefix (e.g. `{burbuja-rt}:`)
 
 | Key | Type | TTL | Content |
 |---|---|---|---|
-| `P node:{nodeId}` | Hash | node TTL | `i`=instanceId, `p`=payload |
+| `P node:{nodeId}` | Hash | node TTL | `i`=instanceId, `p`=payload, `s`=immutable server-id list |
+| `P server:{serverId}` | String | node TTL | `[nodeId, instanceId]`; claimed atomically with the node |
 | `P nodes` | Set | none | nodeId members (lazy-pruned on list) |
 | `P lobby:{lobbyId}` | Hash | lobby TTL | `nid`, `gid`, `lst`, `jc`, `pls` (players JSON), `p`=payload |
 | `P listed:{gameId}` | Set | none | listed lobbyId members (lazy-pruned on list) |
@@ -53,7 +54,7 @@ With `P` = key prefix (e.g. `{burbuja-rt}:`)
 | `P queue:{gameId}` | ZSet | none | member=ticketId, score=enqueuedAtMs (lazy-pruned on list) |
 | `P queued:{playerId}` | String | ticket TTL | ticketId (while ticket is queued) |
 | `P lease:{name}` | String | lease TTL | owner |
-| `P rpc:{nodeId}` | Pub/Sub channel | — | Incoming RPC envelopes for a node |
+| `P rpc:{address}` | Pub/Sub channel | — | Incoming RPC envelopes; fleet address is JSON `[nodeId, instanceId]` |
 | `P reply:{guid}` | Pub/Sub channel | — | One per backplane instance; replies carry the call's correlation id |
 | `P tickets` | Pub/Sub channel | — | Settled ticket IDs (best-effort notifications) |
 

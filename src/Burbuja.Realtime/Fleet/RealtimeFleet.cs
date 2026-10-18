@@ -60,6 +60,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     private readonly ConcurrentDictionary<string, DateTimeOffset> _abandoned = new(StringComparer.Ordinal);
     private NodeView? _nodes;
     private IAsyncDisposable? _serving;
+    private int _fenced;
 
     public RealtimeFleet(
         LobbyManager manager,
@@ -122,12 +123,12 @@ public sealed class RealtimeFleet : IAsyncDisposable
             foreach (var clash in other.Servers.Select(s => s.ServerId).Intersect(_manager.Balancer.Servers.Select(s => s.Id)))
                 errors.Add($"server '{clash}' is already hosted by node '{other.NodeId}'; server ids must be unique in the fleet");
         if (errors.Count == 0 && !await PublishFirstRecordAsync(ct))
-            errors.Add($"node id '{NodeId}' is already used by another live node; give each node its own Kernel:NodeId");
+            errors.Add($"node id '{NodeId}' or a server id is already used by another live node; give each node its own Kernel:NodeId and server ids");
         if (errors.Count > 0)
             throw new InvalidOperationException("Realtime fleet configuration is invalid: " + string.Join("; ", errors));
 
         // Serving only after the record proves this id is ours, so a duplicate never takes a live node's calls.
-        _serving = await _backplane.ServeAsync(NodeId, HandleAsync, ct);
+        _serving = await _backplane.ServeAsync(Address(NodeId, _node.InstanceId), HandleAsync, ct);
         _nodes = null;
     }
 
@@ -150,8 +151,16 @@ public sealed class RealtimeFleet : IAsyncDisposable
     /// <see cref="FleetOptions.HeartbeatMilliseconds"/>.</summary>
     public async Task HeartbeatAsync(CancellationToken ct)
     {
-        if (!await _backplane.PublishNodeAsync(NodeRecord(), NodeTtl, ct))
-            _log.LogError("Another live process publishes node id {NodeId}; this node's servers are hidden from the fleet.", NodeId);
+        await EnsureOwnerAsync(ct);
+        // A partition can outlive our lobby records. Another node may then take a
+        // player's claim. Reconcile before publishing; never revive a released claim.
+        var seats = _manager.Lobbies.SelectMany(l => l.SeatVersions().Select(s => (Lobby: l, s.PlayerId, s.Version))).ToArray();
+        // Start every read before awaiting: Redis pipelines these instead of spending
+        // one round trip per player ahead of the lobby TTL refresh.
+        var claims = await Task.WhenAll(seats.Select(s => _backplane.SeatOfAsync(s.PlayerId, ct).AsTask()));
+        for (var i = 0; i < seats.Length; i++)
+            if (claims[i] != seats[i].Lobby.Id)
+                seats[i].Lobby.RequestLeave(seats[i].PlayerId, seats[i].Version);
         var lobbies = _manager.Lobbies.Select(l => Record(l.Snapshot())).ToList();
         if (lobbies.Count > 0)
             await _backplane.PublishLobbiesAsync(lobbies, NodeTtl, SeatTtl, ct);
@@ -186,6 +195,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     /// <summary>Every live server: this node's measured now, the others' as of their last heartbeat.</summary>
     public async Task<IReadOnlyList<FleetServer>> ServersAsync(CancellationToken ct)
     {
+        ThrowIfFenced();
         var games = _manager.Games.All.Select(g => g.Id).ToList();
         var servers = _manager.Balancer.Servers.Select(s => new FleetServer(NodeId, s.Status(), games)).ToList();
         foreach (var node in await NodesAsync(ct))
@@ -294,6 +304,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     /// </summary>
     public async Task<FleetCreation> CreateAsync(CreateLobbyRequest request, IReadOnlyList<PlayerIdentity> seats, CancellationToken ct)
     {
+        await EnsureOwnerAsync(ct);
         if (_manager.Games.Find(request.GameId) is not { } game)
             return FleetCreation.Fail("unknown_game");
         var placement = new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers);
@@ -346,6 +357,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     /// Reserving again for a seated player keeps their seat and issues a fresh token (the reconnect path).</summary>
     public async Task<IReadOnlyList<ReservationResult>> ReserveAsync(string lobbyId, IReadOnlyList<PlayerIdentity> players, CancellationToken ct)
     {
+        await EnsureOwnerAsync(ct);
         if (_manager.Find(lobbyId) is { } lobby)
         {
             var results = new List<ReservationResult>(players.Count);
@@ -369,23 +381,28 @@ public sealed class RealtimeFleet : IAsyncDisposable
     }
 
     /// <summary>Frees a player's seat; false when the lobby is unknown or the player has no seat there.</summary>
-    public Task<bool> LeaveAsync(string lobbyId, string playerId, CancellationToken ct) =>
-        _manager.Find(lobbyId) is { } lobby
-            ? Task.FromResult(_manager.Leave(lobby, playerId))
-            : RemoteDoneAsync(lobbyId, new FleetCall("leave") { LobbyId = lobbyId, PlayerId = playerId }, ct);
+    public async Task<bool> LeaveAsync(string lobbyId, string playerId, CancellationToken ct)
+    {
+        await EnsureOwnerAsync(ct);
+        return _manager.Find(lobbyId) is { } lobby
+            ? _manager.Leave(lobby, playerId)
+            : await RemoteDoneAsync(lobbyId, new FleetCall("leave") { LobbyId = lobbyId, PlayerId = playerId }, ct);
+    }
 
     /// <summary>Ends a lobby's match and closes it at its next step.</summary>
-    public Task<bool> CloseAsync(string lobbyId, string reason, CancellationToken ct)
+    public async Task<bool> CloseAsync(string lobbyId, string reason, CancellationToken ct)
     {
+        await EnsureOwnerAsync(ct);
         if (_manager.Find(lobbyId) is not { } lobby)
-            return RemoteDoneAsync(lobbyId, new FleetCall("close") { LobbyId = lobbyId, Reason = reason }, ct);
+            return await RemoteDoneAsync(lobbyId, new FleetCall("close") { LobbyId = lobbyId, Reason = reason }, ct);
         lobby.RequestClose(reason);
-        return Task.FromResult(true);
+        return true;
     }
 
     /// <summary>Drains or activates a server on whichever node hosts it. Null when no live node has it.</summary>
     public async Task<LobbyServerState?> SetServerStateAsync(string serverId, bool drain, CancellationToken ct)
     {
+        await EnsureOwnerAsync(ct);
         if (_manager.Server(serverId) is { } server)
         {
             if (drain)
@@ -436,7 +453,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
         // Published before any seat is claimed, so a claim naming this lobby is never mistaken for a stale one,
         // and with the node's new allocation, so a burst of placements elsewhere sees this server fill.
         await _backplane.PublishLobbiesAsync([Record(lobby.Snapshot())], NodeTtl, SeatTtl, ct);
-        await _backplane.PublishNodeAsync(NodeRecord(), NodeTtl, ct);
+        await EnsureOwnerAsync(ct);
         var reservations = new List<ReservationResult>(seats.Count);
         foreach (var seat in seats)
             reservations.Add(await ReserveHereAsync(lobby, seat, ct));
@@ -512,7 +529,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
         {
             reply = Parse<FleetCall>(request) is { } call ? await ExecuteAsync(call, ct) : new FleetReply { Error = "bad_request" };
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not RealtimeBackplaneException and not TimeoutException)
         {
             _log.LogError(ex, "Node {NodeId} failed a fleet call.", NodeId);
             reply = new FleetReply { Error = "internal_error" };
@@ -523,6 +540,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
 
     private async Task<FleetReply> ExecuteAsync(FleetCall call, CancellationToken ct)
     {
+        await EnsureOwnerAsync(ct);
         if (call.Op == "create")
         {
             var created = await CreateHereAsync(call.Create!, call.Players ?? [], ct);
@@ -592,7 +610,9 @@ public sealed class RealtimeFleet : IAsyncDisposable
 
     private async Task<FleetReply> CallAsync(string nodeId, FleetCall call, CancellationToken ct)
     {
-        var reply = await _backplane.CallAsync(nodeId, JsonSerializer.Serialize(call, Json), CallTimeout, ct);
+        var owner = (await _backplane.ListNodesAsync(ct)).SingleOrDefault(n => n.NodeId == nodeId)
+            ?? throw new TimeoutException($"Node '{nodeId}' has no live owner.");
+        var reply = await _backplane.CallAsync(Address(nodeId, owner.InstanceId), JsonSerializer.Serialize(call, Json), CallTimeout, ct);
         return Parse<FleetReply>(reply) ?? throw new RealtimeBackplaneException($"Node '{nodeId}' sent an unreadable reply.");
     }
 
@@ -614,7 +634,31 @@ public sealed class RealtimeFleet : IAsyncDisposable
         NodeId,
         _manager.Games.All.Select(g => g.Id).ToList(),
         _manager.Balancer.Servers.Select(s => s.Status()).ToList(),
-        _startedAt), Json));
+        _startedAt), Json)) { ServerIds = _manager.Balancer.Servers.Select(s => s.Id).Order(StringComparer.Ordinal).ToArray() };
+
+    private static string Address(string nodeId, string instanceId) => JsonSerializer.Serialize(new[] { nodeId, instanceId });
+
+    private void ThrowIfFenced()
+    {
+        if (Volatile.Read(ref _fenced) != 0)
+            throw new RealtimeBackplaneException($"Node '{NodeId}' lost its fleet identity; restart with a unique node and server configuration.");
+    }
+
+    private async Task EnsureOwnerAsync(CancellationToken ct)
+    {
+        ThrowIfFenced();
+        if (await _backplane.PublishNodeAsync(NodeRecord(), NodeTtl, ct))
+            return;
+        Interlocked.Exchange(ref _fenced, 1);
+        foreach (var server in _manager.Balancer.Servers)
+            server.Drain();
+        foreach (var lobby in _manager.Lobbies)
+            lobby.RequestClose("node_identity_lost");
+        if (Interlocked.Exchange(ref _serving, null) is { } serving)
+            await serving.DisposeAsync();
+        _log.LogError("Node {NodeId} lost ownership and is fenced from the fleet.", NodeId);
+        ThrowIfFenced();
+    }
 
     private BackplaneLobby Record(LobbySnapshot snapshot) => new(
         snapshot.LobbyId,

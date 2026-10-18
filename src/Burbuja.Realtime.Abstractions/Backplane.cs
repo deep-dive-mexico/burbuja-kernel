@@ -25,7 +25,8 @@ public interface IRealtimeBackplane
     // ─── nodes ───────────────────────────────────────────────────────────────────────────────
 
     /// <summary>Publishes a node's record. False when another live instance already publishes this node id,
-    /// which means two processes were given the same <c>Kernel:NodeId</c>.</summary>
+    /// or any server id. Node and server claims are acquired atomically, with no partial claims
+    /// on refusal. Server ids are immutable for the lifetime of an instance.</summary>
     ValueTask<bool> PublishNodeAsync(BackplaneNode node, TimeSpan ttl, CancellationToken ct);
 
     /// <summary>Removes the node's record if <paramref name="instanceId"/> still owns it.</summary>
@@ -118,7 +119,10 @@ public interface IRealtimeBackplane
 
 /// <summary>A node as the fleet sees it. <paramref name="InstanceId"/> is unique per process start, so a
 /// duplicated node id is detected instead of two processes overwriting each other.</summary>
-public sealed record BackplaneNode(string NodeId, string InstanceId, string Payload);
+public sealed record BackplaneNode(string NodeId, string InstanceId, string Payload)
+{
+    public IReadOnlyList<string> ServerIds { get; init; } = [];
+}
 
 /// <summary>Where a lobby lives, and whether it is listed (public and not finished).</summary>
 /// <param name="Players">Players whose seat claims this lobby owns, refreshed with the record.</param>

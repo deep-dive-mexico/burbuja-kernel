@@ -26,6 +26,31 @@ public abstract class BackplaneContractTests
     private static readonly TimeSpan Long = TimeSpan.FromMinutes(5);
 
     [Fact]
+    public async Task Node_and_server_ids_are_claimed_atomically_and_old_instances_cannot_remove_successors()
+    {
+        var bp = Backplane;
+        var a = new BackplaneNode("a", "old", "{}") { ServerIds = ["only-a", "shared"] };
+        var b = new BackplaneNode("b", "b-instance", "{}") { ServerIds = ["only-b", "shared"] };
+        var results = await Task.WhenAll(bp.PublishNodeAsync(a, Ttl, Ct).AsTask(), bp.PublishNodeAsync(b, Ttl, Ct).AsTask());
+        Assert.Single(results, r => r);
+        var winner = results[0] ? a : b;
+        var loser = results[0] ? b : a;
+        Assert.Equal(winner.NodeId, Assert.Single(await bp.ListNodesAsync(Ct)).NodeId);
+        // The loser's earlier keys must not have been claimed before its collision.
+        var exclusive = loser.ServerIds.Single(id => id != "shared");
+        Assert.True(await bp.PublishNodeAsync(new BackplaneNode("third", "third-instance", "{}") { ServerIds = [exclusive] }, Long, Ct));
+        await ExpireAsync();
+        var successor = winner with { InstanceId = "new" };
+        Assert.True(await bp.PublishNodeAsync(successor, Long, Ct));
+        Assert.False(await bp.PublishNodeAsync(winner, Long, Ct));
+        await bp.RemoveNodeAsync(winner.NodeId, winner.InstanceId, Ct);
+        Assert.Contains(await bp.ListNodesAsync(Ct), n => n.NodeId == winner.NodeId && n.InstanceId == "new");
+        Assert.False(await bp.PublishNodeAsync(loser, Long, Ct));
+        await bp.RemoveNodeAsync(successor.NodeId, successor.InstanceId, Ct);
+        Assert.True(await bp.PublishNodeAsync(new BackplaneNode("last", "last-instance", "{}") { ServerIds = ["shared"] }, Long, Ct));
+    }
+
+    [Fact]
     public async Task Nodes_are_listed_until_they_expire_and_a_node_id_has_one_owner()
     {
         var bp = Backplane;

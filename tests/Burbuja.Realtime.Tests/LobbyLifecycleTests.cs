@@ -7,6 +7,26 @@ namespace Burbuja.Realtime.Tests;
 public sealed class LobbyLifecycleTests
 {
     [Fact]
+    public void A_stale_reconciliation_cannot_evict_a_fresh_reservation_or_connection()
+    {
+        var h = new Harness();
+        var lobby = h.CreateLobby();
+        h.Connect(lobby, "p");
+        h.Step();
+        var stale = Assert.Single(lobby.SeatVersions());
+        lobby.RequestLeave(stale.PlayerId, stale.Version);
+        var fresh = h.Reserve(lobby, "p").Reservation!;
+        var connection = h.Admit(fresh);
+        h.Step();
+        Assert.True(lobby.HasSeat("p"));
+        Assert.Single(connection.OfType(RealtimeProtocol.Welcome));
+        var current = Assert.Single(lobby.SeatVersions());
+        lobby.RequestLeave(current.PlayerId, current.Version);
+        h.Step();
+        Assert.False(lobby.HasSeat("p"));
+    }
+
+    [Fact]
     public void A_lobby_walks_open_countdown_running_ended_closed_and_releases_its_capacity()
     {
         var h = new Harness();

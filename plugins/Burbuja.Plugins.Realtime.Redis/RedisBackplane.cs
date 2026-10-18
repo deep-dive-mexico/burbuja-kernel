@@ -28,15 +28,25 @@ public sealed class RedisBackplane : IRealtimeBackplane, IAsyncDisposable
     private static readonly string ScriptPublishNode = @"
 local cur = redis.call('HGET', KEYS[1], 'i')
 if cur and cur ~= '' and cur ~= ARGV[1] then return 0 end
-redis.call('HSET', KEYS[1], 'i', ARGV[1], 'p', ARGV[2])
+local servers = redis.call('HGET', KEYS[1], 's')
+if servers and servers ~= ARGV[5] then return 0 end
+for k = 3, #KEYS do
+  local owner = redis.call('GET', KEYS[k])
+  if owner and owner ~= ARGV[6] then return 0 end
+end
+redis.call('HSET', KEYS[1], 'i', ARGV[1], 'p', ARGV[2], 's', ARGV[5])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 redis.call('SADD', KEYS[2], ARGV[4])
+for k = 3, #KEYS do redis.call('SET', KEYS[k], ARGV[6], 'PX', ARGV[3]) end
 return 1";
 
     // RemoveNodeAsync: DEL if this instance still owns the node.
     private static readonly string ScriptRemoveNode = @"
 local cur = redis.call('HGET', KEYS[1], 'i')
 if cur == ARGV[1] then
+  for k = 3, #KEYS do
+    if redis.call('GET', KEYS[k]) == ARGV[3] then redis.call('DEL', KEYS[k]) end
+  end
   redis.call('DEL', KEYS[1])
   redis.call('SREM', KEYS[2], ARGV[2])
 end";
@@ -170,8 +180,9 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
         try
         {
             var result = await Db().ScriptEvaluateAsync(ScriptPublishNode,
-                [K("node:" + node.NodeId), K("nodes")],
-                [node.InstanceId, node.Payload, (long)ttl.TotalMilliseconds, node.NodeId]);
+                [K("node:" + node.NodeId), K("nodes"), .. node.ServerIds.Select(id => K("server:" + id))],
+                [node.InstanceId, node.Payload, (long)ttl.TotalMilliseconds, node.NodeId,
+                 JsonSerializer.Serialize(node.ServerIds), JsonSerializer.Serialize(new[] { node.NodeId, node.InstanceId })]);
             return (long)result == 1L;
         }
         catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to publish node.", ex); }
@@ -182,9 +193,12 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
     {
         try
         {
-            await Db().ScriptEvaluateAsync(ScriptRemoveNode,
-                [K("node:" + nodeId), K("nodes")],
-                [instanceId, nodeId]);
+            var db = Db();
+            var servers = await db.HashGetAsync(K("node:" + nodeId), "s");
+            var ids = servers.IsNullOrEmpty ? [] : JsonSerializer.Deserialize<string[]>((string)servers!) ?? [];
+            await db.ScriptEvaluateAsync(ScriptRemoveNode,
+                [K("node:" + nodeId), K("nodes"), .. ids.Select(id => K("server:" + id))],
+                [instanceId, nodeId, JsonSerializer.Serialize(new[] { nodeId, instanceId })]);
         }
         catch (Exception ex) when (IsRedisFailure(ex)) { throw new RealtimeBackplaneException("Failed to remove node.", ex); }
     }
@@ -210,7 +224,10 @@ if cur == ARGV[1] then redis.call('DEL', KEYS[1]) end";
                 var fields = tasks[i].Result;
                 if (fields.Length == 0) { dead.Add(members[i]); continue; }
                 var h = fields.ToDictionary(f => (string)f.Name!, f => (string?)f.Value);
-                result.Add(new BackplaneNode((string)members[i]!, h.GetValueOrDefault("i") ?? "", h.GetValueOrDefault("p") ?? "{}"));
+                result.Add(new BackplaneNode((string)members[i]!, h.GetValueOrDefault("i") ?? "", h.GetValueOrDefault("p") ?? "{}")
+                {
+                    ServerIds = JsonSerializer.Deserialize<string[]>(h.GetValueOrDefault("s") ?? "[]") ?? [],
+                });
             }
 
             if (dead.Count > 0)

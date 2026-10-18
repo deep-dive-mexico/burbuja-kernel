@@ -14,6 +14,120 @@ namespace Burbuja.Realtime.Tests;
 /// </summary>
 public sealed class BlastSimTests
 {
+    [Fact]
+    public void A_human_joining_during_ready_waits_for_the_next_round()
+    {
+        var ctx = new FakeBlastContext(1);
+        var session = new BlastSession(MakeOptions(new() { ["bots"] = "7" }));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("a", 0));
+        session.OnMatchStarted(ctx);
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("late", 1));
+        var late = session.TestPlayer("late")!;
+        Assert.True(late.PendingRoundStart);
+        Assert.False(late.Alive);
+        TickFor(session, ctx, 2.1f);
+        Assert.True(late.PendingRoundStart);
+        Assert.False(late.Alive);
+    }
+
+    [Fact]
+    public void A_ghost_overrides_movement_but_cannot_press_the_victims_action_buttons()
+    {
+        var ctx = new FakeBlastContext(1);
+        var session = CreateSession(ctx);
+        var victim = ctx.AddPlayer("victim", 0);
+        session.OnPlayerJoined(ctx, victim);
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("other", 1));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("ghost", 2));
+        session.OnMatchStarted(ctx);
+        session.TestClearSoftBlocks();
+        TickFor(session, ctx, 2.1f);
+        session.TestPlacePlayer("victim", 5.5f, 5.5f);
+        var ghost = session.TestPlayer("ghost")!;
+        ghost.Ghost = true;
+        ghost.LatchedToId = "victim";
+        ghost.LatchTimer = 4;
+        ghost.Input = new InputState(0, 0, true, true, true);
+        TickFor(session, ctx, 0.04f);
+        Assert.DoesNotContain(session.TestBombs, b => b.OwnerId == "victim");
+        session.OnMessage(ctx, victim, TextMsg("input", new { x = 0, z = 0, a = true }, 1));
+        TickFor(session, ctx, 0.04f);
+        Assert.Contains(session.TestBombs, b => b.OwnerId == "victim");
+    }
+
+    [Fact]
+    public void A_late_human_replaces_the_bot_in_their_slot_and_waits_without_interacting()
+    {
+        var ctx = new FakeBlastContext(1);
+        var session = new BlastSession(MakeOptions(new() { ["bots"] = "7" }));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("a", 0));
+        session.OnMatchStarted(ctx);
+        TickFor(session, ctx, 2.1f);
+        var late = ctx.AddPlayer("late", 1);
+        session.OnPlayerJoined(ctx, late);
+        Assert.Null(session.TestPlayer("bot-0"));
+        var spectator = session.TestPlayer("late")!;
+        Assert.True(spectator.PendingRoundStart);
+        var x = spectator.X;
+        session.OnMessage(ctx, late, TextMsg("input", new { x = 1, z = 0, a = true, b = true }, 1));
+        TickFor(session, ctx, 0.1f);
+        Assert.Equal(x, spectator.X);
+        Assert.DoesNotContain(session.TestBombs, b => b.OwnerId == "late");
+    }
+
+    [Fact]
+    public void The_victims_six_reversals_shake_off_a_ghost_without_overwriting_human_input()
+    {
+        var ctx = new FakeBlastContext(1);
+        var session = CreateSession(ctx);
+        var victim = ctx.AddPlayer("victim", 0);
+        session.OnPlayerJoined(ctx, victim);
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("other", 1));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("ghost", 2));
+        session.OnMatchStarted(ctx);
+        session.TestClearSoftBlocks();
+        TickFor(session, ctx, 2.1f);
+        var ghost = session.TestPlayer("ghost")!;
+        ghost.Ghost = true;
+        ghost.LatchedToId = "victim";
+        ghost.LatchTimer = 4;
+        ghost.LatchPrevDX = 1;
+        for (var i = 0; i < 6; i++)
+        {
+            var direction = i % 2 == 0 ? -1 : 1;
+            session.OnMessage(ctx, victim, TextMsg("input", new { x = direction, z = 0 }, i));
+            TickFor(session, ctx, 0.2f);
+            Assert.Equal(direction, session.TestPlayer("victim")!.Input.X);
+            if (i < 5) Assert.Equal(i + 1, ghost.LatchReverseCount);
+        }
+        Assert.Null(ghost.LatchedToId);
+    }
+
+    [Fact]
+    public void Hurry_removes_ghosts_and_their_latches_even_when_input_is_held()
+    {
+        var ctx = new FakeBlastContext(1);
+        var session = new BlastSession(MakeOptions(new() { ["round-seconds"] = "60" }));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("victim", 0));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("other", 1));
+        session.OnPlayerJoined(ctx, ctx.AddPlayer("ghost", 2));
+        session.OnMatchStarted(ctx);
+        session.TestClearSoftBlocks();
+        var ghost = session.TestPlayer("ghost")!;
+        ghost.Ghost = true;
+        ghost.LatchedToId = "victim";
+        ghost.LatchTimer = 4;
+        ghost.Input = new InputState(1, 0, true, true, false);
+        // A 60-second round enters Hurry on its first Fight tick.
+        TickFor(session, ctx, 2.1f);
+        var x = ghost.X;
+        TickFor(session, ctx, 0.1f);
+        Assert.False(ghost.Alive);
+        Assert.False(ghost.Ghost);
+        Assert.Null(ghost.LatchedToId);
+        Assert.Equal(x, ghost.X);
+    }
+
     // ─── 1. Bomb explodes after fuse, eliminates player in range ─────────────
 
     [Fact]

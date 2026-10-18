@@ -42,6 +42,12 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Changed
 
+- Fleet node publication claims all server ids atomically. RPC targets the current process
+  instance, an obsolete instance is fenced from new fleet mutations, and recovering nodes
+  evict seats whose backplane claim moved or expired. Blast replaces a bot when a human takes
+  its slot, counts the victim's controls for ghost shake-off, and removes ghost interactions
+  during sudden death. Local/Valkey contracts and simulation regressions cover these cases.
+
 - `LobbyManager` is node-local. One seat per player, lobby lookup by id or code, backfill candidates and
   the matchmaking queue go through `RealtimeFleet`, and the queue's methods are asynchronous
   (`EnqueueAsync`, `GetAsync`, `CancelAsync`, `RunCycleAsync`).

@@ -45,6 +45,7 @@ public sealed class Lobby
     private readonly ConcurrentQueue<Inbound> _inbox = new();
     private readonly Dictionary<string, Seat> _seats = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _tokens = new(StringComparer.Ordinal);
+    private long _nextSeatVersion;
     private readonly List<(string PlayerId, string Reason)> _pendingKicks = [];
     private readonly ILobbyObserver _observer;
     private readonly ILogger _log;
@@ -196,6 +197,19 @@ public sealed class Lobby
     /// <summary>Asks the lobby to free a player's seat at its next step.</summary>
     public void RequestLeave(string playerId) => _inbox.Enqueue(new Inbound(InboundKind.Leave, playerId, null));
 
+    internal IReadOnlyList<(string PlayerId, long Version)> SeatVersions()
+    {
+        lock (_gate)
+            return _state < LobbyState.Ended
+                ? _seats.Values.Select(s => (s.Player.PlayerId, s.Version)).ToList()
+                : [];
+    }
+
+    // A reconciliation read may finish after a reconnect issued a fresh token.
+    // Only remove the generation that the heartbeat actually inspected.
+    internal void RequestLeave(string playerId, long version) =>
+        _inbox.Enqueue(new Inbound(InboundKind.Leave, playerId, null) { SeatVersion = version });
+
     /// <summary>Asks the lobby to end its match (if any) and close at its next step.</summary>
     public void RequestClose(string reason) =>
         _inbox.Enqueue(new Inbound(InboundKind.Close, "", null) { Reason = reason });
@@ -325,7 +339,8 @@ public sealed class Lobby
                 continue;
             if (item.Kind == InboundKind.Leave)
             {
-                RemoveSeat(seat, LeaveReason.Left);
+                if (item.SeatVersion is null || (_state < LobbyState.Ended && item.SeatVersion == seat.Version))
+                    RemoveSeat(seat, LeaveReason.Left);
                 continue;
             }
 
@@ -732,6 +747,7 @@ public sealed class Lobby
         var token = Id + "." + Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
         seat.Token = token;
+        seat.Version = ++_nextSeatVersion;
         seat.TokenExpiresAt = now + _limits.ReservationTtl;
         _tokens[token] = seat.Player.PlayerId;
         var path = RealtimeProtocol.ConnectPath + "?token=" + Uri.EscapeDataString(token);
@@ -813,6 +829,7 @@ public sealed class Lobby
 
     private sealed class Seat(RealtimePlayer player)
     {
+        public long Version { get; set; }
         public RealtimePlayer Player { get; } = player;
         public string? Token { get; set; }
         public DateTimeOffset TokenExpiresAt { get; set; }
@@ -843,6 +860,7 @@ public sealed class Lobby
 
     private sealed record Inbound(InboundKind Kind, string PlayerId, IPlayerConnection? Connection)
     {
+        public long? SeatVersion { get; init; }
         public byte[]? Frame { get; init; }
         public FrameFormat Format { get; init; }
         public string? Reason { get; init; }
