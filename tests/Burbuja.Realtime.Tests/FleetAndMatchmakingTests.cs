@@ -131,56 +131,64 @@ public sealed class SkillWindowMatchmakerTests
 
 public sealed class MatchmakingQueueTests
 {
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private static async Task<TicketView> EnqueueAsync(Harness h, string player) =>
+        (await h.Queue.EnqueueAsync(Harness.Player(player), "test", null, Ct)).Ticket!;
+
     [Fact]
-    public void Queued_players_are_matched_into_one_placed_lobby_and_later_players_backfill_it()
+    public async Task Queued_players_are_matched_into_one_placed_lobby_and_later_players_backfill_it()
     {
         var h = new Harness();
-        var a = h.Queue.Enqueue(Harness.Player("a"), "test", null).Ticket!;
-        h.Queue.RunCycle(h.Time.GetUtcNow());
-        Assert.Equal(TicketState.Queued, h.Queue.Get(a.TicketId)!.State);
+        var a = await EnqueueAsync(h, "a");
+        await h.Queue.RunCycleAsync(h.Time.GetUtcNow(), Ct);
+        Assert.Equal(TicketState.Queued, (await h.Queue.GetAsync(a.TicketId, Ct))!.State);
 
-        var b = h.Queue.Enqueue(Harness.Player("b"), "test", null).Ticket!;
-        h.Queue.RunCycle(h.Time.GetUtcNow());
-        var matchedA = h.Queue.Get(a.TicketId)!;
-        var matchedB = h.Queue.Get(b.TicketId)!;
+        var b = await EnqueueAsync(h, "b");
+        await h.Queue.RunCycleAsync(h.Time.GetUtcNow(), Ct);
+        var matchedA = (await h.Queue.GetAsync(a.TicketId, Ct))!;
+        var matchedB = (await h.Queue.GetAsync(b.TicketId, Ct))!;
         Assert.Equal(TicketState.Matched, matchedA.State);
         Assert.Equal(matchedA.Reservation!.LobbyId, matchedB.Reservation!.LobbyId);
         var lobby = h.Manager.Find(matchedA.Reservation.LobbyId)!;
         Assert.Equal(LobbyOrigin.Matchmaking, lobby.Origin);
 
-        var c = h.Queue.Enqueue(Harness.Player("c"), "test", null).Ticket!;
-        h.Queue.RunCycle(h.Time.GetUtcNow());
-        Assert.Equal(lobby.Id, h.Queue.Get(c.TicketId)!.Reservation!.LobbyId);
+        var c = await EnqueueAsync(h, "c");
+        await h.Queue.RunCycleAsync(h.Time.GetUtcNow(), Ct);
+        Assert.Equal(lobby.Id, (await h.Queue.GetAsync(c.TicketId, Ct))!.Reservation!.LobbyId);
         Assert.Equal(3, lobby.SeatCount);
         Assert.Single(h.Manager.Lobbies);
     }
 
     [Fact]
-    public void One_ticket_per_player_cancel_and_expiry()
+    public async Task One_ticket_per_player_cancel_and_expiry()
     {
         var h = new Harness(options: new RealtimeOptions { Enabled = true, Matchmaking = { TicketTimeoutSeconds = 10 } });
-        var first = h.Queue.Enqueue(Harness.Player("a"), "test", null);
-        Assert.Equal("already_queued", h.Queue.Enqueue(Harness.Player("a"), "test", null).Error);
-        Assert.Equal("unknown_game", h.Queue.Enqueue(Harness.Player("z"), "nope", null).Error);
-        Assert.False(h.Queue.Cancel(first.Ticket!.TicketId, "someone-else"));
-        Assert.True(h.Queue.Cancel(first.Ticket.TicketId, "a"));
-        Assert.Equal(TicketState.Cancelled, h.Queue.Get(first.Ticket.TicketId)!.State);
+        var first = await h.Queue.EnqueueAsync(Harness.Player("a"), "test", null, Ct);
+        Assert.Equal("already_queued", (await h.Queue.EnqueueAsync(Harness.Player("a"), "test", null, Ct)).Error);
+        Assert.Equal("unknown_game", (await h.Queue.EnqueueAsync(Harness.Player("z"), "nope", null, Ct)).Error);
+        Assert.False(await h.Queue.CancelAsync(first.Ticket!.TicketId, "someone-else", Ct));
+        Assert.True(await h.Queue.CancelAsync(first.Ticket.TicketId, "a", Ct));
+        Assert.False(await h.Queue.CancelAsync(first.Ticket.TicketId, "a", Ct));
+        Assert.Equal(TicketState.Cancelled, (await h.Queue.GetAsync(first.Ticket.TicketId, Ct))!.State);
 
-        var second = h.Queue.Enqueue(Harness.Player("a"), "test", null).Ticket!;
+        var second = await EnqueueAsync(h, "a");
         h.Time.Advance(TimeSpan.FromSeconds(11));
-        h.Queue.RunCycle(h.Time.GetUtcNow());
-        Assert.Equal(TicketState.Expired, h.Queue.Get(second.TicketId)!.State);
+        await h.Queue.RunCycleAsync(h.Time.GetUtcNow(), Ct);
+        var expired = (await h.Queue.GetAsync(second.TicketId, Ct))!;
+        Assert.Equal(TicketState.Expired, expired.State);
+        Assert.Equal("no_match_found", expired.Detail);
     }
 
     [Fact]
-    public void Without_capacity_tickets_wait_and_say_why()
+    public async Task Without_capacity_tickets_wait_and_say_why()
     {
         var h = new Harness(null, null, new Harness(new RecordingGame()).Server("full", 1));
         h.CreateLobby();
-        var a = h.Queue.Enqueue(Harness.Player("a"), "test", null).Ticket!;
-        h.Queue.Enqueue(Harness.Player("b"), "test", null);
-        h.Queue.RunCycle(h.Time.GetUtcNow());
-        var waiting = h.Queue.Get(a.TicketId)!;
+        var a = await EnqueueAsync(h, "a");
+        await EnqueueAsync(h, "b");
+        await h.Queue.RunCycleAsync(h.Time.GetUtcNow(), Ct);
+        var waiting = (await h.Queue.GetAsync(a.TicketId, Ct))!;
         Assert.Equal(TicketState.Queued, waiting.State);
         Assert.Equal("waiting_for_capacity", waiting.Detail);
     }
@@ -189,12 +197,12 @@ public sealed class MatchmakingQueueTests
     public async Task A_long_poll_returns_as_soon_as_the_ticket_is_matched()
     {
         var h = new Harness();
-        var a = h.Queue.Enqueue(Harness.Player("a"), "test", null).Ticket!;
-        var wait = h.Queue.WaitAsync(a.TicketId, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var a = await EnqueueAsync(h, "a");
+        var wait = h.Queue.WaitAsync(a.TicketId, TimeSpan.FromSeconds(30), Ct);
         Assert.False(wait.IsCompleted);
-        h.Queue.Enqueue(Harness.Player("b"), "test", null);
-        h.Queue.RunCycle(h.Time.GetUtcNow());
-        var settled = await wait.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await EnqueueAsync(h, "b");
+        await h.Queue.RunCycleAsync(h.Time.GetUtcNow(), Ct);
+        var settled = await wait.WaitAsync(TimeSpan.FromSeconds(5), Ct);
         Assert.Equal(TicketState.Matched, settled!.State);
     }
 }

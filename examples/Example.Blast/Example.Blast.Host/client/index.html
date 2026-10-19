@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blast</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #111; color: #eee; font: 14px/1.5 system-ui,sans-serif; overflow: hidden; }
+#ui { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(0,0,0,.75); z-index: 10; }
+#ui h1 { font-size: 2.2rem; letter-spacing: .05em; }
+#ui input { padding: 8px 12px; border-radius: 6px; border: 1px solid #555; background: #222; color: #eee; width: 220px; font-size: 14px; }
+#ui button { padding: 9px 20px; border-radius: 6px; border: none; background: #e55; color: #fff; cursor: pointer; font-size: 14px; }
+#ui button:hover { background: #f66; }
+#ui .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+#ui .panel { background: rgba(255,255,255,.05); border: 1px solid #333; border-radius: 8px; padding: 16px; min-width: 280px; }
+#ui .panel h2 { font-size: 1rem; margin-bottom: 10px; }
+#ui select { padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #eee; font-size: 13px; }
+#ui label { font-size: 13px; color: #aaa; }
+#canvas-wrap { position: absolute; inset: 0; }
+canvas { display: block; width: 100%; height: 100%; }
+#hud { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
+#hud-top { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 12px; background: rgba(0,0,0,.5); }
+#hud-timer { font-size: 1.4rem; font-weight: bold; }
+#hud-round { font-size: 1rem; }
+#hud-hurry { color: #f84; font-size: 1.8rem; font-weight: bold; display: none; animation: pulse 0.5s ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.4; } }
+#hud-players { display: flex; gap: 8px; padding: 6px 12px; flex-wrap: wrap; }
+.slot-hud { display: flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 4px; background: rgba(255,255,255,.08); font-size: 12px; }
+.slot-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+#msg { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.7); padding: 12px 24px; border-radius: 8px; font-size: 1.2rem; display: none; text-align: center; }
+#hud-results { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.6); }
+#hud-results .box { background: #1a1a1a; border: 1px solid #444; border-radius: 12px; padding: 24px; min-width: 300px; }
+#hud-results h2 { margin-bottom: 12px; font-size: 1.4rem; }
+#hud-results table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#hud-results td { padding: 5px 8px; border-bottom: 1px solid #2a2a2a; }
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap"><canvas id="c"></canvas></div>
+
+<div id="hud">
+  <div id="hud-top">
+    <div>
+      <div id="hud-round">Round 1</div>
+      <div id="hud-hurry">HURRY UP!</div>
+    </div>
+    <div id="hud-timer">2:00</div>
+  </div>
+  <div id="hud-players"></div>
+</div>
+
+<div id="msg"></div>
+
+<div id="hud-results" style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; background:rgba(0,0,0,.6);">
+  <div class="box">
+    <h2 id="results-title">Match Over</h2>
+    <table id="results-table"></table>
+    <br>
+    <button onclick="location.reload()">Back to lobby</button>
+  </div>
+</div>
+
+<div id="ui">
+  <h1>💣 Blast</h1>
+  <div class="row">
+    <input id="name" placeholder="Your name" maxlength="20" value="Player">
+    <button id="btn-quick">Quick play</button>
+  </div>
+  <div class="row">
+    <div class="panel">
+      <h2>Create private lobby</h2>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <label>Stage
+          <select id="opt-stage"><option value="rock-garden">Rock Garden</option><option value="up-and-down">Up &amp; Down</option></select>
+        </label>
+        <label>Wins to win
+          <select id="opt-wins"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+        </label>
+        <label>Bots
+          <select id="opt-bots"><option selected>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select>
+        </label>
+        <label>Round seconds
+          <select id="opt-seconds"><option value="60">1 min</option><option value="120" selected>2 min</option><option value="180">3 min</option><option value="300">5 min</option></select>
+        </label>
+        <button id="btn-host">Create lobby</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Join by code</h2>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <input id="join-code" placeholder="Join code" maxlength="10" style="text-transform:uppercase">
+        <button id="btn-join">Join</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ─── constants ────────────────────────────────────────────────────────────────
+// Six-digit hex: 0xe55 would be 0x000e55, not CSS #e55.
+const SLOT_COLORS = [0xee5555,0x55aaee,0x55ee55,0xffaa00,0xdd55ff,0x55dddd,0xffff55,0xff8844]
+  .map(c => new THREE.Color(c));
+const CELL = { Floor:0, Pillar:1, Void:2, Water:3, Ramp:4 };
+const PHASE = { Ready:0, Fight:1, Hurry:2, Over:3 };
+
+// ─── state ────────────────────────────────────────────────────────────────────
+let joinCode = null;
+let ws = null, playerId = null, playerToken = null, reservation = null;
+let stageData = null, lastState = null, prevState = null, lastStateTime = 0;
+let bombMeshes = {}, hazardMeshes = {}, itemMeshes = {}, playerMeshes = {};
+let softBlockMeshes = []; // array indexed by z*width+x
+let prevSoftBlocks = null;
+let scene, camera, renderer, stageGroup;
+let keys = {}, gpPrev = {};
+let inputSeq = 0;
+const origin = window.location.origin;
+const wsOrigin = origin.replace(/^http/, 'ws');
+
+// ─── three.js setup ───────────────────────────────────────────────────────────
+function initThree() {
+  renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1a1a2e);
+  scene.fog = new THREE.Fog(0x1a1a2e, 20, 50);
+
+  camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambient);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  sun.position.set(10, 20, 10);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+  sun.shadow.camera.left = -20; sun.shadow.camera.right = 20;
+  sun.shadow.camera.top = 20; sun.shadow.camera.bottom = -20;
+  scene.add(sun);
+
+  stageGroup = new THREE.Group();
+  scene.add(stageGroup);
+
+  window.addEventListener('resize', onResize);
+  onResize();
+  renderer.setAnimationLoop(animate);
+}
+
+// Size from the container, not innerWidth: a canvas sized by its own drawing buffer can hold a phone's layout
+// viewport wider than the screen. CSS owns the canvas box; the buffer follows it.
+function onResize() {
+  const wrap = document.getElementById('canvas-wrap');
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  frameStage();
+}
+
+// ─── stage rendering ──────────────────────────────────────────────────────────
+function buildStage(data) {
+  stageGroup.clear();
+  softBlockMeshes = [];
+  const { width, height, cells } = data;
+
+  const floorMat = new THREE.MeshLambertMaterial({ color: 0x4a6a4a });
+  const rampMat  = new THREE.MeshLambertMaterial({ color: 0x6a8a6a });
+  const pillarMat= new THREE.MeshLambertMaterial({ color: 0x888888 });
+  const waterMat = new THREE.MeshLambertMaterial({ color: 0x2244aa, transparent: true, opacity: 0.7 });
+  const softMat  = new THREE.MeshLambertMaterial({ color: 0x8b6040 });
+
+  for (let z = 0; z < height; z++) {
+    for (let x = 0; x < width; x++) {
+      const c = cells[z * width + x];
+      const cx = x + 0.5, cz = z + 0.5, cy = c.t;
+
+      if (c.k === CELL.Void) continue;
+      if (c.k === CELL.Water) {
+        const geo = new THREE.BoxGeometry(1, 0.1, 1);
+        const m = new THREE.Mesh(geo, waterMat);
+        m.position.set(cx, cy - 0.05, cz);
+        stageGroup.add(m);
+        continue;
+      }
+      if (c.k === CELL.Pillar) {
+        const geo = new THREE.BoxGeometry(0.9, 1.5, 0.9);
+        const m = new THREE.Mesh(geo, pillarMat);
+        m.position.set(cx, cy + 0.75, cz);
+        m.castShadow = true; m.receiveShadow = true;
+        stageGroup.add(m);
+        // Floor under pillar.
+        const fgeo = new THREE.BoxGeometry(1, 0.25, 1);
+        const fm = new THREE.Mesh(fgeo, floorMat);
+        fm.position.set(cx, cy - 0.125, cz);
+        fm.receiveShadow = true;
+        stageGroup.add(fm);
+        continue;
+      }
+      const mat = c.k === CELL.Ramp ? rampMat : floorMat;
+      const geo = new THREE.BoxGeometry(1, 0.25, 1);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(cx, cy - 0.125, cz);
+      m.receiveShadow = true;
+      stageGroup.add(m);
+    }
+  }
+
+  // Soft block meshes (created once, toggled visible).
+  const softGeo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
+  for (let z = 0; z < height; z++) {
+    for (let x = 0; x < width; x++) {
+      const c = cells[z * width + x];
+      if (c.k !== CELL.Floor && c.k !== CELL.Ramp) {
+        softBlockMeshes.push(null);
+        continue;
+      }
+      const m = new THREE.Mesh(softGeo, softMat.clone());
+      m.position.set(x + 0.5, c.t + 0.5, z + 0.5);
+      m.castShadow = true;
+      m.visible = false;
+      stageGroup.add(m);
+      softBlockMeshes.push(m);
+    }
+  }
+
+  stageData = data;
+  frameStage();
+}
+
+// The fixed battle camera, pulled back until the whole stage fits the window, portrait phones included.
+function frameStage() {
+  if (!stageData) return;
+  const { width, height } = stageData;
+  const cx = width / 2, cz = height / 2;
+  const fitWidth = width / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / camera.aspect;
+  let span = Math.max(Math.max(width, height), fitWidth);
+  const top = Math.max(...stageData.cells.map(c => c.t)) + 1.5;
+  const corners = [0, width].flatMap(x => [-0.25, top].flatMap(y =>
+    [0, height].map(z => new THREE.Vector3(x, y, z))));
+  // Perspective makes the near corners wider than the stage's centre line.
+  // Fit the whole bounding box, including elevated pillars, with a small margin.
+  for (let attempt = 0; attempt < 40; attempt++) {
+    camera.position.set(cx, span * 0.9, cz + span * 0.5);
+    camera.lookAt(cx, 0, cz);
+    camera.updateMatrixWorld();
+    if (corners.every(c => {
+      const p = c.clone().project(camera);
+      return Math.abs(p.x) <= 0.94 && Math.abs(p.y) <= 0.94;
+    })) break;
+    span *= 1.08;
+  }
+  camera.far = Math.max(100, span * 4);
+  camera.updateProjectionMatrix();
+  scene.fog.near = span * 1.4;
+  scene.fog.far = span * 3;
+}
+
+function updateSoftBlocks(b64) {
+  if (!stageData || !b64) return;
+  const { width, height } = stageData;
+  const bytes = atob(b64).split('').map(c => c.charCodeAt(0));
+  for (let z = 0; z < height; z++) {
+    for (let x = 0; x < width; x++) {
+      const idx = z * width + x;
+      const alive = !!(bytes[Math.floor(idx / 8)] & (1 << (idx % 8)));
+      const m = softBlockMeshes[idx];
+      if (m) m.visible = alive;
+    }
+  }
+}
+
+// ─── entity rendering ─────────────────────────────────────────────────────────
+const capsuleGeo = new THREE.CapsuleGeometry(0.35, 0.5, 4, 8);
+const bombGeoBase = new THREE.SphereGeometry(0.35, 12, 8);
+const hazardGeo = (r) => new THREE.SphereGeometry(r, 16, 12);
+const itemGeoBase = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+const fuseGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.3, 4);
+const fuseMat = new THREE.MeshBasicMaterial({ color: 0xffdd00 });
+
+function getPlayerMesh(slot, isGhost) {
+  const key = `p${slot}_${isGhost ? 'g' : 'l'}`;
+  if (!playerMeshes[key]) {
+    const color = SLOT_COLORS[slot % SLOT_COLORS.length];
+    const mat = new THREE.MeshLambertMaterial({
+      color, transparent: isGhost, opacity: isGhost ? 0.45 : 1,
+    });
+    const m = new THREE.Mesh(capsuleGeo, mat);
+    m.castShadow = !isGhost;
+    scene.add(m);
+    playerMeshes[key] = m;
+  }
+  return playerMeshes[key];
+}
+
+function getBombMesh(id) {
+  if (!bombMeshes[id]) {
+    const mat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    const m = new THREE.Mesh(bombGeoBase, mat);
+    m.castShadow = true;
+    const fuse = new THREE.Mesh(fuseGeo, fuseMat);
+    fuse.position.set(0, 0.5, 0);
+    m.add(fuse);
+    scene.add(m);
+    bombMeshes[id] = m;
+  }
+  return bombMeshes[id];
+}
+
+function getHazardMesh(id, radius) {
+  if (!hazardMeshes[id]) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+    const m = new THREE.Mesh(hazardGeo(radius), mat);
+    scene.add(m);
+    hazardMeshes[id] = { mesh: m, baseRadius: radius };
+  }
+  return hazardMeshes[id].mesh;
+}
+
+function getItemMesh(id, type) {
+  if (!itemMeshes[id]) {
+    const colors = { fire: 0xff4400, bomb: 0x3344ff, remote: 0xdddd00, red: 0xff0044, heart: 0xff44aa };
+    const mat = new THREE.MeshLambertMaterial({ color: colors[type] || 0xffffff });
+    const m = new THREE.Mesh(itemGeoBase, mat);
+    scene.add(m);
+    itemMeshes[id] = m;
+  }
+  return itemMeshes[id];
+}
+
+function clearMeshSet(set) {
+  for (const m of Object.values(set))
+    if (m?.mesh) scene.remove(m.mesh); else if (m) scene.remove(m);
+  Object.keys(set).forEach(k => delete set[k]);
+}
+
+// ─── interpolation ────────────────────────────────────────────────────────────
+function lerp(a, b, t) { return a + (b - a) * t; }
+function interpolateState(prev, next, t) {
+  if (!prev) return next;
+  return { ...next, players: next.players.map(np => {
+    const pp = prev.players?.find(p => p.id === np.id);
+    if (!pp) return np;
+    return { ...np, x: lerp(pp.x, np.x, t), y: lerp(pp.y, np.y, t), z: lerp(pp.z, np.z, t) };
+  })};
+}
+
+// ─── animate ──────────────────────────────────────────────────────────────────
+function animate(now) {
+  sendInput();
+  if (lastState && stageData) {
+    const t = Math.min(1, (now - lastStateTime) / 66);
+    const state = interpolateState(prevState, lastState, t);
+    renderState(state);
+  }
+  renderer.render(scene, camera);
+}
+
+function renderState(state) {
+  if (!stageData) return;
+  updateSoftBlocks(state.softBlocks);
+
+  const livePlayerIds = new Set();
+  const liveBombIds = new Set();
+  const liveHazardIds = new Set();
+  const liveItemIds = new Set();
+
+  // Players.
+  for (const p of (state.players || [])) {
+    livePlayerIds.add(`p${p.slot}_${p.ghost ? 'g' : 'l'}`);
+    const m = getPlayerMesh(p.slot, p.ghost);
+    m.position.set(p.x + 0.5, p.y + 0.6, p.z + 0.5);
+    m.visible = p.alive;
+    // Stun: slight tilt
+    m.rotation.z = p.stunned ? 0.5 : 0;
+  }
+
+  // Bombs.
+  for (const b of (state.bombs || [])) {
+    liveBombIds.add(b.id);
+    const m = getBombMesh(b.id);
+    m.position.set(b.x + 0.5, b.y + 0.35 + (b.state === 3 ? b.y : 0), b.z + 0.5);
+    m.material.color.set(b.red ? 0xcc0022 : 0x333333);
+    // Scale with pumps.
+    const scale = 1 + b.pumps * 0.15;
+    m.scale.setScalar(scale);
+    // Fuse flicker when about to blow.
+    m.children[0].visible = !b.remote && b.fuse > 0;
+  }
+
+  // Hazards.
+  for (const h of (state.hazards || [])) {
+    liveHazardIds.add(h.id);
+    const m = getHazardMesh(h.id, h.r);
+    m.position.set(h.x + 0.5, h.z + 0, h.z + 0.5); // reuse field
+    m.position.set(h.x + 0.5, 0.5, h.z + 0.5);
+  }
+
+  // Items.
+  for (const it of (state.items || [])) {
+    liveItemIds.add(it.id);
+    const m = getItemMesh(it.id, it.type);
+    const cell = stageData.cells[it.cz * stageData.width + it.cx];
+    m.position.set(it.cx + 0.5, (cell?.t || 0) + 0.5, it.cz + 0.5);
+    m.rotation.y += 0.04;
+  }
+
+  // Hide stale meshes.
+  for (const [key, m] of Object.entries(playerMeshes))
+    if (!livePlayerIds.has(key)) m.visible = false;
+  for (const [id, m] of Object.entries(bombMeshes))
+    if (!liveBombIds.has(id)) { scene.remove(m); delete bombMeshes[id]; }
+  for (const [id, entry] of Object.entries(hazardMeshes))
+    if (!liveHazardIds.has(id)) { scene.remove(entry.mesh); delete hazardMeshes[id]; }
+  for (const [id, m] of Object.entries(itemMeshes))
+    if (!liveItemIds.has(id)) { scene.remove(m); delete itemMeshes[id]; }
+
+  updateHUD(state);
+}
+
+// ─── HUD ──────────────────────────────────────────────────────────────────────
+function updateHUD(state) {
+  document.getElementById('hud-round').textContent = `Round ${state.round || 1}`;
+  const tl = state.timeLeft || 0;
+  const m = Math.floor(tl / 60), s = Math.floor(tl % 60);
+  document.getElementById('hud-timer').textContent = `${m}:${String(s).padStart(2,'0')}`;
+  document.getElementById('hud-hurry').style.display = state.phase === PHASE.Hurry ? 'block' : 'none';
+
+  const ph = document.getElementById('hud-players');
+  ph.innerHTML = '';
+  for (const p of (state.players || [])) {
+    const d = document.createElement('div');
+    d.className = 'slot-hud';
+    const col = SLOT_COLORS[p.slot % SLOT_COLORS.length];
+    d.innerHTML = `<span class="slot-dot" style="background:#${col.getHexString()}"></span>
+      <span>${escHtml(p.name)}${p.bot ? ' 🤖' : ''}</span>
+      <span style="color:#fa0">${'★'.repeat(p.wins)}</span>
+      ${p.ghost ? '<span style="color:#88f">👻</span>' : ''}
+      ${p.heart ? '<span>❤️</span>' : ''}`;
+    if (!p.alive && !p.ghost) d.style.opacity = '0.4';
+    ph.appendChild(d);
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showMsg(text, ms = 3000) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.display = 'block';
+  if (ms > 0) setTimeout(() => el.style.display = 'none', ms);
+}
+
+// ─── input ────────────────────────────────────────────────────────────────────
+// Form fields keep their keys, so a name and a join code can be typed; game keys don't scroll the page.
+const GAME_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyF','KeyJ','KeyK','KeyR','ShiftLeft','ShiftRight']);
+const typing = e => e.target instanceof HTMLElement && e.target.matches('input, select, textarea');
+document.addEventListener('keydown', e => {
+  if (typing(e)) return;
+  keys[e.code] = true;
+  if (GAME_KEYS.has(e.code)) e.preventDefault();
+}, { passive: false });
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function readInput() {
+  let x = 0, z = 0;
+  if (keys['ArrowLeft']  || keys['KeyA']) x -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) x += 1;
+  if (keys['ArrowUp']    || keys['KeyW']) z -= 1;
+  if (keys['ArrowDown']  || keys['KeyS']) z += 1;
+  const len = Math.hypot(x, z);
+  if (len > 1) { x /= len; z /= len; }
+
+  // Gamepad.
+  const pads = navigator.getGamepads?.() || [];
+  for (const gp of pads) {
+    if (!gp) continue;
+    x += gp.axes[0] || 0;
+    z += gp.axes[1] || 0;
+    const clampLen = Math.hypot(x, z);
+    if (clampLen > 1) { x /= clampLen; z /= clampLen; }
+  }
+
+  const a = !!(keys['Space'] || keys['KeyF']);
+  const b = !!(keys['ShiftLeft'] || keys['KeyJ'] || keys['ShiftRight']);
+  const r = !!(keys['KeyK'] || keys['KeyR']);
+  return { x, z, a, b, r };
+}
+
+let lastSentInput = null;
+function sendInput() {
+  if (!ws || ws.readyState !== 1) return;
+  const inp = readInput();
+  const changed = !lastSentInput ||
+    Math.abs(inp.x - lastSentInput.x) > 0.05 ||
+    Math.abs(inp.z - lastSentInput.z) > 0.05 ||
+    inp.a !== lastSentInput.a || inp.b !== lastSentInput.b || inp.r !== lastSentInput.r;
+  if (!changed) return;
+  lastSentInput = inp;
+  inputSeq++;
+  ws.send(JSON.stringify({ t: 'input', d: inp, s: inputSeq }));
+}
+
+// ─── networking ───────────────────────────────────────────────────────────────
+async function signIn(name) {
+  const r = await fetch(`${origin}/realtime/v1/guests`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ displayName: name }),
+  });
+  if (!r.ok) throw new Error('Sign-in failed: ' + await r.text());
+  const d = await r.json();
+  playerToken = d.token;
+}
+
+async function quickPlay() {
+  const name = document.getElementById('name').value.trim() || 'Player';
+  await signIn(name);
+  const r = await fetch(`${origin}/realtime/v1/queue`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-player-token': playerToken },
+    body: JSON.stringify({ game: 'blast' }),
+  });
+  if (!r.ok) { alert('Queue failed: ' + await r.text()); return; }
+  const ticket = await r.json();
+  showMsg('Looking for a match…', 0);
+  const seat = await pollTicket(ticket.ticketId);
+  hideUI();
+  connect(seat);
+}
+
+async function hostLobby() {
+  const name = document.getElementById('name').value.trim() || 'Host';
+  await signIn(name);
+  const settings = {
+    stage: document.getElementById('opt-stage').value,
+    wins: document.getElementById('opt-wins').value,
+    bots: document.getElementById('opt-bots').value,
+    'round-seconds': document.getElementById('opt-seconds').value,
+  };
+  const r = await fetch(`${origin}/realtime/v1/lobbies`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-player-token': playerToken },
+    body: JSON.stringify({ game: 'blast', visibility: 'private', settings }),
+  });
+  if (!r.ok) { alert('Host failed: ' + await r.text()); return; }
+  const d = await r.json();
+  joinCode = d.lobby.joinCode;
+  connect(d.reservation);
+  hideUI();
+}
+
+async function joinByCode() {
+  const name = document.getElementById('name').value.trim() || 'Player';
+  const code = document.getElementById('join-code').value.trim();
+  if (!code) { alert('Enter a join code'); return; }
+  await signIn(name);
+  const r = await fetch(`${origin}/realtime/v1/lobbies/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-player-token': playerToken },
+    body: JSON.stringify({ code }),
+  });
+  if (!r.ok) { alert('Join failed: ' + await r.text()); return; }
+  const seat = await r.json();
+  hideUI();
+  connect(seat);
+}
+
+async function pollTicket(ticketId) {
+  for (let i = 0; i < 30; i++) {
+    const r = await fetch(`${origin}/realtime/v1/queue/${ticketId}?waitSeconds=5`, {
+      headers: { 'x-player-token': playerToken },
+    });
+    const t = await r.json();
+    if (t.state === 'matched') return t.reservation;
+    if (t.state !== 'queued') throw new Error('Ticket in bad state: ' + t.state);
+  }
+  throw new Error('Timed out waiting for match');
+}
+
+// A fleet hands out the hosting node's absolute URL (ws, wss, http or https); a single node may hand out a path.
+function resolveWsUrl(connectUrl) {
+  if (/^(wss?|https?):\/\//.test(connectUrl))
+    return connectUrl.replace(/^http/, 'ws');
+  return wsOrigin + connectUrl;
+}
+
+function connect(seat) {
+  reservation = seat;
+  playerId = seat.playerId;
+  const url = resolveWsUrl(seat.connectUrl);
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => showMsg('Connected!', 2000);
+  ws.onmessage = onMessage;
+  ws.onclose = e => {
+    if (e.code === 4005) return; // left
+    showMsg(`Disconnected (${e.code})`, 0);
+    setTimeout(() => location.reload(), 3000);
+  };
+  ws.onerror = () => showMsg('Connection error', 0);
+  initThree();
+}
+
+function onMessage(ev) {
+  const frame = JSON.parse(ev.data);
+  switch (frame.t) {
+    case 'stage':
+      stageData = frame.d;
+      buildStage(frame.d);
+      break;
+    case 'state':
+      prevState = lastState;
+      lastState = frame.d;
+      lastStateTime = performance.now();
+      break;
+    case 'sys.ended':
+      showResults(frame.d);
+      break;
+    case 'sys.lobby': {
+      const lobby = frame.d;
+      if (lobby.state === 'open') {
+        const here = lobby.players.filter(p => p.connected).length;
+        showMsg(`Waiting for players: ${here} of ${lobby.minPlayers}` + (joinCode ? ` · join code ${joinCode}` : ''), 0);
+      }
+      if (lobby.state === 'countdown') showMsg('Get ready!', 2000);
+      if (lobby.state === 'running') showMsg('Fight!', 1500);
+      break;
+    }
+  }
+}
+
+function showResults(result) {
+  const wins = result.details?.scoreboard || [];
+  const title = result.winners?.includes(playerId) ? '🏆 You Win!' : '💀 Game Over';
+  document.getElementById('results-title').textContent = title;
+  const tbody = wins.map(r =>
+    `<tr><td>${escHtml(r.name)}${r.bot?'🤖':''}</td><td>${'★'.repeat(r.wins || 0)}</td></tr>`
+  ).join('');
+  document.getElementById('results-table').innerHTML = tbody;
+  document.getElementById('hud-results').style.display = 'flex';
+}
+
+function hideUI() { document.getElementById('ui').style.display = 'none'; }
+
+// ─── wiring ───────────────────────────────────────────────────────────────────
+document.getElementById('btn-quick').onclick = () => quickPlay().catch(e => { showMsg(e.message, 0); console.error(e); });
+document.getElementById('btn-host').onclick  = () => hostLobby().catch(e => { showMsg(e.message, 0); console.error(e); });
+document.getElementById('btn-join').onclick  = () => joinByCode().catch(e => { showMsg(e.message, 0); console.error(e); });
+</script>
+</body>
+</html>

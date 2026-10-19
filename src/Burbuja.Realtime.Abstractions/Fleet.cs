@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Burbuja.Realtime.Abstractions;
 
 /// <summary>Whether a lobby server takes new lobbies.</summary>
@@ -23,9 +25,11 @@ public sealed record LobbyServerStatus(
     string? PublicUrl,
     double Load = 0)
 {
+    [JsonIgnore]
     public bool HasCapacity => State == LobbyServerState.Active && Lobbies < MaxLobbies;
 
     /// <summary>Allocated lobbies as a fraction of capacity, 0..1.</summary>
+    [JsonIgnore]
     public double Utilization => MaxLobbies == 0 ? 1 : (double)Lobbies / MaxLobbies;
 }
 

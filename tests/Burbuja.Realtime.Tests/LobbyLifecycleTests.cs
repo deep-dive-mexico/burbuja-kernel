@@ -7,6 +7,26 @@ namespace Burbuja.Realtime.Tests;
 public sealed class LobbyLifecycleTests
 {
     [Fact]
+    public void A_stale_reconciliation_cannot_evict_a_fresh_reservation_or_connection()
+    {
+        var h = new Harness();
+        var lobby = h.CreateLobby();
+        h.Connect(lobby, "p");
+        h.Step();
+        var stale = Assert.Single(lobby.SeatVersions());
+        lobby.RequestLeave(stale.PlayerId, stale.Version);
+        var fresh = h.Reserve(lobby, "p").Reservation!;
+        var connection = h.Admit(fresh);
+        h.Step();
+        Assert.True(lobby.HasSeat("p"));
+        Assert.Single(connection.OfType(RealtimeProtocol.Welcome));
+        var current = Assert.Single(lobby.SeatVersions());
+        lobby.RequestLeave(current.PlayerId, current.Version);
+        h.Step();
+        Assert.False(lobby.HasSeat("p"));
+    }
+
+    [Fact]
     public void A_lobby_walks_open_countdown_running_ended_closed_and_releases_its_capacity()
     {
         var h = new Harness();
@@ -43,7 +63,7 @@ public sealed class LobbyLifecycleTests
         var ended = Assert.Single(b.OfType(RealtimeProtocol.Ended));
         Assert.Equal("won", (string?)ended["d"]!["reason"]);
         Assert.Equal("a", (string?)ended["d"]!["winners"]![0]);
-        Assert.Null(h.Manager.LobbyOf("a"));
+        Assert.Null(Harness.Sync(h.Fleet.LobbyOfAsync("a", TestContext.Current.CancellationToken)));
 
         h.Run(TimeSpan.FromSeconds(5));
         Assert.Equal(LobbyState.Closed, lobby.State);
@@ -52,6 +72,28 @@ public sealed class LobbyLifecycleTests
         Assert.True(h.Game.Sessions[0].Disposed);
         Assert.Null(h.Manager.Find(lobby.Id));
         Assert.Equal(0, server.Status().Lobbies);
+    }
+
+    [Fact]
+    public void A_session_with_cpu_players_may_start_below_the_rules_minimum_but_never_below_one()
+    {
+        var h = new Harness(new RecordingGame { MinPlayersToStart = 1 });
+        var lobby = h.CreateLobby();
+        var a = h.Connect(lobby, "a");
+        h.Step();
+        Assert.Equal(LobbyState.Countdown, lobby.State);
+        Assert.Equal(1, (int)a.OfType(RealtimeProtocol.Lobby).Last()["d"]!["minPlayers"]!);
+
+        var floor = new Harness(new RecordingGame { MinPlayersToStart = 0 });
+        var empty = floor.CreateLobby();
+        floor.Step();
+        Assert.Equal(LobbyState.Open, empty.State);
+        var raised = new Harness(new RecordingGame { MinPlayersToStart = 5 });
+        var two = raised.CreateLobby();
+        raised.Connect(two, "a");
+        raised.Connect(two, "b");
+        raised.Step();
+        Assert.Equal(LobbyState.Countdown, two.State);
     }
 
     [Fact]
@@ -77,12 +119,12 @@ public sealed class LobbyLifecycleTests
     {
         var h = new Harness(options: new RealtimeOptions { Enabled = true, ReservationTtlSeconds = 5 });
         var lobby = h.CreateLobby();
-        var reservation = h.Manager.Reserve(lobby, Harness.Player("late")).Reservation!;
+        var reservation = h.Reserve(lobby, "late").Reservation!;
         Assert.Equal(1, lobby.SeatCount);
 
         h.Run(TimeSpan.FromSeconds(6));
         Assert.Equal(0, lobby.SeatCount);
-        Assert.Null(h.Manager.LobbyOf("late"));
+        Assert.Null(Harness.Sync(h.Fleet.LobbyOfAsync("late", TestContext.Current.CancellationToken)));
         Assert.Equal("invalid_reservation", h.Manager.Admit(reservation.Token, new FakeConnection()).Error);
     }
 
@@ -102,7 +144,7 @@ public sealed class LobbyLifecycleTests
         Assert.Contains("dropped:b", h.Game.Sessions[0].Calls);
 
         // Asking again is the reconnect path: same seat, same slot, a fresh token.
-        var again = h.Manager.Reserve(lobby, Harness.Player("b")).Reservation!;
+        var again = h.Reserve(lobby, "b").Reservation!;
         var b2 = h.Admit(again);
         h.Step();
         Assert.Contains("reconnected:b", h.Game.Sessions[0].Calls);
@@ -120,11 +162,11 @@ public sealed class LobbyLifecycleTests
     {
         var h = new Harness();
         var lobby = h.CreateLobby();
-        var first = h.Manager.Reserve(lobby, Harness.Player("a")).Reservation!;
+        var first = h.Reserve(lobby, "a").Reservation!;
         var a = h.Admit(first);
         Assert.Equal("invalid_reservation", h.Manager.Admit(first.Token, new FakeConnection()).Error);
 
-        var second = h.Admit(h.Manager.Reserve(lobby, Harness.Player("a")).Reservation!);
+        var second = h.Admit(h.Reserve(lobby, "a").Reservation!);
         h.Step();
         Assert.Equal(RealtimeCloseCode.Replaced, a.ClosedWith);
         Assert.Single(second.OfType(RealtimeProtocol.Welcome));
@@ -207,15 +249,15 @@ public sealed class LobbyLifecycleTests
         var h = new Harness(game);
         var lobby = h.CreateLobby();
         h.Connect(lobby, "a");
-        h.Manager.Reserve(lobby, Harness.Player("b"));
-        Assert.Equal("lobby_full", h.Manager.Reserve(lobby, Harness.Player("c")).Error);
+        h.Reserve(lobby, "b");
+        Assert.Equal("lobby_full", h.Reserve(lobby, "c").Error);
 
         var open = h.CreateLobby();
         h.Connect(open, "d");
         h.Connect(open, "e");
         h.Step();
         Assert.Equal(LobbyState.Running, open.State);
-        Assert.Equal("match_in_progress", h.Manager.Reserve(open, Harness.Player("f")).Error);
+        Assert.Equal("match_in_progress", h.Reserve(open, "f").Error);
     }
 
     [Fact]
@@ -226,14 +268,14 @@ public sealed class LobbyLifecycleTests
         var second = h.CreateLobby();
         var a = h.Connect(first, "a");
         h.Connect(first, "b");
-        Assert.Equal("already_in_lobby", h.Manager.Reserve(second, Harness.Player("a")).Error);
-        Assert.Equal("already_in_lobby", h.Queue.Enqueue(Harness.Player("a"), "test", null).Error);
+        Assert.Equal("already_in_lobby", h.Reserve(second, "a").Error);
+        Assert.Equal("already_in_lobby", Harness.Sync(h.Queue.EnqueueAsync(Harness.Player("a"), "test", null, TestContext.Current.CancellationToken)).Error);
 
         h.Run(TimeSpan.FromSeconds(3.1));
         a.Send("""{"t":"end"}""");
         h.Step();
         Assert.Equal(LobbyState.Ended, first.State);
-        Assert.NotNull(h.Manager.Reserve(second, Harness.Player("a")).Reservation);
+        Assert.NotNull(h.Reserve(second, "a").Reservation);
     }
 
     [Fact]

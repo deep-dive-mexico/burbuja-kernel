@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Burbuja.Realtime.Abstractions;
 
 namespace Burbuja.Realtime.Lobbies;
@@ -39,10 +40,17 @@ public sealed record LobbySnapshot(
     IReadOnlyList<LobbyMember> Members,
     MatchResult? Result)
 {
+    [JsonIgnore]
     public int OpenSeats => Math.Max(0, MaxPlayers - Seats);
 
     /// <summary>Ticks simulated since the match started.</summary>
     public long Tick { get; init; }
+
+    /// <summary>The fleet node hosting the lobby.</summary>
+    public string NodeId { get; init; } = "";
+
+    /// <summary>Every player holding a seat, including reservations not yet claimed by a connection.</summary>
+    public IReadOnlyList<string> SeatHolders { get; init; } = [];
 
     public LobbyPerformance Performance { get; init; } = LobbyPerformance.Idle;
 }
@@ -70,6 +78,7 @@ public sealed record LobbyPerformance(
 public sealed record LobbySpec(
     string LobbyId,
     IRealtimeGame Game,
+    string NodeId,
     string ServerId,
     string Region,
     string? PublicUrl,

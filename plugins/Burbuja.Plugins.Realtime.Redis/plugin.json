@@ -1,0 +1,17 @@
+{
+  "id": "Realtime.Redis",
+  "name": "Redis Realtime Backplane",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Realtime.Redis.dll",
+  "entry_type": "Burbuja.Plugins.Realtime.Redis.RealtimeRedisPlugin",
+  "load": "dynamic",
+  "provides": ["realtime.backplane.redis"],
+  "extension_points": [],
+  "requires": ["Network"],
+  "roles": ["all", "control-plane", "worker"],
+  "config_section": "Realtime:Redis",
+  "trusted": true,
+  "depends_on": [],
+  "load_order": 200
+}

@@ -4,6 +4,7 @@
     <IsPackable>false</IsPackable>
     <RootNamespace>Burbuja.Realtime.Tests</RootNamespace>
     <ArenaRoot>$(MSBuildThisFileDirectory)../../examples/Example.Arena</ArenaRoot>
+    <BlastRoot>$(MSBuildThisFileDirectory)../../examples/Example.Blast</BlastRoot>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -13,9 +14,13 @@
     <PackageReference Include="xunit.v3.mtp-off" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
     <ProjectReference Include="../../src/Burbuja.Realtime/Burbuja.Realtime.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Realtime.Redis/Burbuja.Plugins.Realtime.Redis.csproj" />
     <ProjectReference Include="../../examples/Example.Arena/Example.Arena.Host/Example.Arena.Host.csproj" />
     <!-- Built, never referenced: the end-to-end test installs it as a dynamic plugin. -->
     <ProjectReference Include="../../examples/Example.Arena/Example.Arena.Plugin/Example.Arena.Plugin.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="../../examples/Example.Blast/Example.Blast.Host/Example.Blast.Host.csproj" />
+    <!-- Direct reference for simulation unit tests; also staged as a dynamic plugin fixture. -->
+    <ProjectReference Include="../../examples/Example.Blast/Example.Blast.Plugin/Example.Blast.Plugin.csproj" />
   </ItemGroup>
   <Target Name="StageArenaPlugin" AfterTargets="Build">
     <RemoveDir Directories="$(OutDir)arena-plugin-fixture" />
@@ -23,5 +28,19 @@
       <ArenaPluginFiles Include="$(ArenaRoot)/Example.Arena.Plugin/bin/$(Configuration)/$(TargetFramework)/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(ArenaPluginFiles)" DestinationFiles="@(ArenaPluginFiles-&gt;'$(OutDir)arena-plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="StageRedisPlugin" AfterTargets="Build">
+    <RemoveDir Directories="$(OutDir)redis-plugin-fixture" />
+    <ItemGroup>
+      <RedisPluginFiles Include="$(MSBuildThisFileDirectory)../../plugins/Burbuja.Plugins.Realtime.Redis/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(RedisPluginFiles)" DestinationFiles="@(RedisPluginFiles-&gt;'$(OutDir)redis-plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="StageBlastPlugin" AfterTargets="Build">
+    <RemoveDir Directories="$(OutDir)blast-plugin-fixture" />
+    <ItemGroup>
+      <BlastPluginFiles Include="$(BlastRoot)/Example.Blast.Plugin/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BlastPluginFiles)" DestinationFiles="@(BlastPluginFiles-&gt;'$(OutDir)blast-plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>

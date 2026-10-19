@@ -45,6 +45,7 @@ public sealed class Lobby
     private readonly ConcurrentQueue<Inbound> _inbox = new();
     private readonly Dictionary<string, Seat> _seats = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _tokens = new(StringComparer.Ordinal);
+    private long _nextSeatVersion;
     private readonly List<(string PlayerId, string Reason)> _pendingKicks = [];
     private readonly ILobbyObserver _observer;
     private readonly ILogger _log;
@@ -53,6 +54,7 @@ public sealed class Lobby
     private readonly SessionContext _context;
     private readonly string? _publicUrl;
     private readonly TimeSpan _tickInterval;
+    private readonly int _minPlayersToStart;
     private readonly JsonSerializerOptions _json;
     private List<RealtimePlayer>? _roster;
     private MatchResult? _pendingEnd;
@@ -81,6 +83,7 @@ public sealed class Lobby
         Id = spec.LobbyId;
         Game = spec.Game;
         Rules = spec.Game.Rules;
+        NodeId = spec.NodeId;
         ServerId = spec.ServerId;
         Region = spec.Region;
         Visibility = spec.Visibility;
@@ -101,12 +104,14 @@ public sealed class Lobby
         _context = new SessionContext(this, new Random(spec.Seed));
         _session = spec.Game.CreateSession(new GameSessionOptions(Id, GameId, Settings, spec.Seed))
             ?? throw new InvalidOperationException($"Game '{GameId}' created no session.");
+        _minPlayersToStart = Math.Clamp(_session.MinPlayersToStart ?? Rules.MinPlayers, 1, Rules.MinPlayers);
     }
 
     public string Id { get; }
     public IRealtimeGame Game { get; }
     public string GameId => Game.Id;
     public GameRules Rules { get; }
+    public string NodeId { get; }
     public string ServerId { get; }
     public string Region { get; }
     public LobbyVisibility Visibility { get; }
@@ -192,6 +197,19 @@ public sealed class Lobby
     /// <summary>Asks the lobby to free a player's seat at its next step.</summary>
     public void RequestLeave(string playerId) => _inbox.Enqueue(new Inbound(InboundKind.Leave, playerId, null));
 
+    internal IReadOnlyList<(string PlayerId, long Version)> SeatVersions()
+    {
+        lock (_gate)
+            return _state < LobbyState.Ended
+                ? _seats.Values.Select(s => (s.Player.PlayerId, s.Version)).ToList()
+                : [];
+    }
+
+    // A reconciliation read may finish after a reconnect issued a fresh token.
+    // Only remove the generation that the heartbeat actually inspected.
+    internal void RequestLeave(string playerId, long version) =>
+        _inbox.Enqueue(new Inbound(InboundKind.Leave, playerId, null) { SeatVersion = version });
+
     /// <summary>Asks the lobby to end its match (if any) and close at its next step.</summary>
     public void RequestClose(string reason) =>
         _inbox.Enqueue(new Inbound(InboundKind.Close, "", null) { Reason = reason });
@@ -221,6 +239,8 @@ public sealed class Lobby
             {
                 Tick = Tick,
                 Performance = Performance,
+                NodeId = NodeId,
+                SeatHolders = _seats.Keys.ToList(),
             };
         }
     }
@@ -319,7 +339,8 @@ public sealed class Lobby
                 continue;
             if (item.Kind == InboundKind.Leave)
             {
-                RemoveSeat(seat, LeaveReason.Left);
+                if (item.SeatVersion is null || (_state < LobbyState.Ended && item.SeatVersion == seat.Version))
+                    RemoveSeat(seat, LeaveReason.Left);
                 continue;
             }
 
@@ -483,7 +504,7 @@ public sealed class Lobby
         var connected = _seats.Values.Count(s => s.Live);
         switch (_state)
         {
-            case LobbyState.Open when connected >= Rules.MinPlayers:
+            case LobbyState.Open when connected >= _minPlayersToStart:
                 if (Rules.StartCountdown <= TimeSpan.Zero)
                 {
                     Start(now);
@@ -496,7 +517,7 @@ public sealed class Lobby
                 }
 
                 break;
-            case LobbyState.Countdown when connected < Rules.MinPlayers:
+            case LobbyState.Countdown when connected < _minPlayersToStart:
                 _state = LobbyState.Open;
                 CountdownEndsAt = null;
                 _lobbyChanged = true;
@@ -726,6 +747,7 @@ public sealed class Lobby
         var token = Id + "." + Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
         seat.Token = token;
+        seat.Version = ++_nextSeatVersion;
         seat.TokenExpiresAt = now + _limits.ReservationTtl;
         _tokens[token] = seat.Player.PlayerId;
         var path = RealtimeProtocol.ConnectPath + "?token=" + Uri.EscapeDataString(token);
@@ -751,7 +773,7 @@ public sealed class Lobby
         serverId = ServerId,
         region = Region,
         state = _state.ToString().ToLowerInvariant(),
-        minPlayers = Rules.MinPlayers,
+        minPlayers = _minPlayersToStart,
         maxPlayers = Rules.MaxPlayers,
         countdownEndsAt = CountdownEndsAt?.ToUnixTimeMilliseconds(),
         startedAt = StartedAt?.ToUnixTimeMilliseconds(),
@@ -807,6 +829,7 @@ public sealed class Lobby
 
     private sealed class Seat(RealtimePlayer player)
     {
+        public long Version { get; set; }
         public RealtimePlayer Player { get; } = player;
         public string? Token { get; set; }
         public DateTimeOffset TokenExpiresAt { get; set; }
@@ -837,6 +860,7 @@ public sealed class Lobby
 
     private sealed record Inbound(InboundKind Kind, string PlayerId, IPlayerConnection? Connection)
     {
+        public long? SeatVersion { get; init; }
         public byte[]? Frame { get; init; }
         public FrameFormat Format { get; init; }
         public string? Reason { get; init; }

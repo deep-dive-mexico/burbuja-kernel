@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using Burbuja.Realtime.Abstractions;
+using Burbuja.Realtime.Fleet;
 using Burbuja.Realtime.Lobbies;
 using Burbuja.Realtime.Matchmaking;
 using Burbuja.Realtime.Players;
@@ -16,6 +17,10 @@ namespace Burbuja.Realtime.Transport;
 /// <summary>
 /// <c>/realtime/v1</c>: the player API (guests, queue, lobbies), the operator API (fleet, drain, close) and the
 /// WebSocket door players connect through. Mapped only when <c>Realtime:Enabled</c>.
+///
+/// <para>Every node serves the whole API for the whole fleet: a call about a lobby or server on another node is
+/// routed there by <see cref="RealtimeFleet"/>. Only the WebSocket door is local, so a reservation's connect URL
+/// names the node that hosts its lobby.</para>
 ///
 /// <para><b>Two credentials, two jobs.</b> HTTP calls authenticate a player through the
 /// <see cref="IPlayerAuthenticator"/> chain. The WebSocket carries no player credential at all: its
@@ -62,7 +67,22 @@ public static class RealtimeEndpoints
         api.MapGet("/connect", H(ConnectAsync));
     }
 
-    private static Func<HttpContext, Task<IResult>> H(Func<HttpContext, Task<IResult>> handler) => handler;
+    /// <summary>Every handler goes through here: a backplane that cannot be reached is a 503, not a 500.</summary>
+    private static Func<HttpContext, Task<IResult>> H(Func<HttpContext, Task<IResult>> handler) => async http =>
+    {
+        try
+        {
+            return await handler(http);
+        }
+        catch (RealtimeBackplaneException)
+        {
+            return Error(StatusCodes.Status503ServiceUnavailable, "fleet_unavailable", "The lobby fleet cannot be reached right now.");
+        }
+        catch (TimeoutException)
+        {
+            return Failure("node_unavailable");
+        }
+    };
 
     // ─── players ─────────────────────────────────────────────────────────────────────────────
 
@@ -107,13 +127,13 @@ public static class RealtimeEndpoints
     {
         if (await PlayerAsync(http) is not { } player)
             return Unauthenticated();
-        var lobby = Service<LobbyManager>(http).LobbyOf(player.PlayerId);
+        var lobbyId = await Service<RealtimeFleet>(http).LobbyOfAsync(player.PlayerId, http.RequestAborted);
         return Results.Json(new
         {
             playerId = player.PlayerId,
             displayName = player.DisplayName,
             isGuest = player.IsGuest,
-            lobbyId = lobby?.Id,
+            lobbyId,
         }, Frames.Json);
     }
 
@@ -129,7 +149,7 @@ public static class RealtimeEndpoints
         if (body.Region is { Length: > 32 })
             return Error(StatusCodes.Status400BadRequest, "invalid_region", "region is at most 32 characters.");
 
-        var result = Service<MatchmakingQueue>(http).Enqueue(player, body.Game, body.Region);
+        var result = await Service<MatchmakingQueue>(http).EnqueueAsync(player, body.Game, body.Region, http.RequestAborted);
         return result.Error switch
         {
             null => Results.Json(TicketPayload(result.Ticket!), Frames.Json, statusCode: StatusCodes.Status202Accepted),
@@ -148,7 +168,7 @@ public static class RealtimeEndpoints
             return Unauthenticated();
         var id = Route(http, "ticketId");
         var queue = Service<MatchmakingQueue>(http);
-        if (queue.Get(id) is not { } ticket || ticket.PlayerId != player.PlayerId)
+        if (await queue.GetAsync(id, http.RequestAborted) is not { } ticket || ticket.PlayerId != player.PlayerId)
             return Error(StatusCodes.Status404NotFound, "ticket_not_found", "No such ticket for this player.");
 
         // Long-poll: ?waitSeconds=N (at most 30) answers as soon as the ticket leaves the queue.
@@ -161,21 +181,16 @@ public static class RealtimeEndpoints
     {
         if (await PlayerAsync(http) is not { } player)
             return Unauthenticated();
-        return Service<MatchmakingQueue>(http).Cancel(Route(http, "ticketId"), player.PlayerId)
+        return await Service<MatchmakingQueue>(http).CancelAsync(Route(http, "ticketId"), player.PlayerId, http.RequestAborted)
             ? Results.NoContent()
             : Error(StatusCodes.Status404NotFound, "ticket_not_found", "No queued ticket with that id for this player.");
     }
 
-    private static Task<IResult> ListLobbiesAsync(HttpContext http)
+    private static async Task<IResult> ListLobbiesAsync(HttpContext http)
     {
         var game = http.Request.Query["game"].ToString();
-        var lobbies = Service<LobbyManager>(http).Lobbies
-            .Where(l => l.Visibility == LobbyVisibility.Public && (game.Length == 0 || l.GameId == game))
-            .Select(l => l.Snapshot())
-            .Where(s => s.State < LobbyState.Ended)
-            .OrderBy(s => s.CreatedAt)
-            .Select(s => LobbyPayload(s, includeCode: false));
-        return Task.FromResult(Results.Json(new { value = lobbies }, Frames.Json));
+        var lobbies = await Service<RealtimeFleet>(http).ListLobbiesAsync(game.Length == 0 ? null : game, http.RequestAborted);
+        return Results.Json(new { value = lobbies.Select(s => LobbyPayload(s, includeCode: false)) }, Frames.Json);
     }
 
     private static async Task<IResult> CreateLobbyAsync(HttpContext http)
@@ -198,21 +213,19 @@ public static class RealtimeEndpoints
         if (ValidateSettings(body.Settings) is { } invalid)
             return Error(StatusCodes.Status400BadRequest, "invalid_settings", invalid);
 
-        var manager = Service<LobbyManager>(http);
-        if (manager.LobbyOf(player.PlayerId) is not null)
+        var fleet = Service<RealtimeFleet>(http);
+        if (await fleet.LobbyOfAsync(player.PlayerId, http.RequestAborted) is not null)
             return Failure("already_in_lobby");
-        var created = manager.Create(new CreateLobbyRequest(body.Game, visibility.Value, LobbyOrigin.Hosted, body.Region,
-            body.Settings ?? new Dictionary<string, string>()));
+        // The creator's seat is reserved with the lobby, on whichever node it lands; a lobby whose creator could
+        // not be seated closes itself.
+        var created = await fleet.CreateAsync(new CreateLobbyRequest(body.Game, visibility.Value, LobbyOrigin.Hosted, body.Region,
+            body.Settings ?? new Dictionary<string, string>()), [player], http.RequestAborted);
         if (created.Lobby is not { } lobby)
             return Failure(created.Error!);
-        var reserved = manager.Reserve(lobby, player);
-        if (reserved.Reservation is null)
-        {
-            lobby.RequestClose("creator_unseated");
-            return Failure(reserved.Error!);
-        }
+        if (created.Reservations[0].Reservation is not { } reservation)
+            return Failure(created.Reservations[0].Error!);
 
-        return Results.Json(new { lobby = LobbyPayload(lobby.Snapshot(), includeCode: true), reservation = reserved.Reservation },
+        return Results.Json(new { lobby = LobbyPayload(lobby, includeCode: true), reservation },
             Frames.Json, statusCode: StatusCodes.Status201Created);
     }
 
@@ -220,10 +233,9 @@ public static class RealtimeEndpoints
     {
         if (await PlayerAsync(http) is not { } player)
             return Unauthenticated();
-        if (Service<LobbyManager>(http).Find(Route(http, "lobbyId")) is not { } lobby)
+        if (await Service<RealtimeFleet>(http).FindAsync(Route(http, "lobbyId"), http.RequestAborted) is not { } snapshot)
             return LobbyNotFound();
-        var snapshot = lobby.Snapshot();
-        var member = snapshot.Members.Any(m => m.PlayerId == player.PlayerId) || lobby.HasSeat(player.PlayerId);
+        var member = snapshot.Members.Any(m => m.PlayerId == player.PlayerId) || snapshot.SeatHolders.Contains(player.PlayerId);
         return Results.Json(LobbyPayload(snapshot, includeCode: member || IsOperator(http)), Frames.Json);
     }
 
@@ -231,8 +243,7 @@ public static class RealtimeEndpoints
     {
         if (await PlayerAsync(http) is not { } player)
             return Unauthenticated();
-        var manager = Service<LobbyManager>(http);
-        return manager.Find(Route(http, "lobbyId")) is { } lobby ? Reservation(manager.Reserve(lobby, player)) : LobbyNotFound();
+        return Reservation(await Service<RealtimeFleet>(http).ReserveAsync(Route(http, "lobbyId"), player, http.RequestAborted));
     }
 
     private static async Task<IResult> JoinByCodeAsync(HttpContext http)
@@ -242,43 +253,47 @@ public static class RealtimeEndpoints
         var (body, problem) = await ReadAsync<JoinBody>(http);
         if (problem is not null)
             return problem;
-        var manager = Service<LobbyManager>(http);
-        return manager.FindByCode(body?.Code) is { } lobby ? Reservation(manager.Reserve(lobby, player)) : LobbyNotFound();
+        var fleet = Service<RealtimeFleet>(http);
+        return await fleet.FindByCodeAsync(body?.Code, http.RequestAborted) is { } lobbyId
+            ? Reservation(await fleet.ReserveAsync(lobbyId, player, http.RequestAborted))
+            : LobbyNotFound();
     }
 
     private static async Task<IResult> LeaveLobbyAsync(HttpContext http)
     {
         if (await PlayerAsync(http) is not { } player)
             return Unauthenticated();
-        var manager = Service<LobbyManager>(http);
-        return manager.Find(Route(http, "lobbyId")) is { } lobby && manager.Leave(lobby, player.PlayerId)
+        return await Service<RealtimeFleet>(http).LeaveAsync(Route(http, "lobbyId"), player.PlayerId, http.RequestAborted)
             ? Results.NoContent()
             : LobbyNotFound();
     }
 
     // ─── operators ───────────────────────────────────────────────────────────────────────────
 
-    private static Task<IResult> CloseLobbyAsync(HttpContext http)
+    private static async Task<IResult> CloseLobbyAsync(HttpContext http)
     {
         if (OperatorProblem(http) is { } denied)
-            return Task.FromResult(denied);
-        if (Service<LobbyManager>(http).Find(Route(http, "lobbyId")) is not { } lobby)
-            return Task.FromResult(LobbyNotFound());
-        lobby.RequestClose("closed_by_operator");
-        return Task.FromResult(Results.Accepted());
+            return denied;
+        return await Service<RealtimeFleet>(http).CloseAsync(Route(http, "lobbyId"), "closed_by_operator", http.RequestAborted)
+            ? Results.Accepted()
+            : LobbyNotFound();
     }
 
-    private static Task<IResult> ListServersAsync(HttpContext http)
+    /// <summary>Every live server in the fleet with the lobbies it hosts. A node that does not answer is listed
+    /// with its last published load and <c>hosted: null</c>.</summary>
+    private static async Task<IResult> ListServersAsync(HttpContext http)
     {
         if (OperatorProblem(http) is { } denied)
-            return Task.FromResult(denied);
-        var manager = Service<LobbyManager>(http);
-        var servers = manager.Balancer.Servers.Select(server =>
+            return denied;
+        var fleet = Service<RealtimeFleet>(http);
+        var hosted = await fleet.HostedLobbiesAsync(http.RequestAborted);
+        var servers = (await fleet.ServersAsync(http.RequestAborted)).Select(server =>
         {
-            var status = server.Status();
+            var status = server.Status;
             return new
             {
                 serverId = status.ServerId,
+                nodeId = server.NodeId,
                 region = status.Region,
                 state = status.State.ToString().ToLowerInvariant(),
                 lobbies = status.Lobbies,
@@ -287,32 +302,32 @@ public static class RealtimeEndpoints
                 utilization = status.Utilization,
                 load = status.Load,
                 publicUrl = status.PublicUrl,
-                hosted = server.Lobbies.Select(l => l.Snapshot()).Select(s => new
-                {
-                    lobbyId = s.LobbyId,
-                    gameId = s.GameId,
-                    state = s.State.ToString().ToLowerInvariant(),
-                    seats = s.Seats,
-                    maxPlayers = s.MaxPlayers,
-                    tick = s.Tick,
-                    performance = s.Performance,
-                }),
+                games = server.Games,
+                hosted = hosted.TryGetValue(server.NodeId, out var lobbies) && lobbies is not null
+                    ? lobbies.Where(s => s.ServerId == status.ServerId).Select(s => (object)new
+                    {
+                        lobbyId = s.LobbyId,
+                        gameId = s.GameId,
+                        state = s.State.ToString().ToLowerInvariant(),
+                        seats = s.Seats,
+                        maxPlayers = s.MaxPlayers,
+                        tick = s.Tick,
+                        performance = s.Performance,
+                    })
+                    : null,
             };
         });
-        return Task.FromResult(Results.Json(new { placement = manager.Balancer.Strategy.Name, value = servers }, Frames.Json));
+        return Results.Json(new { nodeId = fleet.NodeId, placement = fleet.Local.Balancer.Strategy.Name, value = servers }, Frames.Json);
     }
 
-    private static Task<IResult> SetServerStateAsync(HttpContext http, bool drain)
+    private static async Task<IResult> SetServerStateAsync(HttpContext http, bool drain)
     {
         if (OperatorProblem(http) is { } denied)
-            return Task.FromResult(denied);
-        if (Service<LobbyManager>(http).Server(Route(http, "serverId")) is not { } server)
-            return Task.FromResult(Error(StatusCodes.Status404NotFound, "server_not_found", "No such lobby server."));
-        if (drain)
-            server.Drain();
-        else
-            server.Activate();
-        return Task.FromResult(Results.Json(new { serverId = server.Id, state = server.State.ToString().ToLowerInvariant() }, Frames.Json));
+            return denied;
+        var serverId = Route(http, "serverId");
+        if (await Service<RealtimeFleet>(http).SetServerStateAsync(serverId, drain, http.RequestAborted) is not { } state)
+            return Error(StatusCodes.Status404NotFound, "server_not_found", "No such lobby server.");
+        return Results.Json(new { serverId, state = state.ToString().ToLowerInvariant() }, Frames.Json);
     }
 
     // ─── the WebSocket door ──────────────────────────────────────────────────────────────────
@@ -451,7 +466,9 @@ public static class RealtimeEndpoints
     };
 
     private static IResult Reservation(ReservationResult result) =>
-        result.Reservation is { } reservation ? Results.Json(reservation, Frames.Json) : Failure(result.Error!);
+        result.Reservation is { } reservation ? Results.Json(reservation, Frames.Json)
+        : result.Error == "lobby_not_found" ? LobbyNotFound()
+        : Failure(result.Error!);
 
     private static IResult Failure(string code) => code switch
     {
@@ -461,6 +478,8 @@ public static class RealtimeEndpoints
         "lobby_full" => Error(StatusCodes.Status409Conflict, code, "The lobby has no free seat."),
         "match_in_progress" => Error(StatusCodes.Status409Conflict, code, "The match started and this game does not take players mid-match."),
         "lobby_closed" => Error(StatusCodes.Status410Gone, code, "The lobby's match is over."),
+        "node_unavailable" => Error(StatusCodes.Status503ServiceUnavailable, code, "The node hosting that lobby did not answer; try again."),
+        "seat_unconfirmed" => Error(StatusCodes.Status503ServiceUnavailable, code, "The node holding this player's seat did not answer; try again."),
         _ => Error(StatusCodes.Status500InternalServerError, code, "The lobby could not be created."),
     };
 

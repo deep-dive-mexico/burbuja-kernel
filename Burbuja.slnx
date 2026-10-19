@@ -1,12 +1,15 @@
 <Solution>
   <Project Path="examples/Example.Arena/Example.Arena.Host/Example.Arena.Host.csproj" />
   <Project Path="examples/Example.Arena/Example.Arena.Plugin/Example.Arena.Plugin.csproj" />
+  <Project Path="examples/Example.Blast/Example.Blast.Host/Example.Blast.Host.csproj" />
+  <Project Path="examples/Example.Blast/Example.Blast.Plugin/Example.Blast.Plugin.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Host/Example.Workbench.Host.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" />
   <Project Path="plugins/Burbuja.Plugins.HostFacts.MacOs/Burbuja.Plugins.HostFacts.MacOs.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Llm.DeepSeek/Burbuja.Plugins.Llm.DeepSeek.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Llm.Scripted/Burbuja.Plugins.Llm.Scripted.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Policy.Core/Burbuja.Plugins.Policy.Core.csproj" />
+  <Project Path="plugins/Burbuja.Plugins.Realtime.Redis/Burbuja.Plugins.Realtime.Redis.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Store.Sqlite/Burbuja.Plugins.Store.Sqlite.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Supervisor/Burbuja.Plugins.Supervisor.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Tools.Agents/Burbuja.Plugins.Tools.Agents.csproj" />

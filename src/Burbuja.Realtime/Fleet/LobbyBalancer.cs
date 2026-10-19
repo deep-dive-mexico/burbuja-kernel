@@ -4,7 +4,9 @@ namespace Burbuja.Realtime.Fleet;
 
 /// <summary>
 /// Chooses the lobby server a new dedicated lobby is placed on. The balancer owns eligibility (active, below
-/// capacity, region preference with optional fallback) and the atomic claim; the strategy only ranks.
+/// capacity, region preference with optional fallback); the strategy only ranks. On one node
+/// <see cref="Allocate"/> also claims the slot atomically. Across a fleet the claim belongs to the node that
+/// owns the chosen server, so the fleet calls <see cref="Choose"/> and asks that node.
 /// </summary>
 public sealed class LobbyBalancer
 {
@@ -20,6 +22,7 @@ public sealed class LobbyBalancer
 
     public ILobbyPlacementStrategy Strategy { get; }
 
+    /// <summary>This node's servers.</summary>
     public IReadOnlyList<LobbyServer> Servers => _servers;
 
     /// <summary>A server with one lobby slot already claimed for the caller, or null when none has room.
@@ -30,20 +33,8 @@ public sealed class LobbyBalancer
         // often than there are servers, since each lost race means another server filled.
         for (var attempt = 0; attempt <= _servers.Count; attempt++)
         {
-            var candidates = _servers.Select(s => s.Status()).Where(s => s.HasCapacity).ToList();
-            if (request.Region is { } region)
-            {
-                var local = candidates.Where(s => string.Equals(s.Region, region, StringComparison.OrdinalIgnoreCase)).ToList();
-                if (local.Count > 0)
-                    candidates = local;
-                else if (!_allowCrossRegion)
-                    return null;
-            }
-
-            if (candidates.Count == 0)
-                return null;
-            var chosen = Strategy.Choose(candidates, request);
-            if (chosen is null || candidates.All(c => c.ServerId != chosen))
+            var chosen = Choose(_servers.Select(s => s.Status()).ToList(), request);
+            if (chosen is null)
                 return null;
             var server = _servers.First(s => s.Id == chosen);
             if (server.TryAllocate())
@@ -51,6 +42,26 @@ public sealed class LobbyBalancer
         }
 
         return null;
+    }
+
+    /// <summary>The id of the server among <paramref name="statuses"/> the strategy picks for
+    /// <paramref name="request"/>, or null when none is eligible. Claims nothing.</summary>
+    public string? Choose(IReadOnlyList<LobbyServerStatus> statuses, PlacementRequest request)
+    {
+        var candidates = statuses.Where(s => s.HasCapacity).ToList();
+        if (request.Region is { } region)
+        {
+            var local = candidates.Where(s => string.Equals(s.Region, region, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (local.Count > 0)
+                candidates = local;
+            else if (!_allowCrossRegion)
+                return null;
+        }
+
+        if (candidates.Count == 0)
+            return null;
+        var chosen = Strategy.Choose(candidates, request);
+        return chosen is not null && candidates.Any(c => c.ServerId == chosen) ? chosen : null;
     }
 }
 

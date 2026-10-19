@@ -1,0 +1,17 @@
+{
+  "id": "Example.Blast",
+  "name": "Example Blast battle game",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Example.Blast.Plugin.dll",
+  "entry_type": "Example.Blast.Plugin.BlastPlugin",
+  "load": "dynamic",
+  "provides": ["Example.Blast"],
+  "extension_points": [],
+  "requires": [],
+  "roles": ["all"],
+  "config_section": null,
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 900
+}
