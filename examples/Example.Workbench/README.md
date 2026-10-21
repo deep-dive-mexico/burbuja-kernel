@@ -16,7 +16,7 @@ this example uses project references, including when copied outside that checkou
 
 From this directory, set the **physical** path to a clean checkout of
 `deep-dive-mexico/burbuja-kernel` pinned to a full commit. For example,
-`acaf2fce3dffa4d06fb566a54b563abc16f7820a` is the independently tested runtime revision.
+`de6ecd26f7f56858969b5e171d5c39aecfedc2b4` is the sanitized stable v0.6.1 runtime revision.
 Resolve symlinks **before the first build** (macOS `/var` aliases `/private/var`):
 
 ```bash
@@ -35,7 +35,5 @@ Open <http://127.0.0.1:18490/workbench> and sign in with `owner` / `owner-dev-pa
 These are public development credentials; data is in memory and disappears on restart.
 
 For the HTTP bootstrap, RBAC examples, external-copy procedure and bounded tests, read the
-[developer workbench guide](../../docs/developer-workbench.md) in this repository's documentation
-revision. The runtime pin `acaf2fce3dffa4d06fb566a54b563abc16f7820a` predates this
-docs-only addition, so that checkout alone does not contain the guide. The sample's local
+[developer workbench guide](../../docs/developer-workbench.md) in this repository. The sample's local
 `Directory.*` files and `global.json` must travel with both project folders.
