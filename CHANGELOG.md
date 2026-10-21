@@ -6,6 +6,15 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+### Delivery
+
+- Move validation, release, consumer compatibility and deployment jobs to disposable
+  GitHub-hosted Ubuntu runners. Public pull requests receive no private-consumer
+  checkout or deployment authority. Keep private test output on its temporary VM.
+- Replace deployment-runner instance credentials with separate environment-bound
+  AWS OIDC roles. Manual validation checks authentication by default and installs
+  only when its `deploy` input is enabled.
+
 ### Added
 
 - Begin the 0.7 development line with an opt-in connected-application storage
