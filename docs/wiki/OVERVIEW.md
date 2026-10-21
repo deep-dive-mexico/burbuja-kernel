@@ -5,6 +5,7 @@ The **generic runtime** is the source of truth for reusable mechanisms. `src/Bur
 | Change concerns | Open |
 |---|---|
 | Build, test selection, packaging/export boundary | [README](../../README.md), `export-manifest.json`, `Makefile` |
+| Public visibility, data disclosure, historical artifacts and runner isolation | [Publication audit](../publication-audit.md) |
 | Version numbers, release lines, tags, what a consumer pins | [Releases](../releases.md), `scripts/kernel-version.py` |
 | Curated release changes and notes before promotion | [Release notes](../../CHANGELOG.md), [notes workflow](../release-notes.md) |
 | Locating an existing runtime mechanism (jobs, stateful agents, tools, integrations, MCP, trace) or an expansion gap | [Runtime capabilities](../runtime-capabilities.md) |
