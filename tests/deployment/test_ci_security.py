@@ -22,7 +22,7 @@ class PublicCiSecurityTests(unittest.TestCase):
             if name == "deploy":
                 self.assertIn("id-token: write", job)
                 self.assertIn("environment:", job)
-                self.assertIn("vars.AWS_DEPLOY_ROLE", job)
+                self.assertIn("secrets.AWS_DEPLOY_ROLE", job)
                 self.assertIn("configure-aws-credentials@", job)
                 self.assertIn("mask-aws-account-id: true", job)
             else:
