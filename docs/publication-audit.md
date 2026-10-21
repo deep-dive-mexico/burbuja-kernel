@@ -10,8 +10,8 @@ artifacts, or cached historical references.
 ## Source boundary
 
 Sanitation replaces historical operational deployment records with reusable
-guidance, removes private client acceptance status, normalizes personal/local
-commit email identities to the owner's public GitHub noreply identity, and
+guidance, removes private client acceptance status, normalizes host-local
+commit email identities to the owner's requested public contact address, and
 replaces the historical personal-account policy fixture with a synthetic account.
 Application source and declared release versions are preserved. Local records map
 old commits and tags to sanitized identities; private-consumer locks are updated
@@ -47,8 +47,7 @@ maintainer explicitly chose to leave that verification pending.
 
 The independent replacement contains all 29 branch tips and five release tags.
 Runtime source and declared versions were compared at every corresponding ref and
-remain unchanged. Personal/local commit emails were normalized to public GitHub
-identities; historical account-path fixtures use a synthetic account. Identified
+remain unchanged. Owner commit emails now use the requested public contact address; historical account-path fixtures use a synthetic account. Identified
 cloud inventory and private rollout records were removed from reachable history.
 
 All 43 old hosted artifacts were privately backed up, CRC-checked, indexed with
@@ -74,3 +73,11 @@ per-environment deployment settings without plaintext resource-variable copies.
 GitHub-hosted execution remains pending as described above. No production
 application rollout was performed. Repository visibility remains private until
 the maintainer changes it.
+
+## Owner commit identity
+
+The owner explicitly selected `maquinterov0399@gmail.com` for author and committer
+identity, including public commits. This address is intentional public contact
+data. Host-local account addresses remain removed; platform bot identities are
+preserved. Changing author metadata changes commit/tag hashes but leaves every
+source tree unchanged. Consumer pins and release notes follow the corrected tags.
