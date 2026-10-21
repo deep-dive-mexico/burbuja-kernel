@@ -2,11 +2,16 @@ name: Kernel source validation
 on:
   push:
     # Feature branches validate through pull_request once; both events otherwise
-    # queue complete dev/main AKOS suites on the same host for one change.
+    # run duplicate generic validation campaigns for one change.
     branches: [dev, main, 'release/**']
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Install the validated image (otherwise verify AWS authentication only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,8 +21,7 @@ concurrency:
 jobs:
   prepare-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # Release jobs only call the GitHub API; their own runner keeps them from queueing behind validation.
-    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-release"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -37,11 +41,9 @@ jobs:
   build-and-unit:
     needs: prepare-release
     if: ${{ !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
-    # Code under test runs on the CI runner, which has no AWS authority; only deploy uses dive-kernel.
-    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      DOTNET_INSTALL_DIR: /home/runner/.dotnet-kernel
       RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -94,27 +96,17 @@ jobs:
         run: echo "::warning::Artifact upload failed; kernel test outcomes remain in workflow logs."
   consumer-akos:
     needs: [prepare-release, build-and-unit]
-    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' }}
-    # Validate both the development and production source lines of the first consumer.
-    # Its complete offline product suite (units, HTTP,
-    # owned-process restarts, Chromium journeys) runs against this exact kernel commit through the
-    # product's own non-deployable candidate harness, so a generic change that would regress the
-    # product fails here before a release is published or a tenant deployed. The deploy key is
-    # read-only and scoped to the product repository alone (docs/releases.md, "Consumer gate").
-    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-ci"]') }}
+    # Private source and credentials are available only on trusted push/manual runs.
+    if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
         product-ref: [dev, main]
-    # Includes up to an hour waiting for the host-wide AKOS lane lock below.
-    timeout-minutes: 120
+    timeout-minutes: 90
     env:
-      DOTNET_INSTALL_DIR: /home/runner/.dotnet-akos
       KERNEL_COMMIT: ${{ needs.prepare-release.outputs.sha || github.sha }}
-      # The product's own CI shares this host and claims loopback ports 18025-18099 for its hosts;
-      # a second checkout cannot see those claims, and two Hosts on one port route requests to the
-      # wrong kernel (first live gate run, 2026-10-07). This job keeps a disjoint band.
       BURBUJA_PORT_MIN: "18400"
       BURBUJA_PORT_MAX: "18474"
     steps:
@@ -133,42 +125,32 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.400
-      - name: Run the complete AKOS product suite against this kernel commit
+      - name: Run the complete private consumer suite
         working-directory: akos
         run: |
-          git -C ../kernel remote set-url origin https://github.com/deep-dive-mexico/burbuja-kernel.git
-          echo "AKOS ${{ matrix.product-ref }} source: $(git rev-parse HEAD)"
-          # The product's own CI runner shares this 4-vCPU host and its lanes hold the same lock, so
-          # two AKOS suites never run at once: concurrent Chromium lanes starved each other into
-          # 20-30 s timeouts on the second live gate run (2026-10-07). The Chromium install runs
-          # inside the lock too (its apt step cannot share dpkg). A lock timeout exits 75, not 1.
-          # One retry requires fresh, source-matched evidence of executed browser failures.
-          # The aggregate gate receipt retains the four final lanes and both attempts.
-          # shellcheck disable=SC2016
-          flock -E 75 --verbose --timeout 3600 /home/runner/dive-akos-lanes.lock \
-            bash -eo pipefail -c 'python3 scripts/test-product.py install-browser \
-              && python3 ../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"'
-      - uses: actions/upload-artifact@v4
-        id: consumer-diagnostics
+          # Raw product output stays on this disposable VM and is never uploaded.
+          python3 scripts/test-product.py install-browser > "$RUNNER_TEMP/consumer-install.log" 2>&1
+          python3 ../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT" > "$RUNNER_TEMP/consumer-gate.log" 2>&1
+      - name: Report consumer test counts without private diagnostics
         if: always()
-        continue-on-error: true
-        with:
-          name: akos-consumer-compatibility-${{ matrix.product-ref }}
-          retention-days: 7
-          path: |
-            akos/artifacts/kernel-compatibility/consumer-gate-summary.json
-            akos/artifacts/kernel-compatibility/candidate-*/.kernel-candidate-test-only.json
-            akos/artifacts/kernel-compatibility/candidate-*/*.log
-            akos/artifacts/kernel-compatibility/candidate-*/artifacts/diag/
-          include-hidden-files: true
-      - name: Report unavailable consumer diagnostic storage
-        if: ${{ always() && steps.consumer-diagnostics.outcome == 'failure' }}
-        run: echo "::warning::Artifact upload failed; source-bound consumer receipts remain in workflow logs."
+        run: |
+          python3 - <<'REPORT'
+          import json
+          from pathlib import Path
+          path = Path("akos/artifacts/kernel-compatibility/consumer-gate-summary.json")
+          if not path.is_file():
+              raise SystemExit("Consumer gate did not produce a summary; private output was not published.")
+          summary = json.loads(path.read_text())
+          for lane in ("unit", "http", "own-host", "browser"):
+              counts = summary.get("lanes", {}).get(lane, {}).get("results", {})
+              print(lane, {key: int(counts.get(key, 0)) for key in ("total", "passed", "failed", "notExecuted", "aborted")})
+          if summary.get("status") != "passed":
+              raise SystemExit("Consumer compatibility failed; diagnose in private automation.")
+          REPORT
   release:
     needs: [prepare-release, build-and-unit, consumer-akos]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && needs.consumer-akos.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-    # Release jobs only call the GitHub API; their own runner keeps them from queueing behind validation.
-    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-release"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -187,8 +169,11 @@ jobs:
   deploy:
     needs: [prepare-release, build-and-unit, consumer-akos, release]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && needs.consumer-akos.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request' }}
-    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-kernel"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
     # main deploys production; dev deploys the dev tenant. The dev environment admits
     # only branch dev and overrides AWS_DEPLOY_INSTANCE; the host also checks its tenant.
     environment:
@@ -206,5 +191,21 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.sha || github.sha }}
           persist-credentials: false
+      - name: Configure environment-scoped AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Verify short-lived deployment credentials
+        run: |
+          aws sts get-caller-identity > /dev/null
+          echo "OIDC deployment authentication verified."
+      - name: Install deployment dependencies
+        if: github.event_name == 'push' || inputs.deploy
+        run: |
+          python3 -m venv "$RUNNER_TEMP/kernel-deploy-venv"
+          "$RUNNER_TEMP/kernel-deploy-venv/bin/python" -m pip install --disable-pip-version-check boto3==1.43.116
       - name: Build, publish and deploy immutable image
-        run: /opt/dive/venv/bin/python scripts/aws-release.py
+        if: github.event_name == 'push' || inputs.deploy
+        run: '"$RUNNER_TEMP/kernel-deploy-venv/bin/python" scripts/aws-release.py'
