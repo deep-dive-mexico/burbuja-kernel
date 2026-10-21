@@ -15,6 +15,13 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Delivery
 
+- Move validation, release, consumer compatibility and deployment jobs to disposable
+  GitHub-hosted Ubuntu runners. Public pull requests receive no private-consumer
+  checkout or deployment authority. Keep private test output on its temporary VM.
+- Replace deployment-runner instance credentials with separate environment-bound
+  AWS OIDC roles. Manual validation checks authentication by default and installs
+  only when its `deploy` input is enabled.
+
 - Include a curated release summary from the validated source's changelog in
   new GitHub releases, alongside source identity and GitHub's generated PR list.
   Publication reruns preserve existing release pages and immutable tags.
