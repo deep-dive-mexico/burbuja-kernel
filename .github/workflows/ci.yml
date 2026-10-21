@@ -179,9 +179,9 @@ jobs:
       AWS_REGION: us-west-2
       AWS_APPLICATION: kernel
       AWS_TENANT: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
-      AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
-      AWS_RELEASE_BUCKET: ${{ vars.AWS_RELEASE_BUCKET }}
-      AWS_DEPLOY_INSTANCE: ${{ vars.AWS_DEPLOY_INSTANCE }}
+      AWS_ECR_REPOSITORY: ${{ secrets.AWS_ECR_REPOSITORY }}
+      AWS_RELEASE_BUCKET: ${{ secrets.AWS_RELEASE_BUCKET }}
+      AWS_DEPLOY_INSTANCE: ${{ secrets.AWS_DEPLOY_INSTANCE }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -190,7 +190,7 @@ jobs:
       - name: Configure environment-scoped AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true
       - name: Verify short-lived deployment credentials
