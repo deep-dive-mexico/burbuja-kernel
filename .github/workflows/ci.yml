@@ -2,11 +2,15 @@ name: Kernel source validation
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   build-and-unit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.400
