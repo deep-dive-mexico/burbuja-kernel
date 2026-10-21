@@ -42,3 +42,35 @@ sanitized release pin. This does not establish live model/provider behavior or
 manual client acceptance. Actual GitHub-hosted execution and OIDC token exchange
 remain pending because organization billing prevents runner allocation; the
 maintainer explicitly chose to leave that verification pending.
+
+## Cleanup verification
+
+The independent replacement contains all 29 branch tips and five release tags.
+Runtime source and declared versions were compared at every corresponding ref and
+remain unchanged. Personal/local commit emails were normalized to public GitHub
+identities; historical account-path fixtures use a synthetic account. Identified
+cloud inventory and private rollout records were removed from reachable history.
+
+All 43 old hosted artifacts were privately backed up, CRC-checked, indexed with
+SHA-256 hashes, and deleted from GitHub. The 102 existing workflow log sets were
+also removed. One unallocated historical queued record has no jobs or logs and
+remains only in the private archive. No old artifacts, runs, pull requests or
+cached original release commits were transferred to the replacement.
+
+The original release commits were checked through the new repository's API and
+are not accessible there. The replacement is independent, not a fork of the
+archive. The archive remains private with Actions disabled. The working checkout
+was replaced with a fresh sanitized clone to avoid accidentally pushing old refs.
+
+The sanitized runtime passed 1,428 kernel tests with no failures/skips and a build
+with no warnings/errors. The current deployment/security contract suite passed
+62 tests. The full-history credential scan reported only the 14 previously
+reviewed synthetic fixture and checksum false positives. No live credential was
+confirmed. Existing read-only source access was preserved, consumer locks were
+coordinated privately, and deployment trust was rebound to the new repository ID.
+
+The replacement has zero self-hosted runner registrations and uses masked
+per-environment deployment settings without plaintext resource-variable copies.
+GitHub-hosted execution remains pending as described above. No production
+application rollout was performed. Repository visibility remains private until
+the maintainer changes it.
