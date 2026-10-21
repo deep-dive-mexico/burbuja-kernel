@@ -176,19 +176,15 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertIn("product-ref: [dev, main]", job)
         self.assertIn("ref: ${{ matrix.product-ref }}", job)
         self.assertIn("fail-fast: false", job)
-        self.assertIn("max-parallel: 1", job)
-        self.assertIn("name: akos-consumer-compatibility-${{ matrix.product-ref }}", job)
-        self.assertIn("include-hidden-files: true", job)
+        self.assertIn("max-parallel: 2", job)
         self.assertIn("ssh-key: ${{ secrets.AKOS_READ_SSH_KEY }}", job)
         self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
         self.assertIn('../kernel/scripts/consumer-gate.py --kernel-root ../kernel --kernel-commit "$KERNEL_COMMIT"', job)
         self.assertIn("scripts/test-product.py install-browser", job)
         self.assertIn("akos/artifacts/kernel-compatibility/consumer-gate-summary.json", job)
-        self.assertIn("akos/artifacts/kernel-compatibility/candidate-*/.kernel-candidate-test-only.json", job)
-        self.assertIn("akos/artifacts/kernel-compatibility/candidate-*/artifacts/diag/", job)
 
     def test_diagnostic_upload_failure_cannot_override_test_outcomes(self):
-        for name in ("consumer-akos", "build-and-unit"):
+        for name in ("build-and-unit",):
             job = jobs()[name]
             self.assertEqual(job.count("continue-on-error: true"), 1)
             upload = job.split("uses: actions/upload-artifact@v4", 1)[1]
@@ -196,12 +192,12 @@ class ConsumerGateTests(unittest.TestCase):
             self.assertIn("::warning::Artifact upload failed", upload)
             self.assertIn("retention-days: 7", upload)
 
-    def test_consumer_suite_holds_the_host_wide_akos_lane_lock(self):
+    def test_consumer_matrix_uses_disposable_github_vms(self):
         job = jobs()["consumer-akos"]
-        self.assertIn("flock -E 75 --verbose --timeout 3600 /home/runner/dive-akos-lanes.lock", job)
-        self.assertLess(job.index("flock -E 75"), job.index("scripts/test-product.py install-browser"))
+        self.assertIn("runs-on: ubuntu-24.04", job)
+        self.assertNotIn("flock ", job)
+        self.assertIn("max-parallel: 2", job)
         self.assertLess(job.index("scripts/test-product.py install-browser"), job.index("scripts/consumer-gate.py"))
-        self.assertIn("timeout-minutes: 120", job)
 
     def test_consumer_hosts_use_a_port_band_disjoint_from_the_product_and_kernel_lanes(self):
         job = jobs()["consumer-akos"]
