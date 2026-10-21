@@ -3,6 +3,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Install the validated image (otherwise verify AWS authentication only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -12,7 +17,7 @@ concurrency:
 jobs:
   prepare-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -32,10 +37,9 @@ jobs:
   build-and-unit:
     needs: prepare-release
     if: ${{ !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
-    runs-on: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","linux","x64","dive-kernel"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      DOTNET_INSTALL_DIR: /home/runner/.dotnet-kernel
       RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -73,8 +77,10 @@ jobs:
           python3 scripts/test-e2e.py install-browser
           python3 scripts/test-e2e.py browser
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
+          retention-days: 7
           name: kernel-e2e-diagnostics
           path: |
             artifacts/e2e-runs/
@@ -83,7 +89,7 @@ jobs:
   release:
     needs: [prepare-release, build-and-unit]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -102,8 +108,11 @@ jobs:
   deploy:
     needs: [prepare-release, build-and-unit, release]
     if: ${{ !cancelled() && needs.build-and-unit.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request' }}
-    runs-on: ${{ fromJSON('["self-hosted","linux","x64","dive-kernel"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
     # main deploys production; dev deploys the dev tenant. The dev environment admits
     # only branch dev and overrides AWS_DEPLOY_INSTANCE; the host also checks its tenant.
     environment:
@@ -121,5 +130,21 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.sha || github.sha }}
           persist-credentials: false
+      - name: Configure environment-scoped AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Verify short-lived deployment credentials
+        run: |
+          aws sts get-caller-identity > /dev/null
+          echo "OIDC deployment authentication verified."
+      - name: Install deployment dependencies
+        if: github.event_name == 'push' || inputs.deploy
+        run: |
+          python3 -m venv "$RUNNER_TEMP/kernel-deploy-venv"
+          "$RUNNER_TEMP/kernel-deploy-venv/bin/python" -m pip install --disable-pip-version-check boto3==1.43.116
       - name: Build, publish and deploy immutable image
-        run: /opt/dive/venv/bin/python scripts/aws-release.py
+        if: github.event_name == 'push' || inputs.deploy
+        run: '"$RUNNER_TEMP/kernel-deploy-venv/bin/python" scripts/aws-release.py'
