@@ -16,7 +16,7 @@ this example uses project references, including when copied outside that checkou
 
 From this directory, set the **physical** path to a clean checkout of
 `deep-dive-mexico/burbuja-kernel` pinned to a full commit. For example,
-`de6ecd26f7f56858969b5e171d5c39aecfedc2b4` is the sanitized stable v0.6.1 runtime revision.
+`c4020370250dbf7989207cec172f9824ffb2db04` is the sanitized stable v0.6.1 runtime revision.
 Resolve symlinks **before the first build** (macOS `/var` aliases `/private/var`):
 
 ```bash
