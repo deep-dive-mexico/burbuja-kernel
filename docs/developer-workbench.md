@@ -12,8 +12,8 @@ assemblies, or its executable. The tests inspect the compiled dependency closure
 - .NET SDK **10.0.400**, as pinned in the sample's `global.json`; **10.0.401** was tested.
   Running the framework-dependent publish requires the .NET 10 ASP.NET Core runtime.
 - A **clean, pinned checkout of `deep-dive-mexico/burbuja-kernel`** containing
-  `src/Burbuja.Hosting`. Commit `acaf2fce3dffa4d06fb566a54b563abc16f7820a` is the
-  independently tested runtime revision; a later compatible revision may be pinned instead.
+  `src/Burbuja.Hosting`. Commit `de6ecd26f7f56858969b5e171d5c39aecfedc2b4` is the
+  sanitized stable v0.6.1 runtime revision; a later compatible revision may be pinned instead.
   Record the full SHA in the consuming application's dependency documentation. The historical
   integration repository is not the supported source for generic changes.
 - NuGet restore access for the source projects' dependencies. `curl` is used below; the external-copy
@@ -41,7 +41,7 @@ tested runtime revision. Resolve the **physical** path before copying or buildin
 ```bash
 gh repo clone deep-dive-mexico/burbuja-kernel "$HOME/Developer/burbuja-kernel-pinned"
 BURBUJA_ROOT="$HOME/Developer/burbuja-kernel-pinned"
-git -C "$BURBUJA_ROOT" checkout --detach acaf2fce3dffa4d06fb566a54b563abc16f7820a
+git -C "$BURBUJA_ROOT" checkout --detach de6ecd26f7f56858969b5e171d5c39aecfedc2b4
 BURBUJA_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve(strict=True))' "$BURBUJA_ROOT")"
 git -C "$BURBUJA_ROOT" rev-parse HEAD
 ```
@@ -265,7 +265,7 @@ under Kestrel on an atomically allocated loopback port, from an unrelated workin
 spaces in the install path. Each test uses isolated temporary state and disposes its host/child.
 
 **Independent proof on 2026-09-27 from a fresh private GitHub clone at
-`acaf2fce3dffa4d06fb566a54b563abc16f7820a` (not the integration tree):**
+`de6ecd26f7f56858969b5e171d5c39aecfedc2b4` (not the integration tree):**
 
 - A separate copy of `examples/Example.Workbench` in a path **with spaces** built with the
   physical, pinned `BurbujaRoot`: **0 warnings, 0 errors**. Release-published the host and
