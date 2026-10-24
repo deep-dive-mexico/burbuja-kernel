@@ -28,6 +28,14 @@ public sealed class RealtimeOptions
     /// <summary>Frames buffered per connection before the oldest is dropped.</summary>
     public int SendBufferFrames { get; set; } = 256;
 
+    /// <summary>
+    /// Opt in to negotiated per-message WebSocket compression. Off by default: enable only for
+    /// games whose frames contain no credentials or other secrets. Server context takeover is
+    /// always disabled, and message-size limits still apply to decompressed input.
+    /// Clients that do not request compression continue to use ordinary frames.
+    /// </summary>
+    public bool EnableWebSocketCompression { get; set; }
+
     /// <summary>Kernel API-key roles allowed to use the operator endpoints (fleet, drain, close).</summary>
     public string[] OperatorRoles { get; set; } = ["Owner"];
 

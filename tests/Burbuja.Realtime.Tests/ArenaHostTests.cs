@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
+using Microsoft.AspNetCore.Hosting;
 using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -29,7 +30,7 @@ public sealed class ArenaHostTests : IAsyncDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "burbuja-arena-tests", Guid.NewGuid().ToString("N"));
     private WebApplication? _app;
 
-    private async Task<WebApplication> StartAsync(bool enabled = true)
+    private async Task<WebApplication> StartAsync(bool enabled = true, bool compression = false, bool realNetwork = false)
     {
         var plugins = Path.Combine(_root, "plugins");
         Copy(Path.Combine(AppContext.BaseDirectory, "arena-plugin-fixture"), Path.Combine(plugins, "Example.Arena"));
@@ -53,6 +54,7 @@ public sealed class ArenaHostTests : IAsyncDisposable
                 ["Auth:ApiKeys:1:Key"] = "arena-player-key",
                 ["Auth:ApiKeys:1:PrincipalId"] = "bot",
                 ["Realtime:Enabled"] = enabled.ToString(),
+                ["Realtime:EnableWebSocketCompression"] = compression.ToString(),
                 ["Realtime:Guests:Enabled"] = "true",
                 ["Realtime:Matchmaking:IntervalMilliseconds"] = "50",
                 ["Realtime:Servers:0:Id"] = "arena-a",
@@ -63,11 +65,40 @@ public sealed class ArenaHostTests : IAsyncDisposable
                 ["Workspace:RepoRoot"] = _root,
                 ["Logging:LogLevel:Default"] = "Warning",
             });
-            builder.WebHost.UseTestServer();
+            if (realNetwork) builder.WebHost.UseUrls("http://127.0.0.1:0");
+            else builder.WebHost.UseTestServer();
             builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
         });
         await _app.StartAsync(Ct);
         return _app;
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task Compression_is_negotiated_only_when_both_sides_opt_in(bool serverEnabled, bool clientEnabled)
+    {
+        var app = await StartAsync(compression: serverEnabled, realNetwork: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var guest = await Json(await client.PostAsJsonAsync("/realtime/v1/guests", new { displayName = "Compression test" }, Ct), HttpStatusCode.Created);
+        client.DefaultRequestHeaders.Add("x-player-token", (string)guest["token"]!);
+        var created = await Json(await client.PostAsJsonAsync("/realtime/v1/lobbies", new { game = "arena", visibility = "private" }, Ct), HttpStatusCode.Created);
+        var uri = new UriBuilder(new Uri(client.BaseAddress, (string)created["reservation"]!["connectUrl"]!)) { Scheme = "ws" };
+        using var socket = new ClientWebSocket();
+        socket.Options.CollectHttpResponseDetails = true;
+        if (clientEnabled) socket.Options.DangerousDeflateOptions = new WebSocketDeflateOptions { ClientContextTakeover = false, ServerContextTakeover = false };
+        await socket.ConnectAsync(uri.Uri, Ct);
+        var negotiated = socket.HttpResponseHeaders!.TryGetValue("Sec-WebSocket-Extensions", out var values) ? string.Join(",", values) : "";
+        Assert.Equal(serverEnabled && clientEnabled, negotiated.Contains("permessage-deflate", StringComparison.Ordinal));
+        if (serverEnabled && clientEnabled) Assert.Contains("server_no_context_takeover", negotiated);
+        await NextAsync(socket, "sys.welcome");
+        string payload = new('x', 32);
+        await SendAsync(socket, System.Text.Json.JsonSerializer.Serialize(new { t = "sys.ping", d = new { payload } }));
+        Assert.Equal(payload, (string?)(await NextAsync(socket, "sys.pong"))["d"]!["echo"]!["payload"]);
+        await SendAsync(socket, System.Text.Json.JsonSerializer.Serialize(new { t = "sys.ping", d = new { payload = new string('x', 4096) } }));
+        Assert.Equal(WebSocketCloseStatus.MessageTooBig, await ClosedAsync(socket));
     }
 
     [Fact]
