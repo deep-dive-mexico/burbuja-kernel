@@ -8,6 +8,10 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- Optional private native file worker with fresh-headroom admission, fixed
+  executable/argument allowlists, bounded input/output, cancellation and status;
+  host monitoring and cooperative background budgets ([guide](docs/shared-workloads.md)).
+
 - Dedicated real-time lobbies for multiplayer games (`Burbuja.Realtime`, contracts in
   `Burbuja.Realtime.Abstractions`): a matchmaking queue with a widening skill window and
   backfill, lobby-server placement (`least-loaded` or `packed`, region-aware, drainable),

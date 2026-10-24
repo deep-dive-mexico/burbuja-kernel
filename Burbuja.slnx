@@ -50,4 +50,6 @@
   <Project Path="tests/plugins/Burbuja.Plugins.Test.Ok/Burbuja.Plugins.Test.Ok.csproj" />
   <Project Path="tests/plugins/Burbuja.Plugins.Test.ThirdParty/Burbuja.Plugins.Test.ThirdParty.csproj" />
   <Project Path="tools/Burbuja.FakeMcp/Burbuja.FakeMcp.csproj" />
+  <Project Path="src/Burbuja.Worker/Burbuja.Worker.csproj" />
+  <Project Path="tests/Burbuja.Worker.Tests/Burbuja.Worker.Tests.csproj" />
 </Solution>

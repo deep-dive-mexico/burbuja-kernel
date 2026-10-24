@@ -9,6 +9,7 @@ The **generic runtime** is the source of truth for reusable mechanisms. `src/Bur
 | Version numbers, release lines, tags, what a consumer pins | [Releases](../releases.md), `scripts/kernel-version.py` |
 | Curated release changes and notes before promotion | [Release notes](../../CHANGELOG.md), [notes workflow](../release-notes.md) |
 | Locating an existing runtime mechanism (jobs, stateful agents, tools, integrations, MCP, trace) or an expansion gap | [Runtime capabilities](../runtime-capabilities.md) |
+| Bounded private file compute, host health and cooperative background budgets | [Shared workloads](../shared-workloads.md) |
 | Outbound MCP transport/authority, interrupted job continuation and end-to-end gates | [MCP and job recovery](../mcp-job-recovery.md) |
 | Multiplayer/real-time lobbies: games, matchmaking, placement, multi-node fleet, lifecycle, WebSocket protocol | [Real-time lobbies](../realtime-lobbies.md), [Redis backplane](../../plugins/Burbuja.Plugins.Realtime.Redis/README.md), [Arena PoC](../../examples/Example.Arena/README.md), [Blast](../../examples/Example.Blast/README.md) |
 | Independent consuming host, plugin and auth | [Developer workbench](../developer-workbench.md), [example README](../../examples/Example.Workbench/README.md) |
