@@ -53,6 +53,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.400
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Packages.props', '**/global.json') }}
+          restore-keys: ${{ runner.os }}-nuget-
       - name: Check official committed source boundary
         run: python3 scripts/release-source.py --check
       - name: Check declared version against the release line
@@ -72,14 +77,10 @@ jobs:
           dotnet build examples/Example.Workbench/Example.Workbench.slnx -c Release -m:1
       - name: Run generic unit projects
         run: python3 scripts/test-kernel.py
-      - name: Run public HTTP and restart journeys
-        run: |
-          python3 scripts/test-e2e.py http
-          python3 scripts/test-e2e.py own-host
-      - name: Install Chromium and verify the generic console
-        run: |
-          python3 scripts/test-e2e.py install-browser
-          python3 scripts/test-e2e.py browser
+      - name: Install Chromium
+        run: python3 scripts/test-e2e.py install-browser
+      - name: Run every HTTP, restart and browser journey with one build
+        run: python3 scripts/test-e2e.py all
       - uses: actions/upload-artifact@v4
         id: kernel-diagnostics
         if: always()
@@ -125,6 +126,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.400
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Packages.props', '**/global.json') }}
+          restore-keys: ${{ runner.os }}-nuget-
       - name: Run the complete private consumer suite
         working-directory: akos
         run: |
@@ -144,6 +150,7 @@ jobs:
           for lane in ("unit", "http", "own-host", "browser"):
               counts = summary.get("lanes", {}).get(lane, {}).get("results", {})
               print(lane, {key: int(counts.get(key, 0)) for key in ("total", "passed", "failed", "notExecuted", "aborted")})
+              print(lane, "timing", summary.get("lanes", {}).get(lane, {}).get("timing", {}))
           if summary.get("status") != "passed":
               raise SystemExit("Consumer compatibility failed; diagnose in private automation.")
           REPORT

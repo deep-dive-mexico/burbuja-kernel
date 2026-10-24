@@ -58,11 +58,28 @@ The monitor sets this only for its own subprocesses, with no network changes.
 Build and verify:
 
 ```sh
+python3 scripts/test-workloads.py
 dotnet test tests/Burbuja.Worker.Tests -c Release -m:1
 python3 -m unittest discover -s tools/cluster -p 'test_*.py'
 make test
 dotnet publish src/Burbuja.Worker -c Release -r osx-arm64 --self-contained true -m:1 -o artifacts/cluster-worker
 ```
+
+The focused runner builds only the worker dependency graph, runs its six tests
+(including a real loopback HTTP API/authentication check) and all cluster policy
+tests, then saves counts, duration, source identity and dirty status under
+`artifacts/workload-validation`. The initial measured run took **9.736 seconds**
+on the development host. `Worker and cluster fast validation` provides the same
+check on GitHub for relevant changes. This is a development proof, explicitly
+not a replacement for the full kernel/consumer promotion gate.
+
+The full workflow retains every HTTP, restart and Chromium test but runs them
+through one `test-e2e.py all` invocation, removing two redundant solution builds.
+Generic and consumer jobs cache NuGet downloads. Consumer summaries now report
+build/test times per lane, without private test names or diagnostic content.
+The product already builds once per full campaign and runs both branches in
+parallel. Its shared publish cache prevents safely assuming that all lanes can
+simply be parallelized in the same checkout.
 
 The 2026-10-24 candidate passed all 1,433 kernel tests, including the independent
 Workbench consumer/host smoke, plus four monitor tests. Worker tests exercise

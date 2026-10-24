@@ -75,6 +75,12 @@ def only_browser_failed(metadata):
             and lanes["browser"].get("status") == "failed")
 
 
+def summary_lane(metadata, receipt, lane):
+    # Timings and counts are safe to report publicly; no private test names/logs.
+    return {**metadata["lanes"][lane], "results": receipt["results"],
+            "timing": {key: receipt.get(key) for key in ("build_seconds", "test_seconds")}}
+
+
 def run_gate(root, kernel_root, kernel_commit, product_commit):
     summary = {"kind": KIND, "kernel_commit": kernel_commit, "product_commit": product_commit,
                "status": "failed", "attempts": [], "lanes": {}}
@@ -85,11 +91,11 @@ def run_gate(root, kernel_root, kernel_commit, product_commit):
         if code == 0 and metadata.get("status") == "passed":
             for lane in sorted(LANES):
                 receipt = lane_receipt(marker, metadata, lane, "passed")
-                summary["lanes"][lane] = {**metadata["lanes"][lane], "results": receipt["results"]}
+                summary["lanes"][lane] = summary_lane(metadata, receipt, lane)
         elif code != 0 and only_browser_failed(metadata):
             for lane in ("unit", "http", "own-host"):
                 receipt = lane_receipt(marker, metadata, lane, "passed")
-                summary["lanes"][lane] = {**metadata["lanes"][lane], "results": receipt["results"]}
+                summary["lanes"][lane] = summary_lane(metadata, receipt, lane)
             first = lane_receipt(marker, metadata, "browser", "failed")
             print("consumer gate: only browser tests failed; retrying once", flush=True)
             retry_code, retry_marker, retry = attempt(root, kernel_root, kernel_commit, product_commit, "browser")
@@ -99,7 +105,7 @@ def run_gate(root, kernel_root, kernel_commit, product_commit):
             second = lane_receipt(retry_marker, retry, "browser", "passed")
             if second["results"]["total"] != first["results"]["total"]:
                 raise ValueError("browser retry changed the test count")
-            summary["lanes"]["browser"] = {**retry["lanes"]["browser"], "results": second["results"]}
+            summary["lanes"]["browser"] = summary_lane(retry, second, "browser")
             summary["browser_retry"] = {"first_attempt": str(marker), "retry": str(retry_marker), "status": "passed"}
         else:
             raise ValueError("full suite failed outside retryable browser tests")

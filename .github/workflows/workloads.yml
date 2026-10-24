@@ -1,0 +1,40 @@
+name: Worker and cluster fast validation
+on:
+  push:
+    paths:
+      - 'src/Burbuja.Worker/**'
+      - 'src/Burbuja.Compute.Abstractions/**'
+      - 'src/Burbuja.Core.Abstractions/**'
+      - 'tests/Burbuja.Worker.Tests/**'
+      - 'tools/cluster/**'
+      - 'scripts/test-workloads.py'
+      - '.github/workflows/workloads.yml'
+      - 'Directory.*.props'
+      - 'global.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: worker-fast-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  worker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.400
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Packages.props', '**/global.json') }}
+          restore-keys: ${{ runner.os }}-nuget-
+      - name: Verify worker API, process safety, admission and cluster policy
+        run: python3 scripts/test-workloads.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: focused-workload-validation
+          path: artifacts/workload-validation/**/receipt.json

@@ -88,6 +88,11 @@ class ConsumerGateTests(unittest.TestCase):
         self.assertEqual(summary["browser_retry"]["status"], "passed")
         self.assertEqual(calls, 2)
 
+    def test_timing_is_reported_without_weakening_source_or_result_checks(self):
+        summary, _ = self.run_campaign([{"receipts": {"unit": {"build_seconds": 12.5, "test_seconds": 4.0}}}], 0)
+        self.assertEqual(summary["lanes"]["unit"]["timing"], {"build_seconds": 12.5, "test_seconds": 4.0})
+        self.assertEqual(summary["lanes"]["unit"]["results"]["total"], 4)
+
     def test_failure_in_each_non_browser_lane_is_final(self):
         for lane in ("unit", "http", "own-host"):
             with self.subTest(lane=lane):
