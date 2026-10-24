@@ -29,6 +29,11 @@ class ReleaseAliasTests(unittest.TestCase):
 
 
 class ReleaseBoundaryTests(unittest.TestCase):
+    def test_reviewed_workload_workflow_is_allowed_without_opening_all_dotfiles(self):
+        self.assertTrue(release.allowed(".github/workflows/workloads.yml"))
+        self.assertFalse(release.allowed(".github/workflows/unreviewed.yml"))
+        self.assertFalse(release.allowed(".github/credentials.json"))
+
     def test_web_client_sources_are_inside_and_build_output_is_not(self):
         self.assertTrue(release.allowed("examples/Example.Arena/Example.Arena.Host/client/index.html"))
         self.assertFalse(release.allowed("examples/Example.Arena/artifacts/host/client/index.html"))
