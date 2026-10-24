@@ -343,7 +343,11 @@ public static class RealtimeEndpoints
 
         // Accept first and refuse with a close code: a browser cannot read the status of a failed upgrade,
         // but it can read 4001 and the reason.
-        using var socket = await http.WebSockets.AcceptWebSocketAsync();
+        using var socket = await http.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
+        {
+            DangerousEnableCompression = options.EnableWebSocketCompression,
+            DisableServerContextTakeover = true,
+        });
         var connection = new WebSocketPlayerConnection(socket, Math.Max(8, options.SendBufferFrames));
         var admission = Service<IRealtimeGateway>(http).Admit(token, connection);
         if (!admission.Accepted)

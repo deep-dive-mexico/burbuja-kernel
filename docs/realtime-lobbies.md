@@ -258,6 +258,15 @@ address of its own. The Blast README runs a two-node fleet on one machine.
 
 ## Players and credentials
 
+`Realtime:EnableWebSocketCompression` optionally enables negotiated `permessage-deflate`
+for realtime sockets. It defaults to false and requires client opt-in; older clients
+continue uncompressed. Use it only for game frames that do not carry credentials or
+other secrets, since TLS does not remove compression side channels. Server compression
+history never carries across messages. Inbound size limits apply after decompression.
+The real-Kestrel negotiation tests cover all four client/server combinations, ordinary
+ping/pong traffic, and refusal of oversized input, including compressed input.
+
+
 HTTP calls authenticate a player through the ordered `IPlayerAuthenticator` chain; the first identity wins:
 
 1. a kernel API key (`x-api-key` or `Authorization: Bearer`, the same `Auth:ApiKeys` ARM uses), for
