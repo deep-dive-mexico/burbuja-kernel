@@ -43,9 +43,12 @@ for authentication-protected services. Swap occupancy alone is not a failure.
 The monitor publishes a cooperative `background.json` budget and `realtimeBusy`:
 background consumers can defer or lower priority while local game rooms or file
 workloads run. Realtime pressure recommendations use three bad samples to defer
-and six good samples to recover. **They are observation-only**; they do not
-change manual drains, placement, running matches, measured game capacity or the
-backplane. This allows deployment alongside an independently managed game cluster.
+and six good samples to recover. The collector never changes manual drains,
+running matches, measured game capacity or the backplane. A separately deployed
+product placement adapter can consume the recommendations; `placement-enabled`
+marks that verified installation for the monitor UI. Pressure on the primary also
+reserves background headroom on the compute host for incoming rooms. Without the
+adapter the recommendations remain observation-only.
 
 On macOS the Tailscale app executable needs `TAILSCALE_BE_CLI=1` in a LaunchAgent;
 otherwise it can launch the GUI rather than return JSON. See the
@@ -61,7 +64,7 @@ make test
 dotnet publish src/Burbuja.Worker -c Release -r osx-arm64 --self-contained true -m:1 -o artifacts/cluster-worker
 ```
 
-The 2026-10-24 candidate passed all 1,432 kernel tests, including the independent
+The 2026-10-24 candidate passed all 1,433 kernel tests, including the independent
 Workbench consumer/host smoke, plus four monitor tests. Worker tests exercise
 real subprocess execution, literal arguments, size limits, stale admission,
 concurrent refusal, cancellation and slot reuse. A separate TypeScript consumer

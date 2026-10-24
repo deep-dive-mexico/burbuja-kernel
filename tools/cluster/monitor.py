@@ -59,9 +59,10 @@ def tick(root, peer):
     except (OSError,ValueError): previous = {}
     admission = {n['name']:recommendation(n,previous.get(n['name'])) for n in (local,remote)}
     fleet = local.get('fleet',{})
-    realtime_busy = any(s.get('nodeId') == fleet.get('nodeId') and s.get('lobbies',0) > 0 for s in fleet.get('value',[]))
+    realtime_busy = (any(s.get('nodeId') == fleet.get('nodeId') and s.get('lobbies',0) > 0 for s in fleet.get('value',[]))
+                     or admission.get(remote['name'],{}).get('overloaded',False))
     state = {'at':time.time(), 'nodes':[local,remote], 'worker':worker, 'headroom':policy, 'realtimeBusy':realtime_busy,
-             'admissionMode':'observe', 'admission':admission}
+             'admissionMode':'pressure-aware' if (root/'placement-enabled').exists() else 'observe', 'admission':admission}
     atomic(root/'state.json', state)
     # A cooperative admission budget. Existing jobs finish; nothing gets killed.
     atomic(root/'background.json', {'at':time.time(), 'maxWorkers':0 if realtime_busy or worker and worker.get('active') or not policy['admit'] else 6,

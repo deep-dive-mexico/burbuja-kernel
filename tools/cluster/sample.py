@@ -93,6 +93,7 @@ def sample():
     except Exception as error: result['errors'].append('tailscale: '+str(error)[:80])
     config_file = Path.home()/'Developer/burbuja-cluster/node.json'
     config = json.loads(config_file.read_text()) if config_file.exists() else {}
+    result['intentionalStops'] = config.get('intentionalStops', [])
     for name,check in config.get('http', {}).items():
         url = check if isinstance(check,str) else check['url']
         if '{tailnet}' in url:

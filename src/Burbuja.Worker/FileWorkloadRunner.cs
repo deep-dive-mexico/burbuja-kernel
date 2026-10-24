@@ -115,7 +115,8 @@ public sealed class FileWorkloadRunner(WorkerOptions options)
                     deadline.Token.ThrowIfCancellationRequested();
                     var health = ReadHeadroom();
                     if (health is null || DateTimeOffset.UtcNow - health.ObservedAt > TimeSpan.FromSeconds(90) ||
-                        health.Reason is "critical memory pressure" or "disk reserve" or "thermal reserve" or "thermal or power throttling")
+                        health.Reason is "critical memory pressure" or "disk reserve" or "thermal reserve" or "thermal or power throttling"
+                            or "protected service unhealthy" or "container unhealthy")
                         throw new IOException("Host protection interrupted the workload; caller retains input.");
                 }
                 await Task.WhenAll(stdout, stderr);

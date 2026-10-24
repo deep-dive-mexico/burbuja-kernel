@@ -74,4 +74,20 @@ public sealed class WorkerTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "task.sh"), "printf '{}' > \"$2.json\"\n");
         (await runner.RunAsync("test", new MemoryStream([1]), new Dictionary<string,string>(), TestContext.Current.CancellationToken)).Length.ShouldBe(2);
     }
+
+    [Fact]
+    public async Task Protected_service_failure_interrupts_owned_compute_and_cleans_audio()
+    {
+        var marker = Path.Combine(_root, "started");
+        var options = Options($"touch '{marker}'\nsleep 30\n");
+        options.Workloads["test"].TimeoutSeconds = 15;
+        var runner = new FileWorkloadRunner(options);
+        var running = runner.RunAsync("test", new MemoryStream([1]), new Dictionary<string,string>(), TestContext.Current.CancellationToken);
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        bound.CancelAfter(TimeSpan.FromSeconds(3));
+        while (!File.Exists(marker)) await Task.Delay(10, bound.Token);
+        File.WriteAllText(options.HeadroomFile, JsonSerializer.Serialize(new WorkloadHeadroom(DateTimeOffset.UtcNow, false, "protected service unhealthy")));
+        await Should.ThrowAsync<IOException>(() => running.WaitAsync(TimeSpan.FromSeconds(8), TestContext.Current.CancellationToken));
+        Directory.GetFileSystemEntries(options.ScratchDirectory).ShouldBeEmpty();
+    }
 }
