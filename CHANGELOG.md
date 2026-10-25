@@ -11,6 +11,8 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 - Realtime sockets now finish the bounded close handshake after rejecting an
   oversized frame. Ending the application reader no longer immediately aborts
   a pending close response into a TCP reset on Linux.
+- Discarding an oversized disposable snapshot preserves an already-waiting
+  writer's wakeup, so later reliable control frames continue to drain.
 
 ### Added
 

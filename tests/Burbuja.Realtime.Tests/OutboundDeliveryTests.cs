@@ -74,6 +74,24 @@ public sealed class OutboundDeliveryTests
         Assert.Equal(new[] { "stage" }, socket.Sent);
     }
 
+    [Fact]
+    public async Task Dropping_a_snapshot_wakes_an_already_waiting_writer_when_control_arrives()
+    {
+        using var socket = new RecordingSocket();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var connection = new WebSocketPlayerConnection(socket, 2);
+        var running = connection.RunAsync(new Inbox(), 1024, deadline.Token);
+        try
+        {
+            Assert.True(connection.TrySend(new byte[1024 * 1024 + 1], FrameFormat.Binary, FrameDelivery.Latest, "state"));
+            Assert.True(connection.TrySend(Encoding.UTF8.GetBytes("stage"), FrameFormat.Text, FrameDelivery.Reliable));
+            connection.Close(RealtimeCloseCode.Normal, "done");
+            await running.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+            Assert.Equal(new[] { "stage" }, socket.Sent);
+        }
+        finally { await deadline.CancelAsync(); await running; }
+    }
+
     private sealed class Inbox : IConnectionInbox
     {
         public int Received { get; private set; }

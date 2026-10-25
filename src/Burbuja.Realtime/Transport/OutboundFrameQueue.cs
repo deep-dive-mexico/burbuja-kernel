@@ -29,7 +29,7 @@ internal sealed class OutboundFrameQueue(int capacity)
                     while (replaceable is not null && replaceable.Value.Delivery != FrameDelivery.Latest) replaceable = replaceable.Next;
                 if (replaceable is null)
                 {
-                    if (_frames.Count == 0) _ready = Signal();
+                    if (_frames.Count == 0 && _ready.Task.IsCompleted) _ready = Signal();
                     return delivery == FrameDelivery.Latest;
                 }
                 Remove(replaceable);
