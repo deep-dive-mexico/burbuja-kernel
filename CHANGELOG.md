@@ -6,6 +6,12 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ## Unreleased
 
+### Fixed
+
+- Realtime sockets now finish the bounded close handshake after rejecting an
+  oversized frame. Ending the application reader no longer immediately aborts
+  a pending close response into a TCP reset on Linux.
+
 ### Added
 
 - Optional realtime capacity-pool game allowlists, node-owned session resource

@@ -84,6 +84,17 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
         if (await Task.WhenAny(reader, Task.Delay(CloseHandshake, CancellationToken.None)) != reader)
             _socket.Abort();
         await reader;
+        // A size/policy refusal ends the application reader before the peer's close
+        // acknowledgement. Aborting here can turn the queued close frame into a TCP
+        // reset (notably on Linux with unread oversized data). Finish that bounded
+        // protocol handshake without delivering any more application input.
+        if (_socket.State == WebSocketState.CloseSent)
+        {
+            using var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            handshake.CancelAfter(CloseHandshake);
+            try { await _socket.CloseAsync((WebSocketCloseStatus)_closeCode, _closeReason, handshake.Token); }
+            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException) { }
+        }
         if (_socket.State != WebSocketState.Closed)
             _socket.Abort();
     }

@@ -9,6 +9,19 @@ namespace Burbuja.Realtime.Tests;
 public sealed class OutboundDeliveryTests
 {
     [Fact]
+    public async Task Oversized_frame_keeps_the_close_handshake_alive_after_the_reader_stops()
+    {
+        using var socket = new OversizedSocket();
+        var connection = new WebSocketPlayerConnection(socket, 2);
+        var inbox = new Inbox();
+        await connection.RunAsync(inbox, 64, TestContext.Current.CancellationToken);
+        Assert.Equal(WebSocketCloseStatus.MessageTooBig, socket.SentClose);
+        Assert.False(socket.AbortedBeforeAcknowledgement);
+        Assert.True(socket.Acknowledged);
+        Assert.Equal(0, inbox.Received);
+        Assert.Equal(1, inbox.Disconnections);
+    }
+    [Fact]
     public async Task Fresh_snapshots_cannot_evict_the_stage_they_depend_on()
     {
         using var socket = new RecordingSocket();
@@ -63,8 +76,30 @@ public sealed class OutboundDeliveryTests
 
     private sealed class Inbox : IConnectionInbox
     {
-        public void Receive(ReadOnlySpan<byte> frame, FrameFormat format) { }
-        public void Disconnected() { }
+        public int Received { get; private set; }
+        public int Disconnections { get; private set; }
+        public void Receive(ReadOnlySpan<byte> frame, FrameFormat format) => Received++;
+        public void Disconnected() => Disconnections++;
+    }
+    private sealed class OversizedSocket : WebSocket
+    {
+        private WebSocketState _state = WebSocketState.Open;
+        public WebSocketCloseStatus? SentClose { get; private set; }
+        public bool Acknowledged { get; private set; }
+        public bool AbortedBeforeAcknowledgement { get; private set; }
+        public override WebSocketCloseStatus? CloseStatus => SentClose;
+        public override string? CloseStatusDescription => "oversized";
+        public override WebSocketState State => _state;
+        public override string? SubProtocol => null;
+        public override void Abort() { AbortedBeforeAcknowledgement |= !Acknowledged; _state = WebSocketState.Aborted; }
+        public override void Dispose() { }
+        public override Task CloseOutputAsync(WebSocketCloseStatus status, string? reason, CancellationToken ct)
+        { SentClose = status; _state = WebSocketState.CloseSent; return Task.CompletedTask; }
+        public override async Task CloseAsync(WebSocketCloseStatus status, string? reason, CancellationToken ct)
+        { await Task.Delay(20, ct); Acknowledged = true; _state = WebSocketState.Closed; }
+        public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken ct)
+        { buffer.AsSpan().Fill((byte)'x'); return Task.FromResult(new WebSocketReceiveResult(buffer.Count, WebSocketMessageType.Text, false)); }
+        public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType type, bool end, CancellationToken ct) => Task.CompletedTask;
     }
     private sealed class RecordingSocket : WebSocket
     {
