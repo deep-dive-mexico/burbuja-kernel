@@ -44,6 +44,24 @@ def collect(peer):
         return {'name':peer, 'at':0, 'errors':['SSH observation unavailable'], 'services':[], 'containers':[]}
 
 
+def realtime_demand(fleet):
+    for server in fleet.get('value', []):
+        if server.get('nodeId') != fleet.get('nodeId') or server.get('lobbies', 0) <= 0:
+            continue
+        rooms = server.get('hosted')
+        if not isinstance(rooms, list) or len(rooms) != server['lobbies']:
+            return True  # Preserve conservative admission when observations are incomplete.
+        for room in rooms:
+            if room.get('usesResourceReservations') is not True:
+                return True
+            claims = room.get('resourceClaims')
+            if not isinstance(claims, dict) or any(type(v) is not int or v < 0 for v in claims.values()):
+                return True
+            if any(claims.values()):
+                return True
+    return False
+
+
 def tick(root, peer):
     with ThreadPoolExecutor(max_workers=2) as pool:
         future = pool.submit(collect, peer)
@@ -59,7 +77,7 @@ def tick(root, peer):
     except (OSError,ValueError): previous = {}
     admission = {n['name']:recommendation(n,previous.get(n['name'])) for n in (local,remote)}
     fleet = local.get('fleet',{})
-    realtime_busy = (any(s.get('nodeId') == fleet.get('nodeId') and s.get('lobbies',0) > 0 for s in fleet.get('value',[]))
+    realtime_busy = (realtime_demand(fleet)
                      or admission.get(remote['name'],{}).get('overloaded',False))
     state = {'at':time.time(), 'nodes':[local,remote], 'worker':worker, 'headroom':policy, 'realtimeBusy':realtime_busy,
              'admissionMode':'pressure-aware' if (root/'placement-enabled').exists() else 'observe', 'admission':admission}

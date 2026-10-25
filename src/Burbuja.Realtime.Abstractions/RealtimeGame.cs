@@ -28,6 +28,16 @@ public interface IRealtimeGame
     /// <summary>The game's own grouping policy. Null uses the kernel's skill-window matchmaker.</summary>
     IMatchmakingStrategy? Matchmaking => null;
 
+    /// <summary>Opt into retaining control frames or closing a slow connection instead of silently losing them.</summary>
+    bool ReliableControlFrames => false;
+
+    /// <summary>Complete state message types that may replace older queued messages of the same type.</summary>
+    IReadOnlyList<string> ReplaceableMessageTypes => [];
+
+    /// <summary>This game's active work is represented by session resource claims; an idle room alone
+    /// should not be treated as an active execution by cooperative workload monitors.</summary>
+    bool UsesResourceReservations => false;
+
     /// <summary>
     /// How this game's JSON payloads are written (<see cref="ISessionContext.Send{T}"/>) and read
     /// (<see cref="InboundMessage.Read{T}"/>): extend <see cref="RealtimeJson.CreateOptions"/> with the game's

@@ -50,6 +50,13 @@ marks that verified installation for the monitor UI. Pressure on the primary als
 reserves background headroom on the compute host for incoming rooms. Without the
 adapter the recommendations remain observation-only.
 
+Resource-aware realtime games can now declare `UsesResourceReservations` and
+report `resourceClaims` for active work. The monitor leaves quiet managed rooms
+out of `realtimeBusy`, while active simulation/relay claims still defer background
+work. Legacy games and incomplete room inventories retain conservative room-count
+behavior. This separates room occupancy from execution demand; it does not raise
+capacity limits or preempt unrelated processes.
+
 On macOS the Tailscale app executable needs `TAILSCALE_BE_CLI=1` in a LaunchAgent;
 otherwise it can launch the GUI rather than return JSON. See the
 [official CLI documentation](https://tailscale.com/docs/reference/tailscale-cli?tab=macos).

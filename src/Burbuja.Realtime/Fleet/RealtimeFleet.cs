@@ -197,10 +197,11 @@ public sealed class RealtimeFleet : IAsyncDisposable
     {
         ThrowIfFenced();
         var games = _manager.Games.All.Select(g => g.Id).ToList();
-        var servers = _manager.Balancer.Servers.Select(s => new FleetServer(NodeId, s.Status(), games)).ToList();
+        var available = _manager.AvailableResources;
+        var servers = _manager.Balancer.Servers.Select(s => new FleetServer(NodeId, s.Status() with { AvailableResources = available }, games.Where(s.Status().Supports).ToArray())).ToList();
         foreach (var node in await NodesAsync(ct))
             if (node.NodeId != NodeId)
-                servers.AddRange(node.Servers.Select(s => new FleetServer(node.NodeId, s, node.Games)));
+                servers.AddRange(node.Servers.Select(s => new FleetServer(node.NodeId, s, node.Games.Where(s.Supports).ToArray())));
         return servers;
     }
 
@@ -633,7 +634,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     private BackplaneNode NodeRecord() => new(NodeId, _node.InstanceId, JsonSerializer.Serialize(new FleetNodeInfo(
         NodeId,
         _manager.Games.All.Select(g => g.Id).ToList(),
-        _manager.Balancer.Servers.Select(s => s.Status()).ToList(),
+        _manager.Balancer.Servers.Select(s => s.Status() with { AvailableResources = _manager.AvailableResources }).ToList(),
         _startedAt), Json)) { ServerIds = _manager.Balancer.Servers.Select(s => s.Id).Order(StringComparer.Ordinal).ToArray() };
 
     private static string Address(string nodeId, string instanceId) => JsonSerializer.Serialize(new[] { nodeId, instanceId });

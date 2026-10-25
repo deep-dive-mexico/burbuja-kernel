@@ -25,6 +25,13 @@ public sealed record LobbyServerStatus(
     string? PublicUrl,
     double Load = 0)
 {
+    /// <summary>Eligible games for this capacity pool. Null preserves older all-games nodes.</summary>
+    public IReadOnlyList<string>? AllowedGames { get; init; }
+    /// <summary>Remaining named node resources. Shared by pools on that node; do not sum across pools.</summary>
+    public IReadOnlyDictionary<string, int>? AvailableResources { get; init; }
+
+    public bool Supports(string gameId) => AllowedGames is null || AllowedGames.Contains(gameId, StringComparer.Ordinal);
+
     [JsonIgnore]
     public bool HasCapacity => State == LobbyServerState.Active && Lobbies < MaxLobbies;
 
@@ -48,4 +55,11 @@ public interface ILobbyPlacementStrategy
 
     /// <summary>The chosen server id from <paramref name="candidates"/> (never empty), or null to refuse.</summary>
     string? Choose(IReadOnlyList<LobbyServerStatus> candidates, PlacementRequest request);
+}
+
+/// <summary>Node-local admission advice for new/increased session claims. Implementations must only
+/// read cached state: this runs on the game loop and must never perform I/O or block.</summary>
+public interface ISessionResourceAdmission
+{
+    bool CanIncrease(string resource);
 }

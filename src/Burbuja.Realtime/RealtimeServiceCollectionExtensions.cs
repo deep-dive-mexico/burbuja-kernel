@@ -61,12 +61,16 @@ public static class RealtimeServiceCollectionExtensions
 
         var errors = new List<string>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
+        var games = sp.GetRequiredService<RealtimeGames>();
         foreach (var server in configured)
         {
             if (string.IsNullOrWhiteSpace(server.Id) || !ids.Add(server.Id))
                 errors.Add($"server '{server.Id}': ids must be present and unique");
             if (server.MaxLobbies < 1)
                 errors.Add($"server '{server.Id}': MaxLobbies must be at least 1");
+            if (server.AllowedGames is { } allowed && (allowed.Length == 0 ||
+                allowed.Distinct(StringComparer.Ordinal).Count() != allowed.Length || allowed.Any(id => games.Find(id) is null)))
+                errors.Add($"server '{server.Id}': AllowedGames must contain unique registered game IDs and cannot be empty");
             if (string.IsNullOrWhiteSpace(server.Region))
                 errors.Add($"server '{server.Id}': Region is required");
             if (server.PublicUrl is { Length: > 0 } url
@@ -82,7 +86,7 @@ public static class RealtimeServiceCollectionExtensions
             throw new InvalidOperationException("Realtime configuration is invalid: " + string.Join("; ", errors));
 
         var servers = configured
-            .Select(s => new LobbyServer(s.Id, s.Region, s.MaxLobbies, s.PublicUrl, time, logs.CreateLogger<LobbyServer>()))
+            .Select(s => new LobbyServer(s.Id, s.Region, s.MaxLobbies, s.PublicUrl, time, logs.CreateLogger<LobbyServer>(), s.AllowedGames))
             .ToList();
         return new LobbyBalancer(servers, strategy!, options.AllowCrossRegionPlacement);
     }

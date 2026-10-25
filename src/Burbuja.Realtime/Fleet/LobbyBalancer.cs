@@ -37,7 +37,7 @@ public sealed class LobbyBalancer
             if (chosen is null)
                 return null;
             var server = _servers.First(s => s.Id == chosen);
-            if (server.TryAllocate())
+            if (server.TryAllocate(request.GameId))
                 return server;
         }
 
@@ -48,7 +48,7 @@ public sealed class LobbyBalancer
     /// <paramref name="request"/>, or null when none is eligible. Claims nothing.</summary>
     public string? Choose(IReadOnlyList<LobbyServerStatus> statuses, PlacementRequest request)
     {
-        var candidates = statuses.Where(s => s.HasCapacity).ToList();
+        var candidates = statuses.Where(s => s.HasCapacity && s.Supports(request.GameId)).ToList();
         if (request.Region is { } region)
         {
             var local = candidates.Where(s => string.Equals(s.Region, region, StringComparison.OrdinalIgnoreCase)).ToList();

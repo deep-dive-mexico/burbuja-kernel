@@ -406,3 +406,60 @@ and a disabled host.
 - **No UDP or WebTransport transport yet.** WebSocket is TCP, so a lost packet delays the frames after
   it. Dropping the oldest frames bounds that, but a UDP-class transport behind `IRealtimeGateway` is the
   next step for twitch shooters on lossy networks.
+
+## Optional capacity pools and session resources
+
+`Realtime:Servers:<index>:AllowedGames` optionally restricts a server's capacity
+pool to registered game IDs. An omitted/null list preserves the node-wide default;
+explicit empty, duplicate or unknown lists fail validation. Fleet status advertises
+and filters each pool's effective support, and the allocation owner enforces it
+again even for pinned-server requests. Pool counts remain atomic lobby-lifetime
+claims; adding pools does not grant additional physical CPU or memory.
+
+`Realtime:Resources` configures node-wide named integer limits, for example an
+`execution` limit of two. During callbacks, a session may call
+`ISessionContext.TryReserveResource(name, units)` to set its claim. Repeating a
+claim is idempotent, zero releases it, competing rooms cannot exceed the node's
+limit, and closing/faulting the lobby releases all claims. Unknown resources and
+invalid or unavailable amounts refuse. Older custom contexts default to refusal,
+not unlimited capacity. A waiting room can therefore release its execution claim
+without closing its room or losing its code.
+
+Optional `ISessionResourceAdmission` implementations can defer new/increased
+claims using cached advice. They must not do I/O, await or block: the decision
+runs in the session callback. Existing claims and releases remain valid during
+pressure or operator drain; new claims on draining servers are refused. This is
+admission, not an eviction or live-migration mechanism. `availableResources` is
+node-wide information repeated on server status: do not sum it across pools.
+The owner still rechecks at reservation time because advertisements may be stale.
+
+`IGameSession.AcceptsNewPlayers` is cached by the sequential lobby owner after
+callbacks. It controls new reservations and advertised open seats; a current seat
+can still reconnect. A game must also handle a previously issued reservation
+connecting after its roster becomes fixed. `UsesResourceReservations` lets
+cooperative monitors distinguish a quiet persistent room from active execution.
+Operator room snapshots expose `resourceClaims`; the local fleet response includes
+its `resourceLimits`. These counters do not replace runtime latency/load testing.
+
+## Optional control-preserving delivery
+
+An `IRealtimeGame` can opt into `ReliableControlFrames` and declare complete
+snapshot types in `ReplaceableMessageTypes`. The connection then retains control
+frames, coalesces queued snapshots of the same type, and appends a replacement
+after intervening stage/control barriers. System messages are always control.
+This policy bounds both frame count and queued bytes (one MiB per connection).
+When reliable traffic cannot fit, the connection explicitly closes with
+`client_too_slow` rather than silently losing a control message. Disposable
+snapshots can be dropped. The opt-out path retains the prior drop-oldest policy.
+
+Transports can implement the `IPlayerConnection.TrySend` overload accepting
+`FrameDelivery`; older adapters keep their default implementation. The built-in
+WebSocket adapter supplies the new queue behavior. This prevents application
+queue loss of accepted controls; it does not remove TCP head-of-line blocking,
+replace input/action acknowledgements, or imply client prediction.
+
+`CapacityPoolTests` cover owner enforcement, pool routing, concurrent execution
+claims, pressure/drain behavior, cleanup after faults and dynamic admission.
+`OutboundDeliveryTests` cover stage retention, barrier ordering, explicit reliable
+overflow and bounded snapshot discard. Run the full realtime/Redis and independent
+consumer gates before promoting a new dependency pin.

@@ -41,7 +41,9 @@ public sealed record LobbySnapshot(
     MatchResult? Result)
 {
     [JsonIgnore]
-    public int OpenSeats => Math.Max(0, MaxPlayers - Seats);
+    public int OpenSeats => AcceptsNewPlayers ? Math.Max(0, MaxPlayers - Seats) : 0;
+
+    public bool AcceptsNewPlayers { get; init; } = true;
 
     /// <summary>Ticks simulated since the match started.</summary>
     public long Tick { get; init; }
@@ -53,6 +55,9 @@ public sealed record LobbySnapshot(
     public IReadOnlyList<string> SeatHolders { get; init; } = [];
 
     public LobbyPerformance Performance { get; init; } = LobbyPerformance.Idle;
+
+    public IReadOnlyDictionary<string, int> ResourceClaims { get; init; } = new Dictionary<string, int>();
+    public bool UsesResourceReservations { get; init; }
 }
 
 /// <summary>

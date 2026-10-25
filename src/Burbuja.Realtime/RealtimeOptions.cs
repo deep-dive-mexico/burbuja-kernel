@@ -19,6 +19,9 @@ public sealed class RealtimeOptions
     /// <summary>The lobby servers this node hosts. Empty means one server named after the node.</summary>
     public List<LobbyServerOptions> Servers { get; set; } = [];
 
+    /// <summary>Node-wide named resource limits, separate from persistent room counts.</summary>
+    public Dictionary<string, int> Resources { get; set; } = new(StringComparer.Ordinal);
+
     /// <summary>How long a reserved seat waits for its connection before it is freed.</summary>
     public int ReservationTtlSeconds { get; set; } = 30;
 
@@ -75,6 +78,10 @@ public sealed class LobbyServerOptions
     public string Region { get; set; } = "local";
 
     public int MaxLobbies { get; set; } = 100;
+
+    /// <summary>Optional capacity-pool eligibility. Null permits all locally registered games.
+    /// An explicit list must contain unique registered game IDs and must not be empty.</summary>
+    public string[]? AllowedGames { get; set; }
 
     /// <summary>The base URL players connect to (<c>wss://eu-1.example.com</c>). Null hands out a path
     /// relative to the API the player called, which is only right when that API is this node, so a distributed

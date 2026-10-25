@@ -43,6 +43,9 @@ public enum FrameFormat
     Binary,
 }
 
+/// <summary>Reliable control is retained or the connection fails; Latest may replace queued older state.</summary>
+public enum FrameDelivery { Reliable, Latest }
+
 /// <summary>
 /// One open transport connection, as the lobby uses it. Both methods are non-blocking: the lobby loop calls
 /// them inside its tick and must never wait on a client's network.
@@ -54,6 +57,8 @@ public interface IPlayerConnection
     /// <summary>Queues one complete, already-encoded frame. The buffer is shared between connections and must
     /// not be modified. Returns false once the connection is closing.</summary>
     bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format);
+
+    bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format, FrameDelivery delivery, string? replacementKey = null) => TrySend(frame, format);
 
     /// <summary>Starts an orderly close after the queued frames.</summary>
     void Close(RealtimeCloseCode code, string reason);

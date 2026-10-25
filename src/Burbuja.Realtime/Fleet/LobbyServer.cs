@@ -17,8 +17,10 @@ public sealed class LobbyServer
     private readonly ILogger _log;
     private int _allocated;
     private volatile LobbyServerState _state = LobbyServerState.Active;
+    private readonly IReadOnlyList<string>? _allowedGames;
 
-    public LobbyServer(string id, string region, int maxLobbies, string? publicUrl, TimeProvider time, ILogger log)
+    public LobbyServer(string id, string region, int maxLobbies, string? publicUrl, TimeProvider time, ILogger log,
+        IReadOnlyList<string>? allowedGames = null)
     {
         Id = id;
         Region = region;
@@ -26,6 +28,7 @@ public sealed class LobbyServer
         PublicUrl = string.IsNullOrWhiteSpace(publicUrl) ? null : publicUrl;
         _time = time;
         _log = log;
+        _allowedGames = allowedGames is null ? null : Array.AsReadOnly(allowedGames.ToArray());
     }
 
     public string Id { get; }
@@ -39,15 +42,17 @@ public sealed class LobbyServer
     public LobbyServerStatus Status() => new(
         Id, Region, _state, Volatile.Read(ref _allocated), MaxLobbies,
         _lobbies.Values.Sum(v => v.Lobby.SeatCount), PublicUrl,
-        _lobbies.Values.Sum(v => v.Lobby.Performance.Busy));
+        _lobbies.Values.Sum(v => v.Lobby.Performance.Busy)) { AllowedGames = _allowedGames };
 
     public void Drain() => _state = LobbyServerState.Draining;
 
     public void Activate() => _state = LobbyServerState.Active;
 
     /// <summary>Claims one lobby slot atomically, so two placements racing for the last slot cannot both win.</summary>
-    internal bool TryAllocate()
+    internal bool TryAllocate(string? gameId = null)
     {
+        if (_allowedGames is not null && (gameId is null || !_allowedGames.Contains(gameId, StringComparer.Ordinal)))
+            return false;
         while (true)
         {
             var current = Volatile.Read(ref _allocated);

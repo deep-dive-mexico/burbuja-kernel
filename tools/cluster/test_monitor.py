@@ -34,4 +34,20 @@ class HeadroomTests(unittest.TestCase):
         self.assertTrue(recommendation({'at':0})['overloaded'])
 
 
+class RealtimeResourceTests(unittest.TestCase):
+    def test_quiet_managed_rooms_do_not_hold_the_background_budget(self):
+        from monitor import realtime_demand
+        fleet = {'nodeId': 'n', 'value': [{'nodeId': 'n', 'lobbies': 1,
+            'hosted': [{'usesResourceReservations': True, 'resourceClaims': {}}]}]}
+        self.assertFalse(realtime_demand(fleet))
+        fleet['value'][0]['hosted'][0]['resourceClaims'] = {'simulation': 1}
+        self.assertTrue(realtime_demand(fleet))
+        fleet['value'][0]['hosted'][0]['resourceClaims'] = {'peer-relay': 1}
+        self.assertTrue(realtime_demand(fleet))
+        fleet['value'][0]['hosted'][0] = {}
+        self.assertTrue(realtime_demand(fleet))
+        fleet['value'][0]['hosted'] = None
+        self.assertTrue(realtime_demand(fleet))
+
+
 if __name__ == '__main__': unittest.main()

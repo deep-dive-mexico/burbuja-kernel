@@ -14,6 +14,8 @@ internal interface ILobbyObserver
     void SeatReleased(Lobby lobby, string playerId);
 
     void Closed(Lobby lobby);
+
+    bool TryReserveResource(Lobby lobby, string resource, int units) => false;
 }
 
 /// <summary>
@@ -65,6 +67,8 @@ public sealed class Lobby
     private DateTimeOffset? _emptySince;
     private volatile LobbyState _state = LobbyState.Open;
     private int _seatCount;
+    private readonly Dictionary<string, int> _resourceClaims = new(StringComparer.Ordinal);
+    private bool _acceptsNewPlayers = true;
 
     // Performance: cumulative counters plus one window of timings, published as an immutable record so the
     // balancer and operators read it without the lock.
@@ -105,6 +109,7 @@ public sealed class Lobby
         _session = spec.Game.CreateSession(new GameSessionOptions(Id, GameId, Settings, spec.Seed))
             ?? throw new InvalidOperationException($"Game '{GameId}' created no session.");
         _minPlayersToStart = Math.Clamp(_session.MinPlayersToStart ?? Rules.MinPlayers, 1, Rules.MinPlayers);
+        _acceptsNewPlayers = _session.AcceptsNewPlayers;
     }
 
     public string Id { get; }
@@ -149,6 +154,8 @@ public sealed class Lobby
                 return ReservationResult.Fail("lobby_closed");
             if (_seats.TryGetValue(identity.PlayerId, out var seat))
                 return IssueToken(seat, now);
+            if (!_acceptsNewPlayers)
+                return ReservationResult.Fail("match_in_progress");
             if (_state == LobbyState.Running && !Rules.AllowJoinInProgress)
                 return ReservationResult.Fail("match_in_progress");
             if (_seats.Count >= Rules.MaxPlayers)
@@ -241,6 +248,9 @@ public sealed class Lobby
                 Performance = Performance,
                 NodeId = NodeId,
                 SeatHolders = _seats.Keys.ToList(),
+                ResourceClaims = new Dictionary<string, int>(_resourceClaims, StringComparer.Ordinal),
+                UsesResourceReservations = Game.UsesResourceReservations,
+                AcceptsNewPlayers = _acceptsNewPlayers,
             };
         }
     }
@@ -289,6 +299,7 @@ public sealed class Lobby
                 ExpireDisconnected(now);
                 Advance(now);
                 ApplyPending(now);
+                _acceptsNewPlayers = _session.AcceptsNewPlayers;
                 FlushLobby();
             }
             catch (Exception ex)
@@ -793,7 +804,15 @@ public sealed class Lobby
     private void SendTo<T>(Seat seat, string type, T payload, JsonSerializerOptions? options = null)
     {
         if (seat.Connection is { } connection)
-            connection.TrySend(Frames.Encode(type, Tick, payload, options), FrameFormat.Text);
+            QueueFrame(connection, type, Frames.Encode(type, Tick, payload, options), FrameFormat.Text);
+    }
+
+    private void QueueFrame(IPlayerConnection connection, string type, ReadOnlyMemory<byte> frame, FrameFormat format)
+    {
+        if (Game.ReliableControlFrames)
+            connection.TrySend(frame, format, !RealtimeProtocol.IsSystemType(type) && Game.ReplaceableMessageTypes.Contains(type, StringComparer.Ordinal)
+                ? FrameDelivery.Latest : FrameDelivery.Reliable, type);
+        else connection.TrySend(frame, format);
     }
 
     private void Broadcast<T>(string type, T payload, string? exceptPlayerId, JsonSerializerOptions? options = null)
@@ -804,7 +823,7 @@ public sealed class Lobby
             if (!seat.Live || string.Equals(seat.Player.PlayerId, exceptPlayerId, StringComparison.Ordinal))
                 continue;
             frame ??= Frames.Encode(type, Tick, payload, options);
-            seat.Connection!.TrySend(frame, FrameFormat.Text);
+            QueueFrame(seat.Connection!, type, frame, FrameFormat.Text);
         }
     }
 
@@ -816,7 +835,7 @@ public sealed class Lobby
             if (!seat.Live || string.Equals(seat.Player.PlayerId, exceptPlayerId, StringComparison.Ordinal))
                 continue;
             frame ??= RealtimeBinary.Encode(type, Tick, payload);
-            seat.Connection!.TrySend(frame, FrameFormat.Binary);
+            QueueFrame(seat.Connection!, type, frame, FrameFormat.Binary);
         }
     }
 
@@ -903,6 +922,13 @@ public sealed class Lobby
 
     private sealed class SessionContext(Lobby lobby, Random random) : ISessionContext
     {
+        public bool TryReserveResource(string resource, int units)
+        {
+            if (lobby._state >= LobbyState.Ended || !lobby._observer.TryReserveResource(lobby, resource, units)) return false;
+            if (units == 0) lobby._resourceClaims.Remove(resource); else lobby._resourceClaims[resource] = units;
+            return true;
+        }
+
         public string LobbyId => lobby.Id;
         public string GameId => lobby.GameId;
         public LobbyState State => lobby._state;
@@ -936,7 +962,7 @@ public sealed class Lobby
         {
             Guard(type);
             if (lobby._seats.TryGetValue(playerId, out var seat) && seat.Live)
-                seat.Connection!.TrySend(RealtimeBinary.Encode(type, lobby.Tick, payload), FrameFormat.Binary);
+                lobby.QueueFrame(seat.Connection!, type, RealtimeBinary.Encode(type, lobby.Tick, payload), FrameFormat.Binary);
         }
 
         public void BroadcastBinary(string type, ReadOnlySpan<byte> payload, string? exceptPlayerId = null)

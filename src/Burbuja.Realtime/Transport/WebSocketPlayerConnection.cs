@@ -19,7 +19,7 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
     private const int MaxCloseReasonBytes = 123;
 
     private readonly WebSocket _socket;
-    private readonly Channel<(ReadOnlyMemory<byte> Frame, FrameFormat Format)> _outbound;
+    private readonly OutboundFrameQueue _outbound;
     private int _closing;
     private RealtimeCloseCode _closeCode = RealtimeCloseCode.Normal;
     private string _closeReason = "";
@@ -27,17 +27,22 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
     public WebSocketPlayerConnection(WebSocket socket, int sendBufferFrames)
     {
         _socket = socket;
-        _outbound = Channel.CreateBounded<(ReadOnlyMemory<byte>, FrameFormat)>(new BoundedChannelOptions(sendBufferFrames)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-        });
+        if (sendBufferFrames < 1) throw new ArgumentOutOfRangeException(nameof(sendBufferFrames));
+        _outbound = new OutboundFrameQueue(sendBufferFrames);
     }
 
     public string ConnectionId { get; } = Guid.NewGuid().ToString("N");
 
     public bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format) =>
-        Volatile.Read(ref _closing) == 0 && _outbound.Writer.TryWrite((frame, format));
+        Volatile.Read(ref _closing) == 0 && _outbound.TryWrite(frame, format);
+
+    public bool TrySend(ReadOnlyMemory<byte> frame, FrameFormat format, FrameDelivery delivery, string? replacementKey = null)
+    {
+        if (Volatile.Read(ref _closing) != 0) return false;
+        if (_outbound.TryWrite(frame, format, delivery, replacementKey)) return true;
+        Close(RealtimeCloseCode.PolicyViolation, "client_too_slow");
+        return false;
+    }
 
     public void Close(RealtimeCloseCode code, string reason)
     {
@@ -45,7 +50,7 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
             return;
         _closeCode = code;
         _closeReason = CloseReason(reason);
-        _outbound.Writer.TryComplete();
+        _outbound.Complete();
     }
 
     /// <summary>The reason cut to what a close frame carries, by UTF-8 bytes and never inside a character: a
@@ -130,9 +135,9 @@ internal sealed class WebSocketPlayerConnection : IPlayerConnection
     {
         try
         {
-            await foreach (var (frame, format) in _outbound.Reader.ReadAllAsync(ct))
-                await _socket.SendAsync(frame,
-                    format == FrameFormat.Binary ? WebSocketMessageType.Binary : WebSocketMessageType.Text, true, ct);
+            while (await _outbound.ReadAsync(ct) is { } frame)
+                await _socket.SendAsync(frame.Bytes,
+                    frame.Format == FrameFormat.Binary ? WebSocketMessageType.Binary : WebSocketMessageType.Text, true, ct);
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -303,6 +303,7 @@ public static class RealtimeEndpoints
                 load = status.Load,
                 publicUrl = status.PublicUrl,
                 games = server.Games,
+                availableResources = status.AvailableResources,
                 hosted = hosted.TryGetValue(server.NodeId, out var lobbies) && lobbies is not null
                     ? lobbies.Where(s => s.ServerId == status.ServerId).Select(s => (object)new
                     {
@@ -313,11 +314,14 @@ public static class RealtimeEndpoints
                         maxPlayers = s.MaxPlayers,
                         tick = s.Tick,
                         performance = s.Performance,
+                        resourceClaims = s.ResourceClaims,
+                        usesResourceReservations = s.UsesResourceReservations,
                     })
                     : null,
             };
         });
-        return Results.Json(new { nodeId = fleet.NodeId, placement = fleet.Local.Balancer.Strategy.Name, value = servers }, Frames.Json);
+        return Results.Json(new { nodeId = fleet.NodeId, placement = fleet.Local.Balancer.Strategy.Name,
+            resourceLimits = fleet.Local.ResourceLimits, value = servers }, Frames.Json);
     }
 
     private static async Task<IResult> SetServerStateAsync(HttpContext http, bool drain)
@@ -465,6 +469,7 @@ public static class RealtimeEndpoints
         startedAt = lobby.StartedAt,
         seats = lobby.Seats,
         openSeats = lobby.OpenSeats,
+        acceptsNewPlayers = lobby.AcceptsNewPlayers,
         maxPlayers = lobby.MaxPlayers,
         members = lobby.Members.Select(m => new { playerId = m.PlayerId, displayName = m.DisplayName, slot = m.Slot, connected = m.Connected }),
     };

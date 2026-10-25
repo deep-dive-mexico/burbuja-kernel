@@ -8,6 +8,15 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- Optional realtime capacity-pool game allowlists, node-owned session resource
+  reservations, cached resource-admission policies and dynamic new-player
+  admission. Waiting rooms can release execution capacity between matches;
+  operator snapshots distinguish room counts from active resource claims.
+- Opt-in reliable control delivery with replaceable full snapshots. Queue
+  pressure preserves stage/control ordering or closes the slow connection;
+  opted-in outbound queues also have a one-MiB byte bound. Existing games keep
+  their previous delivery policy unless they opt in.
+
 - Optional private native file worker with fresh-headroom admission, fixed
   executable/argument allowlists, bounded input/output, cancellation and status;
   host monitoring and cooperative background budgets ([guide](docs/shared-workloads.md)).

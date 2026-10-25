@@ -41,6 +41,7 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
     private readonly ILoggerFactory _logs;
     private readonly ILogger _log;
     private readonly bool _runLoops;
+    private readonly SessionResources _resources;
 
     public LobbyManager(
         RealtimeGames games,
@@ -48,8 +49,9 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         IOptions<RealtimeOptions> options,
         RealtimeNode node,
         TimeProvider time,
-        ILoggerFactory logs)
-        : this(games, balancer, options.Value, node.NodeId, time, logs, runLoops: true)
+        ILoggerFactory logs,
+        IEnumerable<ISessionResourceAdmission>? admission = null)
+        : this(games, balancer, options.Value, node.NodeId, time, logs, runLoops: true, admission)
     {
     }
 
@@ -62,7 +64,8 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         string nodeId,
         TimeProvider time,
         ILoggerFactory logs,
-        bool runLoops)
+        bool runLoops,
+        IEnumerable<ISessionResourceAdmission>? admission = null)
     {
         NodeId = nodeId;
         _games = games;
@@ -72,6 +75,7 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         _logs = logs;
         _log = logs.CreateLogger<LobbyManager>();
         _runLoops = runLoops;
+        _resources = new SessionResources(options.Resources, admission);
     }
 
     /// <summary>Raised when a lobby gives up a player's seat: they left, were removed, or the match ended. Called
@@ -83,6 +87,9 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
     public event Action<Lobby>? LobbyClosed;
 
     public string NodeId { get; }
+
+    public IReadOnlyDictionary<string, int> ResourceLimits => _resources.Limits;
+    public IReadOnlyDictionary<string, int> AvailableResources => _resources.Available;
 
     public RealtimeGames Games => _games;
 
@@ -118,7 +125,7 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
             return new LobbyCreation(null, "unknown_game");
         LobbyServer? server;
         if (request.ServerId is { } pinned)
-            server = Server(pinned) is { } named && named.TryAllocate() ? named : null;
+            server = Server(pinned) is { } named && named.TryAllocate(game.Id) ? named : null;
         else
             server = _balancer.Allocate(new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers));
         if (server is null)
@@ -195,10 +202,15 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
 
     void ILobbyObserver.SeatReleased(Lobby lobby, string playerId) => SeatReleased?.Invoke(lobby, playerId);
 
+    bool ILobbyObserver.TryReserveResource(Lobby lobby, string resource, int units) =>
+        _lobbies.TryGetValue(lobby.Id, out var owned) && ReferenceEquals(owned, lobby)
+        && _resources.TrySet(lobby.Id, resource, units, Server(lobby.ServerId)?.State == LobbyServerState.Active);
+
     void ILobbyObserver.Closed(Lobby lobby)
     {
         if (!_lobbies.TryRemove(new KeyValuePair<string, Lobby>(lobby.Id, lobby)))
             return;
+        _resources.Release(lobby.Id);
         if (lobby.JoinCode is { } code)
             _codes.TryRemove(code, out _);
         if (Server(lobby.ServerId) is { } server)

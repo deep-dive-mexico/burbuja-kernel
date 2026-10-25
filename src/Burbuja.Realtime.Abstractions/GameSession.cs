@@ -41,6 +41,10 @@ public interface IGameSession
     /// the rules. Matchmaking still groups by the rules' minimum.
     /// </summary>
     int? MinPlayersToStart => null;
+
+    /// <summary>Whether new players may reserve a seat right now. Existing seats may reconnect.
+    /// Read only by the sequential lobby owner after callbacks.</summary>
+    bool AcceptsNewPlayers => true;
 }
 
 /// <summary>An <see cref="IGameSession"/> whose every callback is an overridable no-op.</summary>
@@ -61,6 +65,8 @@ public abstract class GameSession : IGameSession
     public virtual void OnMatchEnded(ISessionContext context, MatchResult result) { }
 
     public virtual int? MinPlayersToStart => null;
+
+    public virtual bool AcceptsNewPlayers => true;
 }
 
 /// <summary>
@@ -71,6 +77,10 @@ public abstract class GameSession : IGameSession
 /// </summary>
 public interface ISessionContext
 {
+    /// <summary>Sets this lobby's claim on a configured node resource. Non-blocking and idempotent.
+    /// Zero releases the claim; closing the lobby releases all claims. Missing resources refuse.</summary>
+    bool TryReserveResource(string resource, int units) => false;
+
     string LobbyId { get; }
     string GameId { get; }
     LobbyState State { get; }
