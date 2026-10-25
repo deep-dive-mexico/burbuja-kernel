@@ -432,6 +432,10 @@ pressure or operator drain; new claims on draining servers are refused. This is
 admission, not an eviction or live-migration mechanism. `availableResources` is
 node-wide information repeated on server status: do not sum it across pools.
 The owner still rechecks at reservation time because advertisements may be stale.
+`PlacementRequest.Settings` carries the bounded creation settings to both local
+and fleet strategies. These remain untrusted product input, not authority to
+change configured limits. Server status also exposes node `resourceLimits`, so
+policy can distinguish temporarily occupied capacity from an unsupported resource.
 
 `IGameSession.AcceptsNewPlayers` is cached by the sequential lobby owner after
 callbacks. It controls new reservations and advertised open seats; a current seat

@@ -12,6 +12,38 @@ namespace Burbuja.Realtime.Tests;
 
 public sealed class CapacityPoolTests
 {
+    private sealed class SettingsPlacement : ILobbyPlacementStrategy
+    {
+        public string Name => "settings";
+        public string? Choose(IReadOnlyList<LobbyServerStatus> candidates, PlacementRequest request) => request.Settings.GetValueOrDefault("pool", "a");
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Product_placement_receives_creation_settings_locally_and_through_the_fleet(bool fleet)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {
+            ["Realtime:Placement"]="settings",["Realtime:Servers:0:Id"]="a",["Realtime:Servers:0:Region"]="local",
+            ["Realtime:Servers:1:Id"]="b",["Realtime:Servers:1:Region"]="local",
+        }).Build();
+        var services = new ServiceCollection();services.AddLogging();services.AddSingleton<IConfiguration>(config);
+        services.AddSingleton<IRealtimeGame>(new RecordingGame());services.AddBurbujaRealtime();services.AddSingleton<ILobbyPlacementStrategy,SettingsPlacement>();
+        await using var provider = services.BuildServiceProvider();
+        var manager=provider.GetRequiredService<LobbyManager>();
+        var request=new CreateLobbyRequest("test",LobbyVisibility.Private,LobbyOrigin.Hosted,Settings:new Dictionary<string,string>{{"pool","b"}});
+        try
+        {
+            if(fleet)
+            {
+                var coordinator=provider.GetRequiredService<RealtimeFleet>();await coordinator.StartAsync(TestContext.Current.CancellationToken);
+                var created=await coordinator.CreateAsync(request,[],TestContext.Current.CancellationToken);
+                Assert.Equal("b",created.Lobby?.ServerId);await coordinator.DisposeAsync();
+            }
+            else Assert.Equal("b",manager.Create(request).Lobby?.ServerId);
+        }
+        finally {await manager.ShutdownAsync();}
+    }
     [Theory]
     [InlineData("[]")]
     [InlineData("[\"peer\",\"peer\"]")]

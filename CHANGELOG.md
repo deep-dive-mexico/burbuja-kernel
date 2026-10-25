@@ -16,6 +16,9 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- Placement strategies receive bounded creation settings and per-node resource
+  limits, allowing a product to route mandatory execution preferences to capable
+  workers while distinguishing an occupied budget from a disabled one.
 - Optional realtime capacity-pool game allowlists, node-owned session resource
   reservations, cached resource-admission policies and dynamic new-player
   admission. Waiting rooms can release execution capacity between matches;

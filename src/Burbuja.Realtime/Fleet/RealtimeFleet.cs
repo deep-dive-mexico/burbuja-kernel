@@ -198,7 +198,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
         ThrowIfFenced();
         var games = _manager.Games.All.Select(g => g.Id).ToList();
         var available = _manager.AvailableResources;
-        var servers = _manager.Balancer.Servers.Select(s => new FleetServer(NodeId, s.Status() with { AvailableResources = available }, games.Where(s.Status().Supports).ToArray())).ToList();
+        var servers = _manager.Balancer.Servers.Select(s => new FleetServer(NodeId, s.Status() with { AvailableResources = available, ResourceLimits = _manager.ResourceLimits }, games.Where(s.Status().Supports).ToArray())).ToList();
         foreach (var node in await NodesAsync(ct))
             if (node.NodeId != NodeId)
                 servers.AddRange(node.Servers.Select(s => new FleetServer(node.NodeId, s, node.Games.Where(s.Supports).ToArray())));
@@ -308,7 +308,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
         await EnsureOwnerAsync(ct);
         if (_manager.Games.Find(request.GameId) is not { } game)
             return FleetCreation.Fail("unknown_game");
-        var placement = new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers);
+        var placement = new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers) { Settings = request.Settings ?? new Dictionary<string,string>() };
         var balancer = new LobbyBalancer(_manager.Balancer.Servers, _manager.Balancer.Strategy, _allowCrossRegion);
         var refused = new HashSet<string>(StringComparer.Ordinal);
         for (var attempt = 0; attempt < 16; attempt++)
@@ -634,7 +634,7 @@ public sealed class RealtimeFleet : IAsyncDisposable
     private BackplaneNode NodeRecord() => new(NodeId, _node.InstanceId, JsonSerializer.Serialize(new FleetNodeInfo(
         NodeId,
         _manager.Games.All.Select(g => g.Id).ToList(),
-        _manager.Balancer.Servers.Select(s => s.Status() with { AvailableResources = _manager.AvailableResources }).ToList(),
+        _manager.Balancer.Servers.Select(s => s.Status() with { AvailableResources = _manager.AvailableResources, ResourceLimits = _manager.ResourceLimits }).ToList(),
         _startedAt), Json)) { ServerIds = _manager.Balancer.Servers.Select(s => s.Id).Order(StringComparer.Ordinal).ToArray() };
 
     private static string Address(string nodeId, string instanceId) => JsonSerializer.Serialize(new[] { nodeId, instanceId });

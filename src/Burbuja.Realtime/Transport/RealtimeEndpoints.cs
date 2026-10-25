@@ -304,6 +304,7 @@ public static class RealtimeEndpoints
                 publicUrl = status.PublicUrl,
                 games = server.Games,
                 availableResources = status.AvailableResources,
+                resourceLimits = status.ResourceLimits,
                 hosted = hosted.TryGetValue(server.NodeId, out var lobbies) && lobbies is not null
                     ? lobbies.Where(s => s.ServerId == status.ServerId).Select(s => (object)new
                     {

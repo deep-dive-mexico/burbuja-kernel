@@ -29,6 +29,7 @@ public sealed record LobbyServerStatus(
     public IReadOnlyList<string>? AllowedGames { get; init; }
     /// <summary>Remaining named node resources. Shared by pools on that node; do not sum across pools.</summary>
     public IReadOnlyDictionary<string, int>? AvailableResources { get; init; }
+    public IReadOnlyDictionary<string, int>? ResourceLimits { get; init; }
 
     public bool Supports(string gameId) => AllowedGames is null || AllowedGames.Contains(gameId, StringComparer.Ordinal);
 
@@ -41,7 +42,11 @@ public sealed record LobbyServerStatus(
 }
 
 /// <summary>A request for a new dedicated lobby. <paramref name="Region"/> null means "anywhere".</summary>
-public sealed record PlacementRequest(string GameId, string? Region, int Seats);
+public sealed record PlacementRequest(string GameId, string? Region, int Seats)
+{
+    /// <summary>Bounded creation settings for product placement policy. They remain untrusted game input.</summary>
+    public IReadOnlyDictionary<string, string> Settings { get; init; } = new Dictionary<string, string>();
+}
 
 /// <summary>
 /// The balancer's choice among servers. The kernel has already removed draining and full servers and applied

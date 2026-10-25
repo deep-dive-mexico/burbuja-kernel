@@ -127,7 +127,7 @@ public sealed class LobbyManager : IRealtimeGateway, ILobbyObserver
         if (request.ServerId is { } pinned)
             server = Server(pinned) is { } named && named.TryAllocate(game.Id) ? named : null;
         else
-            server = _balancer.Allocate(new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers));
+            server = _balancer.Allocate(new PlacementRequest(game.Id, request.Region, game.Rules.MaxPlayers) { Settings = request.Settings ?? new Dictionary<string,string>() });
         if (server is null)
             return new LobbyCreation(null, "no_capacity");
 
