@@ -24,6 +24,10 @@ UI. You can run the included host or compose your own ASP.NET Core executable wi
 - **Real-time applications:** matchmaking, lobbies, fixed-tick sessions,
   WebSockets, reconnect handling, and multi-node fleets with a Redis/Valkey
   backplane.
+- **Clusters of machines:** nodes that join with a one-time token, pluggable
+  networks (LAN, Tailscale, Twingate), workloads placed by what they declare
+  they need, node-local program allowlists and lending, and one vocabulary for
+  operating-system priority, limits and suspension.
 
 The resource API follows an ARM-style hierarchy:
 
@@ -97,6 +101,7 @@ flowchart TD
 | `Burbuja.Core` | Resource pipeline, routing, plugin loader, policy, scheduling, and default infrastructure |
 | `Burbuja.Agents`, `Burbuja.Compute`, `Burbuja.Deployments` | Agent lifecycles, execution workspaces, and deployment resources, with separate contract projects |
 | `Burbuja.Integrations`, `Burbuja.Mcp`, `Burbuja.Realtime` | External-service adapters, MCP transport, and real-time sessions |
+| `Burbuja.Cluster`, `Burbuja.Node` | Node membership, placement, the node agent and operating-system adapters, with a separate contract project and an installable node host |
 | `Burbuja.Hosting`, `Burbuja.Host`, `Burbuja.Portal` | Reusable host composition, the included executable, and operator UI |
 | `plugins/` | Model, storage, policy, tool, host-facts, and backplane implementations |
 | `Burbuja.TestKit`, `tests/`, `examples/` | Consumer test helpers, runtime verification, and standalone applications |
@@ -129,6 +134,7 @@ its full commit for consumers; Hosting is currently consumed from source.
 | [Workbench](examples/Example.Workbench/README.md) | Independent executable, custom portal, dynamic resource plugin, authentication, and HTTP APIs |
 | [Arena](examples/Example.Arena/README.md) | Multiplayer arena with matchmaking, game sessions, and a browser client |
 | [Blast](examples/Example.Blast/README.md) | 3D multiplayer game, bots, private lobbies, and a two-node Redis/Valkey fleet |
+| [Cluster](examples/Example.Cluster/README.md) | Three differently shaped machines as one cluster, and a plugin that brings its own workload kind |
 
 ## Build and test
 
@@ -161,6 +167,7 @@ and remaining gaps.
 - [Custom host and Workbench](docs/developer-workbench.md)
 - [MCP and job recovery](docs/mcp-job-recovery.md)
 - [Real-time lobbies and fleets](docs/realtime-lobbies.md)
+- [Clusters, networks and workloads](docs/cluster.md)
 - [Release policy](docs/releases.md) and [changelog](CHANGELOG.md)
 
 ## License

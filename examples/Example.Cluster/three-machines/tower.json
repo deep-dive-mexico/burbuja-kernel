@@ -1,0 +1,20 @@
+{
+  "Cluster": {
+    "Role": "agent",
+    "NodeId": "tower",
+    "NodeName": "Workstation shared with other people",
+    "Port": 18622,
+    "Agent": {
+      "Controllers": [ "http://127.0.0.1:18620" ],
+      "Labels": { "site": "home" },
+      "Capabilities": [ "bulk-compute" ],
+      "Lend": { "player-slot": 2, "cpu": 6 },
+      "MaxPriority": "Interactive",
+      "StopWorkloadsOnShutdown": true,
+      "Programs": {
+        "player": { "Executable": "/bin/sh", "ParameterFlags": { "account": "--account" } },
+        "trainer": { "Executable": "/bin/sh", "ParameterFlags": { "shard": "--shard" } }
+      }
+    }
+  }
+}

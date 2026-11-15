@@ -10,6 +10,7 @@ The **generic runtime** is the source of truth for reusable mechanisms. `src/Bur
 | Curated release changes and notes before promotion | [Release notes](../../CHANGELOG.md), [notes workflow](../release-notes.md) |
 | Locating an existing runtime mechanism (jobs, stateful agents, tools, integrations, MCP, trace) or an expansion gap | [Runtime capabilities](../runtime-capabilities.md) |
 | Bounded private file compute, host health and cooperative background budgets | [Shared workloads](../shared-workloads.md) |
+| Machines as cluster nodes: joining, pluggable networks (LAN, Tailscale, Twingate), workload placement by declared need, node-local lending and program allowlists, operating-system priority/limits/suspension | [Clusters](../cluster.md), [three-machine example](../../examples/Example.Cluster/README.md) |
 | Outbound MCP transport/authority, interrupted job continuation and end-to-end gates | [MCP and job recovery](../mcp-job-recovery.md) |
 | Multiplayer/real-time lobbies: games, matchmaking, placement, multi-node fleet, lifecycle, WebSocket protocol | [Real-time lobbies](../realtime-lobbies.md), [Redis backplane](../../plugins/Burbuja.Plugins.Realtime.Redis/README.md), [Arena PoC](../../examples/Example.Arena/README.md), [Blast](../../examples/Example.Blast/README.md) |
 | Independent consuming host, plugin and auth | [Developer workbench](../developer-workbench.md), [example README](../../examples/Example.Workbench/README.md) |

@@ -14,6 +14,7 @@ using Burbuja.Host.Worker;
 using Burbuja.Mcp;
 using Burbuja.Plugins.Llm.Scripted;
 using Burbuja.Portal;
+using Burbuja.Cluster;
 using Burbuja.Realtime;
 using Burbuja.Plugins.Policy.Core;
 using Burbuja.Plugins.Supervisor;
@@ -85,6 +86,10 @@ public static class BurbujaApplication
         // Dedicated real-time lobbies. Registered for every host and inert until Realtime:Enabled; games are
         // IRealtimeGame services contributed by plugins.
         builder.Services.AddBurbujaRealtime();
+        // Cluster membership, placement and the node agent. Registered for every host and inert until
+        // Cluster:Enabled; networks, facts sources, workload kinds and placement rules are services that
+        // plugins contribute, which is why this comes after plugin boot.
+        builder.Services.AddBurbujaCluster(builder.Configuration);
         builder.Services.AddOpenApi("v1", options => options.AddDocumentTransformer<ArmDocumentTransformer>());
         builder.Services.AddHostedService<KernelSeedHostedService>();
         builder.Services.AddHostedService<NodeHeartbeatService>();
@@ -116,6 +121,10 @@ public static class BurbujaApplication
         // Realtime lobbies are mapped for every role, like ingress: players connect to the node that hosts
         // the lobby, which need not be the node serving ARM. Nothing is mapped unless Realtime:Enabled.
         Burbuja.Realtime.Transport.RealtimeEndpoints.Map(app);
+
+        // The cluster is mapped for every role for the same reason: a host that is only a member still
+        // serves its node-local API. Nothing is mapped unless Cluster:Enabled.
+        app.MapBurbujaCluster();
 
         // Track 3a: /health/plugins answers one JSON document (status, host identity, one entry per
         // loaded plugin) instead of the old always-Healthy aggregate text. Unhealthy is the only

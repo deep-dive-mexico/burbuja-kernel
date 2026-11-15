@@ -3,8 +3,11 @@
   <Project Path="examples/Example.Arena/Example.Arena.Plugin/Example.Arena.Plugin.csproj" />
   <Project Path="examples/Example.Blast/Example.Blast.Host/Example.Blast.Host.csproj" />
   <Project Path="examples/Example.Blast/Example.Blast.Plugin/Example.Blast.Plugin.csproj" />
+  <Project Path="examples/Example.Cluster/Example.Cluster.Plugin/Example.Cluster.Plugin.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Host/Example.Workbench.Host.csproj" />
   <Project Path="examples/Example.Workbench/Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" />
+  <Project Path="plugins/Burbuja.Plugins.Cluster.Tailscale/Burbuja.Plugins.Cluster.Tailscale.csproj" />
+  <Project Path="plugins/Burbuja.Plugins.Cluster.Twingate/Burbuja.Plugins.Cluster.Twingate.csproj" />
   <Project Path="plugins/Burbuja.Plugins.HostFacts.MacOs/Burbuja.Plugins.HostFacts.MacOs.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Llm.DeepSeek/Burbuja.Plugins.Llm.DeepSeek.csproj" />
   <Project Path="plugins/Burbuja.Plugins.Llm.Scripted/Burbuja.Plugins.Llm.Scripted.csproj" />
@@ -17,6 +20,8 @@
   <Project Path="plugins/Burbuja.Plugins.Tools.Workspace/Burbuja.Plugins.Tools.Workspace.csproj" />
   <Project Path="src/Burbuja.Agents.Abstractions/Burbuja.Agents.Abstractions.csproj" />
   <Project Path="src/Burbuja.Agents/Burbuja.Agents.csproj" />
+  <Project Path="src/Burbuja.Cluster.Abstractions/Burbuja.Cluster.Abstractions.csproj" />
+  <Project Path="src/Burbuja.Cluster/Burbuja.Cluster.csproj" />
   <Project Path="src/Burbuja.Compute.Abstractions/Burbuja.Compute.Abstractions.csproj" />
   <Project Path="src/Burbuja.Compute/Burbuja.Compute.csproj" />
   <Project Path="src/Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
@@ -50,6 +55,8 @@
   <Project Path="tests/plugins/Burbuja.Plugins.Test.Ok/Burbuja.Plugins.Test.Ok.csproj" />
   <Project Path="tests/plugins/Burbuja.Plugins.Test.ThirdParty/Burbuja.Plugins.Test.ThirdParty.csproj" />
   <Project Path="tools/Burbuja.FakeMcp/Burbuja.FakeMcp.csproj" />
+  <Project Path="src/Burbuja.Node/Burbuja.Node.csproj" />
   <Project Path="src/Burbuja.Worker/Burbuja.Worker.csproj" />
+  <Project Path="tests/Burbuja.Cluster.Tests/Burbuja.Cluster.Tests.csproj" />
   <Project Path="tests/Burbuja.Worker.Tests/Burbuja.Worker.Tests.csproj" />
 </Solution>

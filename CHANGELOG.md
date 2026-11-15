@@ -16,6 +16,17 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- Optional cluster module (`Cluster:Enabled`, off by default) and an installable
+  node host, `Burbuja.Node`. Machines join with a one-time token and sign every
+  request; agents only dial out. Workloads declare requests, capabilities,
+  labels, a class and an execution profile, and each pending workload reports
+  why every node was passed over. Nodes lend capacity and devices and run only
+  operator-listed programs. Exclusive keys fail closed, interactive work can
+  suspend yielding batch work on its node, and running work survives a node
+  restart. Networks, workload kinds, facts sources, operating-system adapters
+  and placement rules are plugin contracts; Tailscale and Twingate network
+  plugins are included. Existing realtime, worker and monitor behaviour is
+  unchanged. See [clusters](docs/cluster.md).
 - Placement strategies receive bounded creation settings and per-node resource
   limits, allowing a product to route mandatory execution preferences to capable
   workers while distinguishing an occupied budget from a disabled one.

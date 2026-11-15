@@ -1,0 +1,57 @@
+[
+  {
+    "name": "player-1",
+    "class": "interactive",
+    "payload": { "program": "player", "parameters": { "account": "one" } },
+    "requests": { "player-slot": 1, "cpu": 2 },
+    "placement": { "preferredNodes": [ "studio", "tower" ], "spreadGroup": "players" },
+    "execution": { "priority": "interactive" },
+    "lifecycle": { "stopGrace": "00:00:20" },
+    "exclusiveKey": "account/one"
+  },
+  {
+    "name": "player-2",
+    "class": "interactive",
+    "payload": { "program": "player", "parameters": { "account": "two" } },
+    "requests": { "player-slot": 1, "cpu": 2 },
+    "placement": { "preferredNodes": [ "studio", "tower" ], "spreadGroup": "players" },
+    "execution": { "priority": "interactive" },
+    "lifecycle": { "stopGrace": "00:00:20" },
+    "exclusiveKey": "account/two"
+  },
+  {
+    "name": "player-3",
+    "class": "interactive",
+    "payload": { "program": "player", "parameters": { "account": "three" } },
+    "requests": { "player-slot": 1, "cpu": 2 },
+    "placement": { "preferredNodes": [ "studio", "tower" ], "spreadGroup": "players" },
+    "execution": { "priority": "interactive" },
+    "lifecycle": { "stopGrace": "00:00:20" },
+    "exclusiveKey": "account/three"
+  },
+  {
+    "name": "trainer",
+    "class": "batch",
+    "payload": { "program": "trainer", "parameters": { "shard": "0" } },
+    "requests": { "cpu": 2 },
+    "placement": { "requiredCapabilities": [ "bulk-compute" ] },
+    "execution": { "priority": "background", "yieldToInteractive": true },
+    "lifecycle": { "restart": "always", "stopGrace": "00:00:10" }
+  },
+  {
+    "name": "proxy",
+    "class": "service",
+    "payload": { "program": "proxy" },
+    "requests": { "cpu": 1 },
+    "placement": { "requiredLabels": { "role": "edge" } },
+    "lifecycle": { "restart": "always" }
+  },
+  {
+    "name": "second-trainer",
+    "class": "batch",
+    "payload": { "program": "trainer", "parameters": { "shard": "1" } },
+    "requests": { "cpu": 4 },
+    "placement": { "requiredCapabilities": [ "bulk-compute" ] },
+    "execution": { "priority": "background", "yieldToInteractive": true, "limits": { "memoryMb": 4096 } }
+  }
+]

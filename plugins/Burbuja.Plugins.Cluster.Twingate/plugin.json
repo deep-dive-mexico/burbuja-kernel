@@ -1,0 +1,17 @@
+{
+  "id": "Cluster.Twingate",
+  "name": "Cluster network (Twingate)",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Cluster.Twingate.dll",
+  "entry_type": "Burbuja.Plugins.Cluster.Twingate.TwingatePlugin",
+  "load": "dynamic",
+  "provides": ["cluster.network"],
+  "extension_points": [],
+  "requires": ["ProcessExecution"],
+  "roles": ["all", "control-plane", "worker"],
+  "config_section": "Cluster:Twingate",
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 345
+}

@@ -13,16 +13,19 @@
     <ProjectReference Include="../../src/Burbuja.Hosting/Burbuja.Hosting.csproj" />
     <ProjectReference Include="../../examples/Example.Workbench/Example.Workbench.Host/Example.Workbench.Host.csproj" />
     <ProjectReference Include="../../examples/Example.Workbench/Example.Workbench.Plugin/Example.Workbench.Plugin.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="../../examples/Example.Cluster/Example.Cluster.Plugin/Example.Cluster.Plugin.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
   <Target Name="StageWorkbenchFixtures" AfterTargets="Build">
-    <RemoveDir Directories="$(OutDir)plugin-fixture;$(OutDir)host-fixture" />
+    <RemoveDir Directories="$(OutDir)plugin-fixture;$(OutDir)host-fixture;$(OutDir)cluster-plugin-fixture" />
     <ItemGroup>
       <WorkbenchPluginFiles Include="$(WorkbenchRoot)/Example.Workbench.Plugin/bin/$(Configuration)/$(TargetFramework)/**/*" />
       <WorkbenchHostFiles Include="$(WorkbenchRoot)/Example.Workbench.Host/bin/$(Configuration)/$(TargetFramework)/**/*" />
+      <ClusterPluginFiles Include="$(MSBuildThisFileDirectory)../../examples/Example.Cluster/Example.Cluster.Plugin/bin/$(Configuration)/$(TargetFramework)/**/*" />
       <WorkbenchAssetManifests Include="$(WorkbenchRoot)/Example.Workbench.Host/bin/$(Configuration)/$(TargetFramework)/Example.Workbench.Host.staticwebassets.*.json" />
     </ItemGroup>
     <Copy SourceFiles="@(WorkbenchPluginFiles)" DestinationFiles="@(WorkbenchPluginFiles-&gt;'$(OutDir)plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(WorkbenchHostFiles)" DestinationFiles="@(WorkbenchHostFiles-&gt;'$(OutDir)host-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ClusterPluginFiles)" DestinationFiles="@(ClusterPluginFiles-&gt;'$(OutDir)cluster-plugin-fixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(WorkbenchAssetManifests)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>
