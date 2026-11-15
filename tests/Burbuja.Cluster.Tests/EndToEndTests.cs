@@ -179,6 +179,12 @@ public sealed class EndToEndTests : IAsyncLifetime
         status.Nodes.All(n => n.Descriptor.Capabilities.Contains("program.work") && n.Descriptor.Capabilities.Contains("os.pause")).ShouldBeTrue();
         status.Nodes.All(n => n.Descriptor.Capacity["cpu"] > 0).ShouldBeTrue();
 
+        // Every member can read its own pressure verdict, and what the controller says of the others, in process.
+        var pressure = tower.App.Services.GetRequiredService<INodePressure>();
+        await Eventually(() => Task.FromResult(pressure.Local), p => p.Known, "the node has read itself", 5);
+        pressure.Local.Pressured.ShouldBeFalse();
+        pressure.PressuredNodes.ShouldBeEmpty();
+
         // A join token works once.
         File.Exists(Path.Combine(studio.State, "node.json")).ShouldBeTrue();
         (await client.ApplyAsync(Work("player") with

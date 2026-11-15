@@ -57,6 +57,8 @@ public static class ClusterServiceCollectionExtensions
         if (options.IsAgent)
         {
             services.TryAddSingleton<InteractiveGate>();
+            services.TryAddSingleton<NodePressureMonitor>();
+            services.TryAddSingleton<INodePressure>(sp => sp.GetRequiredService<NodePressureMonitor>());
             services.TryAddSingleton<IControllerLink>(sp => options.IsController
                 ? new LocalControllerLink(sp.GetRequiredService<ClusterController>())
                 : new HttpControllerLink(
@@ -76,6 +78,7 @@ public static class ClusterServiceCollectionExtensions
                 sp.GetServices<IOsExecutionAdapter>(),
                 sp.GetRequiredService<EndpointAdvertiser>(),
                 sp.GetRequiredService<InteractiveGate>(),
+                sp.GetRequiredService<NodePressureMonitor>(),
                 sp.GetRequiredService<TimeProvider>(),
                 sp.GetRequiredService<ILogger<NodeAgent>>()));
             services.AddHostedService(sp => sp.GetRequiredService<NodeAgent>());

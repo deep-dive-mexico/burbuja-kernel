@@ -51,6 +51,7 @@ internal sealed class NodeAgent : BackgroundService
     private readonly IOsExecutionAdapter _os;
     private readonly EndpointAdvertiser _advertiser;
     private readonly InteractiveGate _gate;
+    private readonly NodePressureMonitor _pressure;
     private readonly DeviceLedger _ledger = new();
     private readonly TimeProvider _time;
     private readonly ILogger _log;
@@ -78,6 +79,7 @@ internal sealed class NodeAgent : BackgroundService
         IEnumerable<IOsExecutionAdapter> adapters,
         EndpointAdvertiser advertiser,
         InteractiveGate gate,
+        NodePressureMonitor pressure,
         TimeProvider time,
         ILogger<NodeAgent> log)
     {
@@ -88,6 +90,7 @@ internal sealed class NodeAgent : BackgroundService
         _os = OsExecution.Select(adapters);
         _advertiser = advertiser;
         _gate = gate;
+        _pressure = pressure;
         _time = time;
         _log = log;
         _startedAt = time.GetUtcNow();
@@ -196,7 +199,9 @@ internal sealed class NodeAgent : BackgroundService
             catch (Exception e) when (e is not OperationCanceledException) { _log.LogWarning("Facts source {Source} failed: {Error}", source.Id, e.GetType().Name); }
         }
 
-        return new NodeObservation { At = _time.GetUtcNow(), Available = reading.Available, Pressure = reading.Pressure, Reasons = reading.Reasons };
+        var observation = new NodeObservation { At = _time.GetUtcNow(), Available = reading.Available, Pressure = reading.Pressure, Reasons = reading.Reasons };
+        _pressure.Sample(observation);
+        return observation;
     }
 
     // ─── the loop ────────────────────────────────────────────────────────────────────────────────
@@ -260,6 +265,7 @@ internal sealed class NodeAgent : BackgroundService
                                 _linkState = "connected";
                             }
 
+                            _pressure.Advise(result.Response.PressuredNodes);
                             Reconcile(result.Response.Assignments);
                             break;
 

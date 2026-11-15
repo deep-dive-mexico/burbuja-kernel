@@ -144,6 +144,19 @@ public sealed class AgentOptions
     public int InteractiveHoldMaxSeconds { get; set; } = 60;
 
     public int CpuBusyPercent { get; set; } = 85;
+
+    /// <summary>
+    /// A temperature, in degrees Celsius, at or above which the node reports pressure. Zero does not look at
+    /// temperature. Read from the thermal zones Linux publishes; other platforms have no reading and report none.
+    /// </summary>
+    public int MaxTemperatureC { get; set; }
+
+    /// <summary>
+    /// Let this node's own pressure verdict hold back the realtime module on the same host: while the node
+    /// is under pressure, sessions cannot claim more node resources (a new match, a relay). Claims already
+    /// held are never taken away, and an unknown verdict does not hold anything back. Off by default.
+    /// </summary>
+    public bool GuardRealtime { get; set; }
     public int MinFreeMemoryMb { get; set; } = 768;
 
     internal void Validate(List<string> errors)

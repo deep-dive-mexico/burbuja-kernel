@@ -16,6 +16,12 @@ and [standalone deployment evidence](docs/aws-deployment.md).
 
 ### Added
 
+- Cluster members compute their own pressure verdict and expose it, with the
+  controller's view of the other members, through `INodePressure`; both are
+  cached snapshots safe to read on a game loop. `Cluster:Agent:GuardRealtime`
+  lets a pressed node refuse new realtime session claims without touching
+  existing ones, and `Cluster:Agent:MaxTemperatureC` adds Linux thermal zones
+  to what counts as pressure. Off unless configured.
 - Optional cluster module (`Cluster:Enabled`, off by default) and an installable
   node host, `Burbuja.Node`. Machines join with a one-time token and sign every
   request; agents only dial out. Workloads declare requests, capabilities,
