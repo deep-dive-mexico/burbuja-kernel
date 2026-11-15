@@ -242,6 +242,10 @@ controller applies, and can read it in process through `INodePressure`:
 Both only read cached snapshots, so they are safe on a game loop. A node needs no controller in
 the path for its own verdict; one machine with `Cluster:Role=all` gets it with no network at all.
 
+A node in a container judges the **host**: the load average, available memory and thermal zones
+it reads are the machine's, and load is compared with the machine's processor count, not the
+container's limit. What it *lends* is still bounded by the container.
+
 What counts as pressed: processors busy (`CpuBusyPercent`, default 85), memory low
 (`MinFreeMemoryMb`, default 768), and on Linux a thermal zone at or above `MaxTemperatureC` when
 that is set. Other signals are another `INodeFactsSource`.

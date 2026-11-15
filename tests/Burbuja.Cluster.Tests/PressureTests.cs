@@ -80,6 +80,20 @@ public sealed class PressureTests : IDisposable
     }
 
     [Fact]
+    public void Load_is_judged_against_the_machines_processors_not_a_containers_limit()
+    {
+        Directory.CreateDirectory(_root);
+        var cpuinfo = Path.Combine(_root, "cpuinfo");
+        File.WriteAllText(cpuinfo, string.Concat(Enumerable.Range(0, 16).Select(i => $"processor\t: {i}\nmodel name\t: Synthetic CPU\nprocessor_note: not a processor line\n\n")));
+
+        // A container limited to one processor still sees all sixteen here, which is what the load average counts.
+        SystemFactsSource.HostProcessors(cpuinfo).ShouldBe(16);
+        SystemFactsSource.HostProcessors(Path.Combine(_root, "absent")).ShouldBeNull();
+        File.WriteAllText(cpuinfo, "nothing useful\n");
+        SystemFactsSource.HostProcessors(cpuinfo).ShouldBeNull();
+    }
+
+    [Fact]
     public void The_hottest_thermal_zone_is_read_and_missing_or_absurd_values_are_not_a_reading()
     {
         SystemFactsSource.ReadLinuxTemperature(Path.Combine(_root, "absent")).ShouldBeNull();
