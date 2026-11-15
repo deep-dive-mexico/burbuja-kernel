@@ -1,0 +1,17 @@
+{
+  "id": "Example.Cluster",
+  "name": "Example cluster workload kind",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Example.Cluster.Plugin.dll",
+  "entry_type": "Example.Cluster.Plugin.ClusterExamplePlugin",
+  "load": "dynamic",
+  "provides": ["Example.Cluster"],
+  "extension_points": [],
+  "requires": [],
+  "roles": ["all"],
+  "config_section": null,
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 900
+}

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Cluster</RootNamespace>
+    <Description>Cluster runtime: node membership, placement, the node agent, pluggable networks and operating-system execution adapters.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <InternalsVisibleTo Include="Burbuja.Cluster.Tests" />
+    <InternalsVisibleTo Include="Burbuja.Hosting.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Cluster.Abstractions/Burbuja.Cluster.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

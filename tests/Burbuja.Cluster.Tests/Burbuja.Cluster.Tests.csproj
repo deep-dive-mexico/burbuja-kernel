@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Burbuja.Cluster.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Burbuja.Cluster/Burbuja.Cluster.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Cluster.Tailscale/Burbuja.Plugins.Cluster.Tailscale.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Cluster.Twingate/Burbuja.Plugins.Cluster.Twingate.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\plugins\Burbuja.Plugins.Cluster.Tailscale\plugin.json" Link="manifests/tailscale.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\plugins\Burbuja.Plugins.Cluster.Twingate\plugin.json" Link="manifests/twingate.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

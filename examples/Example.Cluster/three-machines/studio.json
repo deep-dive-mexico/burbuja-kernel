@@ -1,0 +1,17 @@
+{
+  "Cluster": {
+    "Role": "agent",
+    "NodeId": "studio",
+    "NodeName": "Desktop used for live play",
+    "Port": 18621,
+    "Agent": {
+      "Controllers": [ "http://127.0.0.1:18620" ],
+      "Labels": { "site": "home" },
+      "Lend": { "player-slot": 2 },
+      "StopWorkloadsOnShutdown": true,
+      "Programs": {
+        "player": { "Executable": "/bin/sh", "ParameterFlags": { "account": "--account" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "Cluster": {
+    "Role": "agent",
+    "NodeId": "edge",
+    "NodeName": "Small always-on box",
+    "Port": 18623,
+    "Agent": {
+      "Controllers": [ "http://127.0.0.1:18620" ],
+      "Labels": { "site": "home", "role": "edge" },
+      "Lend": { "cpu": 2 },
+      "MaxPriority": "Normal",
+      "StopWorkloadsOnShutdown": true,
+      "Programs": {
+        "proxy": { "Executable": "/bin/sh" }
+      }
+    }
+  }
+}

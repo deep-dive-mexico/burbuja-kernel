@@ -1,0 +1,17 @@
+{
+  "id": "Cluster.Tailscale",
+  "name": "Cluster network (Tailscale)",
+  "version": "1.0.0",
+  "contracts_version": "1.0.0",
+  "assembly": "Burbuja.Plugins.Cluster.Tailscale.dll",
+  "entry_type": "Burbuja.Plugins.Cluster.Tailscale.TailscalePlugin",
+  "load": "dynamic",
+  "provides": ["cluster.network"],
+  "extension_points": [],
+  "requires": ["ProcessExecution"],
+  "roles": ["all", "control-plane", "worker"],
+  "config_section": "Cluster:Tailscale",
+  "trusted": false,
+  "depends_on": [],
+  "load_order": 345
+}

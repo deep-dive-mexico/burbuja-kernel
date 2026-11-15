@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Node</RootNamespace>
+    <AssemblyName>burbuja-node</AssemblyName>
+    <Description>The installable cluster node: a small host that makes a machine a member of a Burbuja cluster, as its controller, as an agent, or both.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Cluster/Burbuja.Cluster.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Cluster.Tailscale/Burbuja.Plugins.Cluster.Tailscale.csproj" />
+    <ProjectReference Include="../../plugins/Burbuja.Plugins.Cluster.Twingate/Burbuja.Plugins.Cluster.Twingate.csproj" />
+  </ItemGroup>
+</Project>

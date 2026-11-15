@@ -1,0 +1,7 @@
+{
+  "Cluster": {
+    "Role": "controller",
+    "NodeId": "hub",
+    "Port": 18620
+  }
+}

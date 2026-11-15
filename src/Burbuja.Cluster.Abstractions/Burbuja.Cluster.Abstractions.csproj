@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Burbuja.Cluster.Abstractions</RootNamespace>
+    <Description>Contracts for Burbuja clusters: nodes, pluggable networks, workloads, placement and the operating-system execution profile.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Burbuja.Core.Abstractions/Burbuja.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

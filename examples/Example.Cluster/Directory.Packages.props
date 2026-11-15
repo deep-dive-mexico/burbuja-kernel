@@ -1,0 +1,4 @@
+<Project>
+  <!-- Stop upward discovery of the repository's central package file. The sample has no
+       direct package dependencies; referenced kernel projects retain their own package pins. -->
+</Project>
