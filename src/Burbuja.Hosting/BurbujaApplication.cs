@@ -90,6 +90,9 @@ public static class BurbujaApplication
         // Cluster:Enabled; networks, facts sources, workload kinds and placement rules are services that
         // plugins contribute, which is why this comes after plugin boot.
         builder.Services.AddBurbujaCluster(builder.Configuration);
+        if (builder.Configuration.GetValue<bool>("Cluster:Enabled") && builder.Configuration.GetValue<bool>("Cluster:Agent:GuardRealtime")
+            && builder.Configuration["Cluster:Role"] is null or "all" or "agent")
+            builder.Services.AddSingleton<Burbuja.Realtime.Abstractions.ISessionResourceAdmission, ClusterRealtimeAdmission>();
         builder.Services.AddOpenApi("v1", options => options.AddDocumentTransformer<ArmDocumentTransformer>());
         builder.Services.AddHostedService<KernelSeedHostedService>();
         builder.Services.AddHostedService<NodeHeartbeatService>();

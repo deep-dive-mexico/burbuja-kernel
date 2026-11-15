@@ -282,6 +282,8 @@ internal sealed class ClusterController : IClusterControlPlane
                 SyncIntervalMs = (int)(_options.Controller.SyncIntervalSeconds * 1000),
                 ExclusiveTtlMs = (int)(_options.Controller.ExclusiveTtlSeconds * 1000),
                 ControllerEndpoints = _endpoints,
+                PressuredNodes = [.. _state.Nodes.Values.Where(n => n.Pressure is { Pressured: true } && Reachable(n, now))
+                    .Select(n => n.NodeId).Order(StringComparer.Ordinal)],
             });
         }
     }

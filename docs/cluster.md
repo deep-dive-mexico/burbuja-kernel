@@ -90,6 +90,9 @@ executable): set the same `Cluster:` section there and the host is a node as wel
   does not bind anything itself.
 - In-process code and plugins use `IClusterControlPlane` (status, apply, delete, node
   availability, join tokens) from the contracts assembly instead of the HTTP API.
+- `Cluster:Http=false` keeps the cluster off the host's listener entirely, for a host that uses it
+  only in process (its own pressure verdict, `IClusterControlPlane`). A public-facing server
+  should set it unless other nodes join through that listener.
 - Use one flat, project-prefixed namespace for workload names (`<project>.<name>`) when several
   projects share a cluster; names are cluster-wide.
 
@@ -224,6 +227,34 @@ it; a report under any other generation says nothing about the current one. A ch
 on its node when the node can still satisfy what the spec asks (the node being cordoned, silent or
 pressed at that moment is no reason to uproot it), and the node stops the old generation before
 starting the new one.
+
+## Pressure, for anything that should hold back
+
+Every member computes its own verdict with the same three-set, six-clear hysteresis the
+controller applies, and can read it in process through `INodePressure`:
+
+- `Local`: this node's verdict (`Pressured`, `Known`, the level and its reasons). `Known` is false
+  when the node has no reading of itself from the last 90 seconds; an unknown verdict is not a
+  clear one, and what to do without it is the reader's decision.
+- `PressuredNodes`: the members the controller last reported as pressed. It empties when that
+  advice is older than 90 seconds, so stale advice never keeps excluding a node.
+
+Both only read cached snapshots, so they are safe on a game loop. A node needs no controller in
+the path for its own verdict; one machine with `Cluster:Role=all` gets it with no network at all.
+
+A node in a container judges the **host**: the load average, available memory and thermal zones
+it reads are the machine's, and load is compared with the machine's processor count, not the
+container's limit. What it *lends* is still bounded by the container.
+
+What counts as pressed: processors busy (`CpuBusyPercent`, default 85), memory low
+(`MinFreeMemoryMb`, default 768), and on Linux a thermal zone at or above `MaxTemperatureC` when
+that is set. Other signals are another `INodeFactsSource`.
+
+**Holding back the realtime module.** With `Cluster:Agent:GuardRealtime=true` in a full host, a
+pressed node lets no session claim more node resources (`ISessionResourceAdmission`); claims
+already held are untouched, and an unknown verdict admits. A game's own placement strategy can
+read `PressuredNodes` to steer new rooms away from pressed members. Together these replace a
+status file written by an external monitor and copied between hosts.
 
 ## One vocabulary for the operating system
 
@@ -369,9 +400,10 @@ bad payload, and sees the host's node run a good one to completion.
 
 ## Planned next, in order
 
-1. **Pressure where it is needed.** Hysteresis on the node as well as the controller, a contract
-   a plugin can read it through, and bridges into the realtime fleet's admission and the file
-   worker's headroom. This replaces copied status files and needs no contract change.
+1. **The rest of pressure.** The node verdict, `INodePressure` and the realtime admission bridge
+   exist. Still to do: a facts source for operator-declared service checks (a protected service
+   that is down), a bridge into the file worker's headroom, and retiring the SSH collector in
+   `tools/cluster` once a consumer has moved.
 2. **A static `Burbuja.Cluster` plugin with declared extension points** (`cluster.network`,
    `cluster.workload-kind`, `cluster.facts`, `cluster.os-adapter`, `cluster.placement`) in the
    full host, so manifests are validated; and the probe helper behind an interface.

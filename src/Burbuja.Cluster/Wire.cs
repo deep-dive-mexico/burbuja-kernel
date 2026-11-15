@@ -74,6 +74,9 @@ internal sealed record NodeSyncResponse
     /// </summary>
     public int ExclusiveTtlMs { get; init; }
 
+    /// <summary>The members the controller currently considers under pressure, after hysteresis.</summary>
+    public IReadOnlyList<string> PressuredNodes { get; init; } = [];
+
     /// <summary>
     /// Other addresses the controller believes it has. The node adds them as learned routes, tries them like
     /// any other, and forgets the ones the controller stops reporting.

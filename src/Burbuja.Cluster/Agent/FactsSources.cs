@@ -37,18 +37,62 @@ internal sealed class SystemFactsSource(ClusterOptions options) : INodeFactsSour
     public async ValueTask ObserveAsync(NodeReading reading, CancellationToken ct)
     {
         var (load, freeMb) = OperatingSystem.IsLinux() ? ReadLinux() : OperatingSystem.IsMacOS() ? await ReadMacAsync(ct) : (null, null);
-        var cores = Environment.ProcessorCount;
+        // The load average is the whole machine's, so it is compared with the whole machine's processors.
+        // Inside a container with a processor limit the runtime reports only the limit, and dividing the
+        // host's load by that would make a quiet host look permanently busy.
+        var cores = OperatingSystem.IsLinux() ? HostProcessors("/proc/cpuinfo") ?? Environment.ProcessorCount : Environment.ProcessorCount;
         if (load is { } busy)
         {
             reading.Available[ClusterConstants.Resources.Cpu] = Math.Max(0, cores - busy);
             reading.Report(busy / cores * 100 >= options.Agent.CpuBusyPercent ? PressureLevel.Elevated : PressureLevel.Normal, "processors are busy");
         }
 
+        if (options.Agent.MaxTemperatureC > 0 && ReadLinuxTemperature("/sys/class/thermal") is { } hottest)
+            reading.Report(hottest >= options.Agent.MaxTemperatureC ? PressureLevel.Elevated : PressureLevel.Normal, "the machine is hot");
+
         if (freeMb is { } free)
         {
             reading.Available[ClusterConstants.Resources.MemoryMb] = free;
             reading.Report(free < options.Agent.MinFreeMemoryMb ? PressureLevel.Critical : PressureLevel.Normal, "memory is low");
         }
+    }
+
+    /// <summary>How many processors the machine has, as the kernel lists them; null when that cannot be read.</summary>
+    internal static int? HostProcessors(string cpuinfo)
+    {
+        try
+        {
+            var count = File.ReadLines(cpuinfo).Count(line => line.IndexOf(':') is > 0 and var colon && line.AsSpan(0, colon).Trim().SequenceEqual("processor"));
+            return count > 0 ? count : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The hottest thermal zone, in degrees Celsius, or null where the system publishes none.</summary>
+    internal static decimal? ReadLinuxTemperature(string root)
+    {
+        decimal? hottest = null;
+        try
+        {
+            if (!Directory.Exists(root)) return null;
+            foreach (var zone in Directory.EnumerateDirectories(root, "thermal_zone*"))
+            {
+                var file = Path.Combine(zone, "temp");
+                if (!File.Exists(file) || !decimal.TryParse(File.ReadAllText(file).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var millidegrees))
+                    continue;
+                var degrees = millidegrees / 1000m;
+                if (degrees is > 0 and < 150 && (hottest is null || degrees > hottest)) hottest = degrees;
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable is unknown.
+        }
+
+        return hottest;
     }
 
     private static (decimal? Load, decimal? FreeMb) ReadLinux()

@@ -23,7 +23,7 @@ public static class ClusterEndpoints
     public static IEndpointRouteBuilder MapBurbujaCluster(this IEndpointRouteBuilder app)
     {
         var options = app.ServiceProvider.GetRequiredService<ClusterOptions>();
-        if (!options.Enabled) return app;
+        if (!options.Enabled || !options.Http) return app;
         if (options.IsController) MapController(app);
         if (options.IsAgent) MapAgent(app);
         return app;

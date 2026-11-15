@@ -36,6 +36,14 @@ public sealed class ClusterOptions
     /// </summary>
     public List<string> Listen { get; set; } = [];
 
+    /// <summary>
+    /// Whether this host serves the cluster's HTTP surface (the node protocol, the operator API and the
+    /// node-local API). Turn it off in a host that uses the cluster only in process, for example a public
+    /// game server that wants its own pressure verdict and must not put a control plane on its listener. A
+    /// host that other nodes join, or that <c>burbuja-node ctl</c> talks to, needs it on.
+    /// </summary>
+    public bool Http { get; set; } = true;
+
     public ControllerOptions Controller { get; set; } = new();
     public AgentOptions Agent { get; set; } = new();
 
@@ -144,6 +152,19 @@ public sealed class AgentOptions
     public int InteractiveHoldMaxSeconds { get; set; } = 60;
 
     public int CpuBusyPercent { get; set; } = 85;
+
+    /// <summary>
+    /// A temperature, in degrees Celsius, at or above which the node reports pressure. Zero does not look at
+    /// temperature. Read from the thermal zones Linux publishes; other platforms have no reading and report none.
+    /// </summary>
+    public int MaxTemperatureC { get; set; }
+
+    /// <summary>
+    /// Let this node's own pressure verdict hold back the realtime module on the same host: while the node
+    /// is under pressure, sessions cannot claim more node resources (a new match, a relay). Claims already
+    /// held are never taken away, and an unknown verdict does not hold anything back. Off by default.
+    /// </summary>
+    public bool GuardRealtime { get; set; }
     public int MinFreeMemoryMb { get; set; } = 768;
 
     internal void Validate(List<string> errors)

@@ -27,10 +27,63 @@ public sealed class ClusterModuleTests
         await host.StartAsync();
 
         Assert.Null(host.App.Services.GetService<IClusterControlPlane>());
+        Assert.Null(host.App.Services.GetService<INodePressure>());
+        Assert.DoesNotContain(host.App.Services.GetServices<Burbuja.Realtime.Abstractions.ISessionResourceAdmission>(), a => a.GetType().Name == "ClusterRealtimeAdmission");
         Assert.False(host.App.Services.GetRequiredService<ClusterOptions>().Enabled);
         using var client = host.Client();
         using var response = await client.GetAsync(Identity, Ct);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_pressed_node_holds_back_new_realtime_claims_only_when_asked_to_and_only_when_it_knows()
+    {
+        static Dictionary<string, string?> Settings(bool guard) => new()
+        {
+            ["Cluster:Enabled"] = "true",
+            ["Cluster:Http"] = "false",
+            ["Cluster:Role"] = "all",
+            ["Cluster:NodeId"] = "local",
+            ["Cluster:Agent:GuardRealtime"] = guard ? "true" : "false",
+        };
+
+        await using (var unguarded = new WorkbenchFixture())
+        {
+            unguarded.Create(role: "all", configure: builder => builder.Configuration.AddInMemoryCollection(Settings(guard: false)));
+            Assert.NotNull(unguarded.App.Services.GetService<INodePressure>());
+            Assert.DoesNotContain(unguarded.App.Services.GetServices<Burbuja.Realtime.Abstractions.ISessionResourceAdmission>(), a => a.GetType().Name == "ClusterRealtimeAdmission");
+        }
+
+        await using var host = new WorkbenchFixture();
+        host.Create(role: "all", configure: builder => builder.Configuration.AddInMemoryCollection(Settings(guard: true)));
+        var admission = Assert.Single(host.App.Services.GetServices<Burbuja.Realtime.Abstractions.ISessionResourceAdmission>(), a => a.GetType().Name == "ClusterRealtimeAdmission");
+        var monitor = host.App.Services.GetRequiredService<Burbuja.Cluster.Agent.NodePressureMonitor>();
+        Assert.Same(monitor, host.App.Services.GetRequiredService<INodePressure>());
+
+        // Unknown admits: a node that cannot read itself must not turn that into an outage for players.
+        Assert.True(admission.CanIncrease("simulation"));
+
+        var pressed = new NodeObservation { Pressure = PressureLevel.Critical, Reasons = ["memory is low"] };
+        monitor.Sample(pressed);
+        monitor.Sample(pressed);
+        Assert.True(admission.CanIncrease("simulation"));
+        monitor.Sample(pressed);
+        Assert.False(admission.CanIncrease("simulation"));
+        Assert.False(admission.CanIncrease("peer-relay"));
+
+        var clear = new NodeObservation { Pressure = PressureLevel.Normal };
+        for (var i = 0; i < 6; i++) monitor.Sample(clear);
+        Assert.True(admission.CanIncrease("simulation"));
+
+        // This host uses the cluster in process only: with Cluster:Http off nothing of it is on the listener,
+        // not even the public identity document.
+        await host.App.StartAsync(Ct);
+        using var client = host.Client();
+        foreach (var path in new[] { Identity, "/cluster/v1/status", "/node/v1/status" })
+        {
+            using var response = await client.GetAsync(path, Ct);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
     }
 
     [Fact]
