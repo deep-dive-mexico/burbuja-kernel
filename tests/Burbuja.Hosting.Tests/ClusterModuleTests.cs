@@ -41,6 +41,7 @@ public sealed class ClusterModuleTests
         static Dictionary<string, string?> Settings(bool guard) => new()
         {
             ["Cluster:Enabled"] = "true",
+            ["Cluster:Http"] = "false",
             ["Cluster:Role"] = "all",
             ["Cluster:NodeId"] = "local",
             ["Cluster:Agent:GuardRealtime"] = guard ? "true" : "false",
@@ -73,6 +74,16 @@ public sealed class ClusterModuleTests
         var clear = new NodeObservation { Pressure = PressureLevel.Normal };
         for (var i = 0; i < 6; i++) monitor.Sample(clear);
         Assert.True(admission.CanIncrease("simulation"));
+
+        // This host uses the cluster in process only: with Cluster:Http off nothing of it is on the listener,
+        // not even the public identity document.
+        await host.App.StartAsync(Ct);
+        using var client = host.Client();
+        foreach (var path in new[] { Identity, "/cluster/v1/status", "/node/v1/status" })
+        {
+            using var response = await client.GetAsync(path, Ct);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
     }
 
     [Fact]

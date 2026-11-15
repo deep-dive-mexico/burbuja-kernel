@@ -36,6 +36,14 @@ public sealed class ClusterOptions
     /// </summary>
     public List<string> Listen { get; set; } = [];
 
+    /// <summary>
+    /// Whether this host serves the cluster's HTTP surface (the node protocol, the operator API and the
+    /// node-local API). Turn it off in a host that uses the cluster only in process, for example a public
+    /// game server that wants its own pressure verdict and must not put a control plane on its listener. A
+    /// host that other nodes join, or that <c>burbuja-node ctl</c> talks to, needs it on.
+    /// </summary>
+    public bool Http { get; set; } = true;
+
     public ControllerOptions Controller { get; set; } = new();
     public AgentOptions Agent { get; set; } = new();
 

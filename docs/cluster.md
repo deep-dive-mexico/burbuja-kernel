@@ -90,6 +90,9 @@ executable): set the same `Cluster:` section there and the host is a node as wel
   does not bind anything itself.
 - In-process code and plugins use `IClusterControlPlane` (status, apply, delete, node
   availability, join tokens) from the contracts assembly instead of the HTTP API.
+- `Cluster:Http=false` keeps the cluster off the host's listener entirely, for a host that uses it
+  only in process (its own pressure verdict, `IClusterControlPlane`). A public-facing server
+  should set it unless other nodes join through that listener.
 - Use one flat, project-prefixed namespace for workload names (`<project>.<name>`) when several
   projects share a cluster; names are cluster-wide.
 
